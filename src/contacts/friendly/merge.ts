@@ -83,6 +83,14 @@ function scalar(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Unquoted `[[Name]]` parses as `[["Name"]]`; recover that exact shape as the wikilink text. */
+function recoverWikilink(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length !== 1) return undefined;
+  const inner: unknown = value[0];
+  if (!Array.isArray(inner) || inner.length !== 1 || typeof inner[0] !== 'string') return undefined;
+  return `[[${inner[0]}]]`;
+}
+
 export function coerceNoteProps(
   frontmatter: Record<string, unknown>,
   rows: MappingRow[],
@@ -91,12 +99,14 @@ export function coerceNoteProps(
   const warnings: string[] = [];
   for (const [property, raw] of Object.entries(frontmatter)) {
     if (!isMappedProperty(property, rows)) continue;
-    const items = (Array.isArray(raw) ? raw : [raw]).map(scalar).filter((v): v is string => v !== undefined);
+    const whole = recoverWikilink(raw);
+    const source = whole !== undefined ? [whole] : Array.isArray(raw) ? raw : [raw];
+    const items = source.map((v) => recoverWikilink(v) ?? scalar(v)).filter((v): v is string => v !== undefined);
     if (items.length === 0) continue;
     if (isListProperty(property, rows)) {
       props[property] = items;
     } else {
-      if (Array.isArray(raw)) {
+      if (Array.isArray(raw) && whole === undefined) {
         warnings.push(`Property "${property}" is a list but holds one value; using the first item "${items[0]}".`);
       }
       props[property] = items[0];

@@ -89,6 +89,12 @@ describe('coerceNoteProps', () => {
     const r = coerceNoteProps({ categories: ['a', 5, '', null], note: true, nickname: '  ', work: undefined }, DEFAULT_MAPPING);
     expect(r.props).toEqual({ categories: ['a', '5'], note: 'true' });
   });
+
+  it('recovers unquoted wikilinks', () => {
+    const r = coerceNoteProps({ spouse: [['Anna']], children: [[['Sem']], [['Lotte']]] }, DEFAULT_MAPPING);
+    expect(r.props).toEqual({ spouse: '[[Anna]]', children: ['[[Sem]]', '[[Lotte]]'] });
+    expect(r.warnings).toEqual([]);
+  });
 });
 
 describe('renderConflictCallout', () => {
