@@ -7,7 +7,6 @@ import { MappingRow } from 'src/contacts/friendly/mapping';
 import {
   inverseProperty,
   linkTarget,
-  MirrorWrite,
   planMirrorWrites,
   relationSnapshot,
   RelationSnapshot,
@@ -21,9 +20,18 @@ export interface MirrorEnv {
   resolveLink(linkpath: string, fromPath: string): string | undefined;
   /** `[[...]]` link to `targetPath`, as written in a note at `fromPath`. */
   linkTo(targetPath: string, fromPath: string): string;
-  /** Sets a property; `undefined` deletes it. */
-  setProperty(path: string, property: string, value: string | string[] | undefined): Promise<void>;
+  /**
+   * Rewrites one property. `fn` receives the live value (read inside the write, not from a cache) and returns
+   * the new one; `undefined` deletes the key. Returning `current` unchanged is a no-op.
+   */
+  updateProperty(
+    path: string,
+    property: string,
+    fn: (current: unknown) => string | string[] | undefined,
+  ): Promise<void>;
 }
+
+type Op = 'add' | 'remove';
 
 const asItems = (value: unknown): unknown[] => (value === undefined || value === null ? [] : Array.isArray(value) ? value : [value]);
 
@@ -43,25 +51,25 @@ export class RelationMirror {
     const before = this.snapshots.get(path) ?? {};
     const after = this.snapshotOf(path, frontmatter);
     this.snapshots.set(path, after);
-    await this.apply(path, before, after, () => this.currentFrontmatter(path, frontmatter));
+    await this.mirrorChanges(path, before, after);
   }
 
+  /** Call once the new note is visible to the env (listed, resolvable). */
   async onCreated(path: string): Promise<void> {
-    // Links that did not resolve before may resolve now.
+    // Links that did not resolve before may resolve now; this also records the new note's own snapshot.
     this.rebuild();
-    const current = this.currentFrontmatter();
-    const loaded = () => current;
     const rows = this.rows();
-    for (const [other, snapshot] of this.snapshots) {
+    const errors: unknown[] = [];
+    for (const [other, snapshot] of [...this.snapshots]) {
       if (other === path) continue;
       for (const [property, entries] of Object.entries(snapshot)) {
         const inverse = inverseProperty(property, rows);
         if (inverse !== undefined && entries.includes(path)) {
-          await this.applyWrite({ source: other, targetPath: path, property: inverse, op: 'add' }, current);
+          await this.attempt({ source: other, targetPath: path, property: inverse, op: 'add' }, errors);
         }
       }
     }
-    await this.apply(path, {}, this.snapshots.get(path) ?? {}, loaded);
+    await this.mirrorChanges(path, {}, this.snapshots.get(path) ?? {}, errors);
   }
 
   onRenamed(_oldPath: string, _newPath: string): void {
@@ -77,17 +85,11 @@ export class RelationMirror {
     return relationSnapshot(frontmatter, this.rows(), (link) => this.env.resolveLink(link, path));
   }
 
-  private currentFrontmatter(path?: string, frontmatter?: Frontmatter): Map<string, Frontmatter> {
-    const map = new Map(this.env.listContacts().map((c) => [c.path, { ...c.frontmatter }]));
-    if (path !== undefined && frontmatter) map.set(path, { ...frontmatter });
-    return map;
-  }
-
-  private async apply(
+  private async mirrorChanges(
     sourcePath: string,
     before: RelationSnapshot,
     after: RelationSnapshot,
-    loadCurrent: () => Map<string, Frontmatter>,
+    errors: unknown[] = [],
   ): Promise<void> {
     const writes = planMirrorWrites(
       sourcePath,
@@ -100,46 +102,62 @@ export class RelationMirror {
       },
       this.rows(),
     );
-    if (writes.length === 0) return;
-    const current = loadCurrent();
-    for (const write of writes) await this.applyWrite({ ...write, source: sourcePath }, current);
+    for (const write of writes) {
+      await this.attempt({ source: sourcePath, targetPath: write.targetPath, property: write.property, op: write.op }, errors);
+    }
+    if (errors.length > 0) {
+      const messages = errors.map((e) => (e instanceof Error ? e.message : String(e))).join('; ');
+      throw new Error(`${errors.length} relationship write(s) failed: ${messages}`);
+    }
   }
 
-  private async applyWrite(
-    write: Pick<MirrorWrite, 'targetPath' | 'property' | 'op'> & { source: string },
-    current: Map<string, Frontmatter>,
+  /** One failing write must not stop the others; the failure is collected in `errors`. */
+  private async attempt(
+    write: { source: string; targetPath: string; property: string; op: Op },
+    errors: unknown[],
   ): Promise<void> {
+    const previous = this.snapshots.get(write.targetPath);
+    try {
+      await this.applyWrite(write);
+    } catch (error) {
+      // The note was not changed after all: keep the snapshot as it was.
+      if (previous) this.snapshots.set(write.targetPath, previous);
+      else this.snapshots.delete(write.targetPath);
+      errors.push(error);
+    }
+  }
+
+  private async applyWrite(write: { source: string; targetPath: string; property: string; op: Op }): Promise<void> {
     const { source, targetPath, property, op } = write;
-    const target = current.get(targetPath);
-    if (!target) return;
     const row = this.rows().find((r) => r.kind === 'relation' && r.property === property);
     const single = row?.kind === 'relation' && row.single === true;
-    const items = asItems(target[property]);
     const pointsToSource = (item: unknown) =>
       typeof item === 'string' && this.env.resolveLink(linkTarget(item.trim()), targetPath) === source;
 
-    let value: string | string[] | undefined;
-    if (op === 'add') {
-      if (items.some(pointsToSource)) return;
-      const link = this.env.linkTo(source, targetPath);
-      if (single) {
-        if (items.some((i) => typeof i === 'string' && i.trim() !== '')) return;
-        value = link;
+    await this.env.updateProperty(targetPath, property, (current) => {
+      const items = asItems(current);
+      let value: string | string[] | undefined;
+      if (op === 'add') {
+        if (items.some(pointsToSource)) return current as string | string[] | undefined;
+        const link = this.env.linkTo(source, targetPath);
+        if (single) {
+          if (items.some((i) => typeof i === 'string' && i.trim() !== '')) return current as string | string[] | undefined;
+          value = link;
+        } else {
+          value = [...(items as string[]), link];
+        }
       } else {
-        value = [...(items as string[]), link];
+        const kept = items.filter((item) => !pointsToSource(item));
+        if (kept.length === items.length) return current as string | string[] | undefined;
+        value = kept.length === 0 ? undefined : single ? (kept[0] as string) : (kept as string[]);
       }
-    } else {
-      const kept = items.filter((item) => !pointsToSource(item));
-      if (kept.length === items.length) return;
-      value = kept.length === 0 ? undefined : single ? (kept[0] as string) : (kept as string[]);
-    }
-
-    // Record the expected state first: the `changed` event of this write must diff to nothing.
-    const next = { ...target };
-    if (value === undefined) delete next[property];
-    else next[property] = value;
-    current.set(targetPath, next);
-    this.snapshots.set(targetPath, this.snapshotOf(targetPath, next));
-    await this.env.setProperty(targetPath, property, value);
+      // Record the expected state before the file is written: the `changed` event of this write must diff to nothing.
+      const snapshot = { ...(this.snapshots.get(targetPath) ?? {}) };
+      const entries = relationSnapshot({ [property]: value }, this.rows(), (link) => this.env.resolveLink(link, targetPath))[property];
+      if (entries) snapshot[property] = entries;
+      else delete snapshot[property];
+      this.snapshots.set(targetPath, snapshot);
+      return value;
+    });
   }
 }

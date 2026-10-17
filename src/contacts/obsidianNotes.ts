@@ -90,12 +90,13 @@ export function obsidianMirrorEnv(app: App): MirrorEnv {
       if (!(file instanceof TFile)) throw new Error(`Contact note not found: ${targetPath}`);
       return `[[${app.metadataCache.fileToLinktext(file, fromPath)}]]`;
     },
-    async setProperty(path, property, value) {
+    async updateProperty(path, property, fn) {
       const file = app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) return;
+      if (!(file instanceof TFile)) throw new Error(`Contact note not found: ${path}`);
       await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-        if (value === undefined) delete frontmatter[property];
-        else frontmatter[property] = value;
+        const next = fn(frontmatter[property]);
+        if (next === undefined) delete frontmatter[property];
+        else frontmatter[property] = next;
       });
     },
   };

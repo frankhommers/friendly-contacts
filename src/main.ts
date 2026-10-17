@@ -76,27 +76,34 @@ export default class ContactsPlugin extends Plugin {
 		const { metadataCache, vault } = this.app;
 		const mirror = new RelationMirror(obsidianMirrorEnv(this.app), () => getSettings().friendly.mapping);
 		let ready = false;
-		const guard = (action: () => Promise<void> | void) => {
+		// One queue: handlers never overlap, so snapshots and writes stay in event order.
+		let queue: Promise<void> = Promise.resolve();
+		const enqueue = (action: () => Promise<void> | void) => {
 			if (!ready) return;
-			Promise.resolve()
-				.then(action)
-				.catch((error) => {
-					console.error('Friendly Contacts: relationship mirroring failed', error);
-					new Notice('Relationship mirroring failed; see the console.');
-				});
+			queue = queue.then(action).catch((error) => {
+				console.error('Friendly Contacts: relationship mirroring failed', error);
+				new Notice('Relationship mirroring failed; see the console.');
+			});
 		};
 		const isContactFile = (file: TAbstractFile): file is TFile =>
 			file instanceof TFile && file.extension === 'md' && isFileInFolder(file);
+		// 'create' fires before the note is in the metadata cache; its first 'changed' event is the cue.
+		const pendingCreated = new Set<string>();
 
 		this.registerEvent(metadataCache.on('changed', (file, _data, cache) => {
 			if (!isContactFile(file) || !cache.frontmatter || !isContactFrontmatter(cache.frontmatter)) return;
-			guard(() => mirror.onChanged(file.path, { ...cache.frontmatter }));
+			if (pendingCreated.delete(file.path)) enqueue(() => mirror.onCreated(file.path));
+			else enqueue(() => mirror.onChanged(file.path, { ...cache.frontmatter }));
 		}));
 		this.registerEvent(vault.on('create', (file) => {
-			if (isContactFile(file)) guard(() => mirror.onCreated(file.path));
+			if (ready && isContactFile(file)) pendingCreated.add(file.path);
 		}));
 		this.registerEvent(vault.on('rename', (file, oldPath) => {
-			if (isContactFile(file)) guard(() => mirror.onRenamed(oldPath, file.path));
+			const wasContact = oldPath.endsWith('.md') && oldPath.startsWith(getSettings().contactsFolder);
+			if (wasContact || isContactFile(file)) {
+				if (pendingCreated.delete(oldPath)) pendingCreated.add(file.path);
+				enqueue(() => mirror.onRenamed(oldPath, file.path));
+			}
 		}));
 
 		const start = () => {
