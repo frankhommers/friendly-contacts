@@ -1,6 +1,7 @@
 import "src/insights/insightLoading";
 
 import {Notice, Plugin} from 'obsidian';
+import { setPluginDir } from "src/context/sharedAppContext";
 import { initSettings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
@@ -16,6 +17,7 @@ export default class ContactsPlugin extends Plugin {
 
 	async onload() {
 
+		setPluginDir(this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`);
 		await initSettings(this.loadData.bind(this), this.saveData.bind(this));
 		this.registerView(
 			CONTACTS_VIEW_CONFIG.type,

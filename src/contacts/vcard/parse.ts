@@ -158,6 +158,20 @@ function parseToSingles(vCardsRaw:string): string[] {
 }
 
 /**
+ * One card's content lines (without BEGIN/END, each line ending in a newline) -> record.
+ */
+export function parseRecord(singleVCard: string): VCardForObsidianRecord {
+  const vCardObject: VCardForObsidianRecord = {};
+  for (const line of unfoldVCardLines(singleVCard)) {
+    const parsedLine = parseVCardLine(line);
+    if (parsedLine) {
+      Object.assign(vCardObject, indexIfKeysExist(vCardObject, parsedLine));
+    }
+  }
+  return vCardObject;
+}
+
+/**
  * Parse vCard file and yields [slug, vCardObject] tuples.
  * `slug` may be undefined for vcards without valid name info.
  */
@@ -165,16 +179,7 @@ export async function* parse(vCardData: string): AsyncGenerator<[string | undefi
   const singles: string[] = parseToSingles(vCardData);
 
   for (const singleVCard of singles) {
-    const unfoldedLines = unfoldVCardLines(singleVCard);
-    const vCardObject: VCardForObsidianRecord = {};
-
-    for (const line of unfoldedLines) {
-      const parsedLine = parseVCardLine(line);
-      if (parsedLine) {
-        const indexedParsedLine = indexIfKeysExist(vCardObject, parsedLine)
-        Object.assign(vCardObject, indexedParsedLine);
-      }
-    }
+    const vCardObject = parseRecord(singleVCard);
 
     /**
      * TODO: ok, hmm. now we are skipping if we can not generate a name.

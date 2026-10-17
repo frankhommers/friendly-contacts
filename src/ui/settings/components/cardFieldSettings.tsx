@@ -6,6 +6,7 @@ import { useSettings } from "src/ui/hooks/settingsHook";
 import { Icon } from "src/ui/sidebar/components/elements/Icon";
 import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { parseKey } from "src/contacts";
+import { isMappedProperty } from "src/contacts/friendly/mapping";
 import { VCardSupportedKey } from "src/contacts/vcard";
 
 type ValidateAddFieldResult = {
@@ -16,10 +17,6 @@ export function CardFieldSettings() {
   const myHookSettings: ContactsPluginSettings|undefined = useSettings();
 
   const [inputValue, setInputValue] = React.useState<string>("");
-  const setAndUppercase = (value: string) => {
-    const upperValue = value.toUpperCase();
-      setInputValue(upperValue);
-  }
 
   const handleFieldsSettingReset = () => {
     updateSetting("createFieldsKeys", DEFAULT_SETTINGS.createFieldsKeys);
@@ -52,6 +49,10 @@ export function CardFieldSettings() {
       return { valid: false };
     }
 
+    if (isMappedProperty(fieldkey, myHookSettings.friendly.mapping)) {
+      return { valid: true };
+    }
+
     const field = parseKey(fieldkey);
     const keySupported = field.key in VCardSupportedKey
     const CustomProperty = field.key.startsWith("X-")
@@ -62,7 +63,7 @@ export function CardFieldSettings() {
     }
 
     showFieldRejectedNotice(
-      `Field "${field.key}" isn’t supported. Check the plugin README for supported fields, or prefix custom fields with X-.`
+      `Field "${field.key}" isn’t supported. Use a property name such as mobile or city, or prefix custom fields with X-.`
     );
 
     return {
@@ -72,12 +73,15 @@ export function CardFieldSettings() {
 
   const handleAddField = () => {
     if (!myHookSettings) return;
-    const {valid} = validateAddField(inputValue)
+    // Friendly property names are lower-case; anything else is a vCard key.
+    const typed = inputValue.trim();
+    const fieldKey = isMappedProperty(typed, myHookSettings.friendly.mapping) ? typed : typed.toUpperCase();
+    const {valid} = validateAddField(fieldKey)
     if(!valid) {
       return;
     }
 
-    const updated = [...myHookSettings.createFieldsKeys, inputValue];
+    const updated = [...myHookSettings.createFieldsKeys, fieldKey];
     updateSetting("createFieldsKeys", updated);
     setInputValue('');
   }
@@ -131,7 +135,7 @@ export function CardFieldSettings() {
             <input
               type="text"
               value={inputValue}
-              onChange={(e) => setAndUppercase(e.target.value)}
+              onChange={(e) => setInputValue(e.target.value)}
               placeholder="Enter field name"
             />
             <button onClick={handleAddField}>

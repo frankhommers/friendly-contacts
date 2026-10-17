@@ -30,6 +30,7 @@ vi.mock("src/context/sharedSettingsContext", () => {
   return {
     getSettings: vi.fn(() => ({
       createFieldsKeys: DEFAULT_SETTINGS.createFieldsKeys,
+      friendly: DEFAULT_SETTINGS.friendly,
     })),
   };
 });
@@ -69,12 +70,13 @@ describe('vcard creatEmpty', () => {
     expect(warnSpy.mock.calls[0][0]).toMatch(/^No name found for record/);
     warnSpy.mockRestore();
 
-    const expectedFields = ['N.PREFIX', 'N.GN', 'N.MN', 'N.FN', 'N.SUFFIX'];
-    expectedFields.forEach((field) => {
-      expect(empty).toHaveProperty(field);
-    });
-    expect(empty['N.GN']).toBe('Foo');
-    expect(empty['N.FN']).toBe('Bar');
+    // createEmpty gives friendly properties: the name asked for, the default fields, a uid.
+    expect(empty['name']).toBe('Foo Bar');
+    expect(empty['firstname']).toBe('Foo');
+    expect(empty['lastname']).toBe('Bar');
+    expect(empty['mobile']).toBe('');
+    expect(empty['categories']).toBe('');
+    expect(empty['uid']).toMatch(/^urn:uuid:/);
   });
 });
 
@@ -318,14 +320,23 @@ describe('vcard addDefaultFields', () => {
 
     expect(result['N.GN']).toBe('Liam');
     expect(result[ 'URL[WORK]']).toBe('https://storycraft.ie/liam');
-    expect(result['N.PREFIX']).toBe('');
-    expect(result['N.MN']).toBe('');
-    expect(result['N.SUFFIX']).toBe('');
-    expect(result['TEL[HOME]']).toBe('');
-    expect(result['TEL[WORK]']).toBe('');
     expect(result['EMAIL[HOME]']).toBe('liam.green@lucky.ie');
     expect(result['EMAIL[WORK]']).toBe('liam@storycraft.ie');
-    expect(result['ROLE']).toBe('');
     expect(result['CATEGORIES']).toBe('Writing, Mythology');
+    // The default fields are friendly property names now.
+    expect(result['firstname']).toBe('');
+    expect(result['mobile']).toBe('');
+    expect(result['work-email']).toBe('');
+  });
+
+  it('adds friendly default fields to a friendly note and keeps its values', async () => {
+    const result = await vcard.addDefaultFields({ basename: 'friendly.frontmatter' } as TFile);
+
+    expect(result['name']).toBe('Jan de Vries');
+    expect(result['mobile']).toBe('06-12345678');
+    expect(result['TEL[WORK]']).toBe('030-1234567');
+    expect(result['firstname']).toBe('');
+    expect(result['city']).toBe('');
+    expect(result).not.toHaveProperty('N.GN');
   });
 });

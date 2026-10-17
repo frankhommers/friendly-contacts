@@ -1,70 +1,53 @@
-import { parseYaml, stringifyYaml, TFile } from "obsidian";
+import { TFile } from "obsidian";
+import { friendlyKey, isContactFrontmatter, isOldStyleNote, legacyRecord } from "src/contacts/friendlyNotes";
 import { getApp } from "src/context/sharedAppContext";
-
-import { frontMatterRender } from "./contactMdTemplate";
+import { getSettings } from "src/context/sharedSettingsContext";
 
 export type Contact = {
 	data: Record<string, any>;
 	file: TFile;
 }
 
+/** Contact notes among `files`; `data` is the legacy (`TEL[CELL]`-style) record of each. */
 export async function getFrontmatterFromFiles(files: TFile[]) {
 	const { metadataCache } = getApp();
+  const rows = getSettings().friendly.mapping;
   const contactsData: Contact[] = [];
   for (const file of files) {
 		const frontMatter = metadataCache.getFileCache(file)?.frontmatter
-		if ((frontMatter?.['N.GN'] && frontMatter?.['N.FN']) || frontMatter?.['FN']) {
+		if (frontMatter && isContactFrontmatter(frontMatter)) {
 			contactsData.push({
 				file,
-				data: frontMatter,
+				data: legacyRecord(frontMatter, rows),
 			});
 		}
   }
   return contactsData;
 }
 
-export async function updateFrontMatter(file: TFile, record: Record<string, any>) {
-  const app = getApp();
+function currentFile(file: TFile): TFile {
   // The file object can be a cloned object and therefor we ask obsidian to fetch again.
-  const myFile = app.vault.getAbstractFileByPath(file.path);
+  const myFile = getApp().vault.getAbstractFileByPath(file.path);
   if (!myFile || !(myFile instanceof TFile)) {
     throw new Error("while updating the frontmatter file should always exist even if the TFile is cloned");
   }
-  const content = await app.vault.read(myFile);
-  const match = content.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!match) {
-    return;
-  }
-  const body = content.slice(match[0].length);
-  const newFrontMatter= frontMatterRender(record);
-  const newContent = newFrontMatter + body;
-  await app.vault.modify(myFile, newContent);
+  return myFile;
 }
 
+/** Sets every key of `record` in the note's frontmatter; other keys and the body stay as they are. */
+export async function updateFrontMatter(file: TFile, record: Record<string, any>) {
+  await getApp().fileManager.processFrontMatter(currentFile(file), (frontmatter: Record<string, unknown>) => {
+    Object.assign(frontmatter, record);
+  });
+}
 
+/**
+ * Sets one value given by its vCard key (`UID`, `PHOTO`, `FN`). Friendly notes get the friendly
+ * property (`uid`, `photo`, `name`); old-style notes keep the vCard key.
+ */
 export async function updateFrontMatterValue(file: TFile, key: string, value: string) {
-  const app = getApp();
-  // The file object can be a cloned object and therefor we ask obsidian to fetch again.
-  const myFile = app.vault.getAbstractFileByPath(file.path);
-  if (!myFile || !(myFile instanceof TFile)) {
-    throw new Error("while updating the frontmatter file should always exist even if the TFile is cloned");
-  }
-	const content = await app.vault.read(myFile);
-
-	const match = content.match(/^---\n([\s\S]*?)\n---\n?/);
-
-	let yamlObj: any = {};
-	let body = content;
-
-	if (match) {
-		yamlObj = parseYaml(match[1]) || {};
-		body = content.slice(match[0].length);
-	}
-
-	yamlObj[key] = value;
-
-	const newFrontMatter = '---\n' + stringifyYaml(yamlObj) + '---\n';
-	const newContent = newFrontMatter + body;
-
-	await app.vault.modify(myFile, newContent);
+  const rows = getSettings().friendly.mapping;
+  await getApp().fileManager.processFrontMatter(currentFile(file), (frontmatter: Record<string, unknown>) => {
+    frontmatter[isOldStyleNote(frontmatter, rows) ? key : friendlyKey(key, rows)] = value;
+  });
 }

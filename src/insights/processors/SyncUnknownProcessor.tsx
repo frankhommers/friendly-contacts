@@ -1,32 +1,21 @@
 import * as React from "react";
-import {Contact, mdRender} from "src/contacts";
-import {vcard} from "src/contacts/vcard";
+import {Contact} from "src/contacts";
+import {importRemoteCard} from "src/contacts/obsidianNotes";
 import {getApp} from "src/context/sharedAppContext";
 import {getSettings} from "src/context/sharedSettingsContext";
-import {createContactFile} from "src/file/file";
 import {InsightProcessor, InsightQueItem, PropsRenderGroup, RunType} from "src/insights/insight.d";
 import {insightQueueStore} from "src/insights/insightsQueStore";
-import {ContactsPluginSettings} from "src/settings/settings";
 import {sync} from "src/sync";
 
 
 const ImportUnknownVcardToVault = async (queItem: InsightQueItem) => {
-  const app = getApp();
-  const mySettings: ContactsPluginSettings = getSettings();
   const rawCard = await sync.pullFromRemote(queItem.data.href);
   if (rawCard) {
     // #90 for now made the same as in the rootView skipping the record without notifying the user.
-    for await (const [slug, record] of vcard.parse(rawCard.raw)) {
-      if (slug) {
-        const mdContent = mdRender(record, mySettings.defaultHashtag);
-        const filename = slug + '.md';
-        await createContactFile(app, mySettings.contactsFolder, mdContent, filename);
-      } else {
-        // Contact has no valid name/slug
-        console.warn("Skipping contact without name", record);
-      }
-      await insightQueueStore.remove(queItem);
+    if (!(await importRemoteCard(getApp(), rawCard, queItem.data))) {
+      console.warn("Skipping contact without name", rawCard.raw);
     }
+    await insightQueueStore.remove(queItem);
   }
 }
 

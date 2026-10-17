@@ -1,12 +1,18 @@
 import { Platform } from "obsidian";
 import { signal } from "@preact/signals-core";
 import { insightService } from "src/insights/insightService";
-import { DEFAULT_SETTINGS } from "src/settings/setting";
+import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import { ContactsPluginSettings } from "src/settings/settings.d";
 import { deepCloneObject } from "src/util/deepCloneObject";
 
 export const settings = signal<ContactsPluginSettings | undefined>(undefined);
 let saveData: (data: any) => Promise<void>;
+
+function isLegacyDefault(keys: unknown): boolean {
+  return Array.isArray(keys)
+    && keys.length === LEGACY_CREATE_FIELDS_KEYS.length
+    && keys.every((key, i) => key === LEGACY_CREATE_FIELDS_KEYS[i]);
+}
 
 export async function initSettings(
   loadData: () => Promise<any>,   // a callable async function
@@ -33,6 +39,9 @@ export async function initSettings(
         ...insightsSettingDefaults,
         ...(loaded.processors ?? {})
       },
+      createFieldsKeys: isLegacyDefault(loaded.createFieldsKeys)
+        ? DEFAULT_SETTINGS.createFieldsKeys
+        : (loaded.createFieldsKeys ?? DEFAULT_SETTINGS.createFieldsKeys),
       friendly: loaded.friendly ?? {
         ...DEFAULT_SETTINGS.friendly,
         // Mirroring on a phone causes sync-conflict noise; off by default there.

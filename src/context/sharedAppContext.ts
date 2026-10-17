@@ -16,3 +16,15 @@ export function getApp(): App {
 export function clearApp() {
   app.value = undefined;
 }
+
+/** The plugin's folder in the vault config (`manifest.dir`), for files that are not notes. */
+let pluginDir: string | undefined;
+
+export function setPluginDir(dir: string) {
+  pluginDir = dir;
+}
+
+export function getPluginDir(): string {
+  if (!pluginDir) throw new Error('Plugin directory has not been set.');
+  return pluginDir;
+}

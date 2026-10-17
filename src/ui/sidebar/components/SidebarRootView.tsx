@@ -1,6 +1,8 @@
 import { App, MarkdownView, normalizePath, Notice, TFile, TFolder } from "obsidian";
 import * as React from "react";
-import { Contact, getFrontmatterFromFiles, mdRender } from "src/contacts";
+import { Contact, getFrontmatterFromFiles } from "src/contacts";
+import { legacyRecord, renderFriendlyNote, splitCards } from "src/contacts/friendlyNotes";
+import { importCard } from "src/contacts/obsidianNotes";
 import { vcard } from "src/contacts/vcard";
 import { getApp } from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
@@ -27,22 +29,18 @@ interface SidebarRootViewProps {
   createDefaultPluginFolder: () => Promise<void>;
 }
 
-const importVCFContacts = async (fileContent: string, app: App, settings: ContactsPluginSettings) => {
+const importVCFContacts = async (fileContent: string, app: App) => {
   if (fileContent === '') return;
 
   let imported = 0;
   let skipped = 0;
 
-  // Use generator to avoid double parsing and reduce memory usage
-  for await (const [slug, record] of vcard.parse(fileContent)) {
-    if (slug) {
-      const mdContent = mdRender(record, settings.defaultHashtag);
-      const filename = slug + '.md';
-      await createContactFile(app, settings.contactsFolder, mdContent, filename);
+  for (const card of splitCards(fileContent)) {
+    if (await importCard(app, card)) {
       imported++;
     } else {
       // Contact has no valid name/slug
-      console.warn("Skipping contact without name", record);
+      console.warn("Skipping contact without name", card);
       skipped++;
     }
   }
@@ -140,9 +138,10 @@ export const SidebarRootView = (props: SidebarRootViewProps) => {
   }, [workspace]);
 
   async function createNewContact() {
-      const records = await vcard.createEmpty();
-      const mdContent = mdRender(records, mySettings.defaultHashtag);
-      const filePath = await createContactFile(app, mySettings.contactsFolder, mdContent, createFileName(records));
+      const props = await vcard.createEmpty();
+      const rows = mySettings.friendly.mapping;
+      const mdContent = renderFriendlyNote(props, mySettings.defaultHashtag, rows);
+      const filePath = await createContactFile(app, mySettings.contactsFolder, mdContent, createFileName(legacyRecord(props, rows)));
       if(filePath) {
         openFile(app.vault.getAbstractFileByPath(filePath) as TFile, workspace)
       }
@@ -167,7 +166,7 @@ export const SidebarRootView = (props: SidebarRootViewProps) => {
                       typeof fileContent === 'string'
                         ? fileContent
                         : await fileContent.text();
-                    await importVCFContacts(content, app, mySettings);
+                    await importVCFContacts(content, app);
                   })
                 }}
                 exportAllVCF={async() => {

@@ -69,7 +69,7 @@ export const processAvatar = async (contact: Contact) => {
 	} catch (err) {
 		throw new Error(
 			"hmmm... Could not load or process the avatar image. The website hosting the image likely does not allow access from other apps (CORS restriction). " +
-			"Try removing the 'PHOTO' property to upload a file from disk."
+			"Try removing the photo property to upload a file from disk."
 		);
 	}
 }

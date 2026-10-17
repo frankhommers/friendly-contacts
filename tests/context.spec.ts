@@ -18,7 +18,7 @@ vi.mock("src/insights/insightService", () => ({
   },
 }));
 
-import { DEFAULT_SETTINGS } from "src/settings/setting";
+import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import type { ContactsPluginSettings } from 'src/settings/settings.d';
 import { afterEach,describe, expect, it, vi } from 'vitest';
 
@@ -106,6 +106,20 @@ describe('sharedSettingsContext', () => {
     } finally {
       (Platform as { isMobileApp: boolean }).isMobileApp = false;
     }
+  });
+
+  it('replaces the old default contact fields with the friendly ones', async () => {
+    await initSettings(async () => ({ ...mockSettings, createFieldsKeys: [...LEGACY_CREATE_FIELDS_KEYS] }), saveData);
+    expect(getSettings().createFieldsKeys).toEqual(DEFAULT_SETTINGS.createFieldsKeys);
+    expect(DEFAULT_SETTINGS.createFieldsKeys).toEqual([
+      'firstname', 'lastname', 'mobile', 'phone', 'work-phone', 'email', 'work-email', 'birthday',
+      'street', 'city', 'postcode', 'country', 'website', 'company', 'title', 'categories',
+    ]);
+  });
+
+  it('keeps a customised list of contact fields', async () => {
+    await initSettings(async () => mockSettings, saveData);
+    expect(getSettings().createFieldsKeys).toEqual(['N.FN']);
   });
 
   it('setSettings should overwrite the complete settings object', async () => {
