@@ -2,7 +2,7 @@ import "src/insights/insightLoading";
 
 import {Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
 import { setPluginDir } from "src/context/sharedAppContext";
-import { getSettings, initSettings } from "src/context/sharedSettingsContext";
+import { getSettings, initSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
 import { CONTACTS_VIEW_CONFIG } from "src/util/constants";
@@ -112,8 +112,7 @@ export default class ContactsPlugin extends Plugin {
 
 	/** Mirrors relationship properties between contact notes (`children` <-> `parents`). */
 	private setupRelationMirror() {
-		const settings = getSettings();
-		if (!settings.friendly.mirrorRelations) return;
+		if (!getSettings().friendly.mirrorRelations) return;
 		const { metadataCache, vault } = this.app;
 		const mirror = new RelationMirror(obsidianMirrorEnv(this.app), () => getSettings().friendly.mapping);
 		let ready = false;
@@ -145,6 +144,17 @@ export default class ContactsPlugin extends Plugin {
 				if (pendingCreated.delete(oldPath)) pendingCreated.add(file.path);
 				enqueue(() => mirror.onRenamed(oldPath, file.path));
 			}
+		}));
+
+		// The snapshots belong to the contacts folder: a Move or a changed folder setting starts over from the new one.
+		let folder = getSettings().contactsFolder;
+		this.register(settings.subscribe((value) => {
+			if (!value || value.contactsFolder === folder) return;
+			folder = value.contactsFolder;
+			enqueue(() => {
+				pendingCreated.clear();
+				mirror.rebuild();
+			});
 		}));
 
 		const start = () => {

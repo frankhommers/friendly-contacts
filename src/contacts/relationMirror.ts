@@ -77,7 +77,8 @@ export class RelationMirror {
     this.rebuild();
   }
 
-  private rebuild(): void {
+  /** Snapshots of every contact note, from scratch (e.g. after the contacts folder changed). */
+  rebuild(): void {
     this.snapshots = new Map(this.env.listContacts().map((c) => [c.path, this.snapshotOf(c.path, c.frontmatter)]));
   }
 
