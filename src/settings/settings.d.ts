@@ -17,7 +17,6 @@ export interface ContactsPluginSettings {
 
 export interface FriendlySettings {
   mapping: MappingRow[];
-  mirrorRelations: boolean;
 }
 
 

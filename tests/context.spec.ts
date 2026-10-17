@@ -1,5 +1,5 @@
 import { effect } from "@preact/signals-core";
-import { App, Platform } from "obsidian";
+import { App } from "obsidian";
 import { clearApp,getApp, setApp } from 'src/context/sharedAppContext'
 import {
   clearSettings,
@@ -38,7 +38,7 @@ const mockSettings: ContactsPluginSettings = {
     authType: 'apikey'
   },
   createFieldsKeys:['N.FN'],
-  friendly: { mapping: [], mirrorRelations: false },
+  friendly: { mapping: [], mirrorRelations: false } as ContactsPluginSettings['friendly'],
 };
 
 const testDefaultSettings = {
@@ -89,23 +89,11 @@ describe('sharedSettingsContext', () => {
     const { friendly: _omitted, ...legacy } = mockSettings;
     await initSettings(async () => legacy, saveData);
     expect(getSettings().friendly).toEqual(DEFAULT_SETTINGS.friendly);
-    expect(getSettings().friendly.mirrorRelations).toBe(true);
   });
 
-  it('keeps a stored friendly setting', async () => {
+  it('keeps a stored mapping and drops a stored mirrorRelations (it is per device now)', async () => {
     await initSettings(async () => mockSettings, saveData);
-    expect(getSettings().friendly).toEqual({ mapping: [], mirrorRelations: false });
-  });
-
-  it('turns mirroring off on first load on mobile', async () => {
-    (Platform as { isMobileApp: boolean }).isMobileApp = true;
-    try {
-      await initSettings(async () => {}, saveData);
-      expect(getSettings().friendly.mirrorRelations).toBe(false);
-      expect(getSettings().friendly.mapping).toEqual(DEFAULT_SETTINGS.friendly.mapping);
-    } finally {
-      (Platform as { isMobileApp: boolean }).isMobileApp = false;
-    }
+    expect(getSettings().friendly).toEqual({ mapping: [] });
   });
 
   it('replaces the old default contact fields with the friendly ones', async () => {

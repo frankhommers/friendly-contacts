@@ -2,7 +2,8 @@ import { App, Notice } from "obsidian";
 import * as React from "react";
 import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
 import { notesToRename, renamePropertyInNotes } from "src/contacts/obsidianNotes";
-import { getSettings, setSettings, updateSetting } from "src/context/sharedSettingsContext";
+import { getSettings, setSettings } from "src/context/sharedSettingsContext";
+import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 
 /** A text input that keeps what is typed locally and hands it over when it loses focus. */
@@ -27,7 +28,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const [rows, setRows] = React.useState<MappingRow[]>(() => getSettings().friendly.mapping);
   const saved = React.useRef<MappingRow[]>(rows);
   const [errors, setErrors] = React.useState<string[]>([]);
-  const [mirror, setMirror] = React.useState(getSettings().friendly.mirrorRelations);
+  const [mirror, setMirror] = React.useState(() => mirrorRelationsOnThisDevice(app));
 
   const save = async (mapping: MappingRow[]) => {
     const current = getSettings();
@@ -122,9 +123,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
             role="switch"
             aria-checked={mirror}
             tabIndex={0}
-            onClick={async () => {
+            onClick={() => {
+              setMirrorRelationsOnThisDevice(app, !mirror);
               setMirror(!mirror);
-              await updateSetting("friendly.mirrorRelations", !mirror);
             }}
           >
             <input type="checkbox" tabIndex={0} checked={mirror} readOnly />

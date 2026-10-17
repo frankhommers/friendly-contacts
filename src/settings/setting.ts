@@ -43,7 +43,6 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
     'street', 'city', 'postcode', 'country', 'website', 'company', 'title', 'categories',
   ],
   friendly: {
-    mapping: DEFAULT_MAPPING,
-    mirrorRelations: true
+    mapping: DEFAULT_MAPPING
   }
 }

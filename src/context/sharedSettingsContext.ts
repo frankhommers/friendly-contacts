@@ -1,4 +1,3 @@
-import { Platform } from "obsidian";
 import { signal } from "@preact/signals-core";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
@@ -42,10 +41,10 @@ export async function initSettings(
       createFieldsKeys: isLegacyDefault(loaded.createFieldsKeys)
         ? DEFAULT_SETTINGS.createFieldsKeys
         : (loaded.createFieldsKeys ?? DEFAULT_SETTINGS.createFieldsKeys),
-      friendly: loaded.friendly ?? {
-        ...DEFAULT_SETTINGS.friendly,
-        // Mirroring on a phone causes sync-conflict noise; off by default there.
-        mirrorRelations: !Platform.isMobileApp
+      // Only the mapping lives here; "mirror relationships" is per device (src/settings/deviceSettings.ts),
+      // so an old mirrorRelations value in data.json is dropped.
+      friendly: {
+        mapping: loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping
       }
     };
     await setSettings(initializedSettings);

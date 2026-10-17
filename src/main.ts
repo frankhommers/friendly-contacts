@@ -17,6 +17,7 @@ import { isFileInFolder } from "src/file/file";
 import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
+import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 
 export default class ContactsPlugin extends Plugin {
 	settings!: ContactsPluginSettings;
@@ -112,7 +113,7 @@ export default class ContactsPlugin extends Plugin {
 
 	/** Mirrors relationship properties between contact notes (`children` <-> `parents`). */
 	private setupRelationMirror() {
-		if (!getSettings().friendly.mirrorRelations) return;
+		if (!mirrorRelationsOnThisDevice(this.app)) return;
 		const { metadataCache, vault } = this.app;
 		const mirror = new RelationMirror(obsidianMirrorEnv(this.app), () => getSettings().friendly.mapping);
 		let ready = false;
