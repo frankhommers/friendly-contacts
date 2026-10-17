@@ -45,6 +45,14 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
 
   const writeIndex = (index: SyncIndex) => store.write(indexPath, JSON.stringify(index, null, 2));
 
+  // set/remove read-modify-write index.json; run them one at a time so concurrent calls cannot drop entries.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serialized = (job: () => Promise<void>): Promise<void> => {
+    const run = queue.then(job, job);
+    queue = run.catch(() => undefined);
+    return run;
+  };
+
   return {
     async get(uid) {
       const meta = (await readIndex())[cleanUid(uid)];
@@ -54,17 +62,21 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
       }
       return { raw, etag: meta.etag, href: meta.href };
     },
-    async set(uid, entry) {
-      await store.write(rawPath(uid), entry.raw);
-      const index = await readIndex();
-      index[cleanUid(uid)] = { etag: entry.etag, href: entry.href };
-      await writeIndex(index);
+    set(uid, entry) {
+      return serialized(async () => {
+        await store.write(rawPath(uid), entry.raw);
+        const index = await readIndex();
+        index[cleanUid(uid)] = { etag: entry.etag, href: entry.href };
+        await writeIndex(index);
+      });
     },
-    async remove(uid) {
-      await store.remove(rawPath(uid));
-      const index = await readIndex();
-      delete index[cleanUid(uid)];
-      await writeIndex(index);
+    remove(uid) {
+      return serialized(async () => {
+        await store.remove(rawPath(uid));
+        const index = await readIndex();
+        delete index[cleanUid(uid)];
+        await writeIndex(index);
+      });
     },
   };
 }
