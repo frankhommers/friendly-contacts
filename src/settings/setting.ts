@@ -1,3 +1,4 @@
+import { DEFAULT_MAPPING } from "src/contacts/friendly/mapping";
 import { ContactsPluginSettings } from "src/settings/settings";
 
 export const DEFAULT_SETTINGS: ContactsPluginSettings = {
@@ -34,6 +35,9 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
     "ORG",
     "ROLE",
     "CATEGORIES"
-  ]
+  ],
+  friendly: {
+    mapping: DEFAULT_MAPPING,
+    mirrorRelations: true
+  }
 }
-

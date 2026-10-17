@@ -1,3 +1,4 @@
+import { Platform } from "obsidian";
 import { signal } from "@preact/signals-core";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS } from "src/settings/setting";
@@ -31,6 +32,11 @@ export async function initSettings(
       processors: {
         ...insightsSettingDefaults,
         ...(loaded.processors ?? {})
+      },
+      friendly: loaded.friendly ?? {
+        ...DEFAULT_SETTINGS.friendly,
+        // Mirroring on a phone causes sync-conflict noise; off by default there.
+        mirrorRelations: !Platform.isMobileApp
       }
     };
     await setSettings(initializedSettings);

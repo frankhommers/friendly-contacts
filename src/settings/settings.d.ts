@@ -1,3 +1,4 @@
+import type { MappingRow } from "src/contacts/friendly/mapping";
 
 export type AuthType = "basic" | "apikey";
 export type SyncSelected = "None" | "CardDAV";
@@ -11,6 +12,12 @@ export interface ContactsPluginSettings {
   groupInsights: boolean;
   CardDAV: CardDavSyncSettings;
   createFieldsKeys: string[]
+  friendly: FriendlySettings;
+}
+
+export interface FriendlySettings {
+  mapping: MappingRow[];
+  mirrorRelations: boolean;
 }
 
 
