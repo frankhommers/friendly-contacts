@@ -1,0 +1,26 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Apple Inc.//iPhone OS 17.0//EN
+N:de Vries;Jan;;;
+FN:Jan de Vries
+ORG:Bakker\, Zonen;
+TITLE:Baker
+item1.TEL;type=CELL;type=VOICE;type=pref:06-12345678
+item1.X-ABLabel:_$!<Mobile>!$_
+TEL;type=WORK;type=VOICE:030-1234567
+TEL;type=WORK;type=FAX:030-7654321
+EMAIL;type=INTERNET;type=HOME;type=pref:jan@example.nl
+EMAIL;type=INTERNET:jan2@example.nl
+EMAIL;type=INTERNET;type=WORK:jan@bakker.nl
+item2.URL;type=pref:https://jan.example.nl
+item2.X-ABLabel:_$!<HomePage>!$_
+ADR;type=HOME;type=pref:;;Dorpsstraat 1;Utrecht;;1234 AB;Nederland
+ADR;type=WORK:;;Industrieweg 9\;unit 3;Utrecht;;3542 AA;
+NOTE:Met at the market\nlikes rye
+BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12
+X-CREATED:2019-04-02T10:11:12Z
+UID:1234ABCD-0000-4000-8000-000000000001
+REV:2024-01-01T00:00:00Z
+PHOTO;ENCODING=b;TYPE=JPEG:/9j/4AAQSkZJRgABAQEASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAA
+ MAAAABAAEAAKACAAQAAAABAAAAAqADAAQAAAABAAAAAgAAAAD/7QA4UGhvdG9zaG9w
+END:VCARD

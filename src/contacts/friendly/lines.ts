@@ -1,0 +1,160 @@
+/**
+ * Lossless vCard line model.
+ *
+ * A card is parsed into a flat list of lines. Names and parameter names are
+ * normalised to upper case; parameter values and the value are kept exactly as
+ * on the wire (still escaped, quotes included), so a line that was not touched
+ * can be written back unchanged.
+ */
+
+export interface VCardLine {
+  group?: string;
+  name: string;
+  params: [string, string][];
+  value: string;
+}
+
+const MAX_OCTETS = 75;
+
+/** Splits `s` at every `sep` that is outside double quotes. */
+function splitOutsideQuotes(s: string, sep: string, limit = Infinity): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < s.length && parts.length < limit - 1; i++) {
+    const c = s[i];
+    if (c === '"') quoted = !quoted;
+    else if (c === sep && !quoted) {
+      parts.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(s.slice(start));
+  return parts;
+}
+
+function parseLine(text: string): VCardLine | undefined {
+  const [head, ...rest] = splitOutsideQuotes(text, ':', 2);
+  if (rest.length === 0) return undefined;
+  const [nameWithGroup, ...rawParams] = splitOutsideQuotes(head, ';');
+  const dot = nameWithGroup.indexOf('.');
+  const group = dot > 0 ? nameWithGroup.slice(0, dot) : undefined;
+  const name = (dot > 0 ? nameWithGroup.slice(dot + 1) : nameWithGroup).toUpperCase();
+  const params = rawParams
+    .filter((p) => p !== '')
+    .map((p): [string, string] => {
+      const eq = p.indexOf('=');
+      if (eq < 0) return ['TYPE', p];
+      return [p.slice(0, eq).toUpperCase(), p.slice(eq + 1)];
+    });
+  const line: VCardLine = { name, params, value: rest[0] };
+  if (group !== undefined) line.group = group;
+  return line;
+}
+
+/** Parses one card; unfolds, drops BEGIN/END, keeps everything else in order. */
+export function parseCard(raw: string): VCardLine[] {
+  const unfolded = raw.replace(/(\r\n|\n|\r)[ \t]/g, '');
+  const lines: VCardLine[] = [];
+  for (const text of unfolded.split(/\r\n|\n|\r/)) {
+    if (text === '') continue;
+    const line = parseLine(text);
+    if (!line) continue;
+    if (!line.group && (line.name === 'BEGIN' || line.name === 'END')) continue;
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** One unfolded content line (no line terminator). */
+export function serializeLine(line: VCardLine): string {
+  const params = line.params.map(([k, v]) => `;${k}=${v}`).join('');
+  return `${line.group ? `${line.group}.` : ''}${line.name}${params}:${line.value}`;
+}
+
+/** Folds at 75 octets, never inside a UTF-8 sequence. Continuations start with one space. */
+function fold(text: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let size = 0;
+  for (const ch of text) {
+    const bytes = Buffer.byteLength(ch, 'utf8');
+    if (size + bytes > MAX_OCTETS) {
+      out.push(current);
+      current = ' ';
+      size = 1;
+    }
+    current += ch;
+    size += bytes;
+  }
+  out.push(current);
+  return out;
+}
+
+export function serializeCard(lines: VCardLine[]): string {
+  const physical = ['BEGIN:VCARD'];
+  for (const line of lines) physical.push(...fold(serializeLine(line)));
+  physical.push('END:VCARD');
+  return physical.join('\r\n') + '\r\n';
+}
+
+export function getParam(line: VCardLine, name: string): string | undefined {
+  const upper = name.toUpperCase();
+  return line.params.find(([k]) => k === upper)?.[1];
+}
+
+/** All TYPE values (repeated params and comma lists), upper-case. */
+export function typesOf(line: VCardLine): string[] {
+  const types: string[] = [];
+  for (const [k, v] of line.params) {
+    if (k !== 'TYPE') continue;
+    for (const t of v.split(',')) {
+      const clean = t.trim().replace(/^"|"$/g, '').toUpperCase();
+      if (clean) types.push(clean);
+    }
+  }
+  return types;
+}
+
+const NON_MATCHING_TYPES = new Set(['INTERNET', 'PREF', 'VOICE']);
+
+/** TYPEs that identify what a value is (label-ish), sorted. */
+export function matchTypes(line: VCardLine): string[] {
+  return typesOf(line)
+    .filter((t) => !NON_MATCHING_TYPES.has(t))
+    .sort();
+}
+
+export function unescapeText(v: string): string {
+  return v.replace(/\\([\\,;nN])/g, (_, c: string) => (c === 'n' || c === 'N' ? '\n' : c));
+}
+
+export function escapeText(v: string): string {
+  return v.replace(/\r\n|\r|\n|[\\,;]/g, (c) => {
+    if (c === '\\' || c === ',' || c === ';') return `\\${c}`;
+    return '\\n';
+  });
+}
+
+/** Splits on unescaped `;`; components stay escaped. */
+export function splitStructured(v: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (c === '\\' && i + 1 < v.length) {
+      current += c + v[++i];
+    } else if (c === ';') {
+      parts.push(current);
+      current = '';
+    } else {
+      current += c;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
+export function joinStructured(parts: string[]): string {
+  return parts.join(';');
+}
