@@ -5,7 +5,8 @@
  */
 
 import { generateUUID } from '../../util/vcard';
-import { escapeText, joinStructured, splitStructured, VCardLine } from './lines';
+import { escapeText, joinStructured, serializeLine, splitStructured, VCardLine } from './lines';
+import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty } from './mapping';
 import { linkTarget, RelationContext } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
@@ -121,6 +122,7 @@ function patchField(
 ): void {
   const isList = row.format === 'list';
   if (isList ? sameSet(list(before), list(after)) : text(before) === text(after)) return;
+  if (row.property === 'photo') return patchPhoto(s, row, prov, text(before), text(after));
   let value: string;
   if (isList) value = list(after).map(escapeText).join(',');
   else if (row.property === 'photo') value = text(after);
@@ -136,6 +138,31 @@ function patchField(
   } else if (value !== '') {
     addLine(s, row.write, value);
   }
+}
+
+/** VERSION of the card being patched (newCard starts at 4.0); 3.0 when absent, as Apple writes. */
+function cardVersion(s: State): string {
+  return s.base.find((line) => !line.group && line.name === 'VERSION')?.value ?? '3.0';
+}
+
+/** PHOTO in the form the card's version expects; an edit keeps the group and drops the other params. */
+function patchPhoto(s: State, row: FieldRow, prov: Provenance | undefined, before: string, after: string): void {
+  if (after !== '' && photoKey(before) === photoKey(after)) return;
+  if (after === '') {
+    if (prov) removeLine(s, prov.line);
+    return;
+  }
+  const photo = photoLine(after, cardVersion(s));
+  if (!prov) {
+    if (photo) {
+      s.added.push({ name: 'PHOTO', params: photo.params, value: photo.value });
+      s.changed = true;
+    } else addLine(s, row.write, after);
+    return;
+  }
+  const line = s.base[prov.line];
+  const next = photo ? withValue(line, photo.value, photo.params) : withValue(line, after);
+  if (serializeLine(next) !== serializeLine(line)) setLine(s, prov.line, next);
 }
 
 function patchComponent(

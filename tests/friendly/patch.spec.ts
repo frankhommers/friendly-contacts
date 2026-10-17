@@ -216,3 +216,41 @@ describe('newCard', () => {
     expect(warnings[0]).toContain('Jan');
   });
 });
+
+describe('patch PHOTO values', () => {
+  const B64 = 'AAAA BBBB\nCCCC';
+  const DATA = `data:image/png;base64,${B64}`;
+  const v4 = (...body: string[]) => parseCard(['BEGIN:VCARD', 'VERSION:4.0', ...body, 'END:VCARD'].join('\r\n'));
+  const photoLines = (lines: VCardLine[]) => texts(lines).filter((l) => /^(\w+\.)?PHOTO[;:]/.test(l));
+  const withPhoto = (lines: VCardLine[], photo: string) => ({ ...toFriendly(lines, DEFAULT_MAPPING, ctx).props, photo });
+
+  it('a data URI on a 3.0 card becomes ENCODING=b with the subtype; group kept, other params dropped', () => {
+    const lines = card('FN:Jan', 'item3.PHOTO;ENCODING=b;TYPE=JPEG;X-ABCROP-RECTANGLE=x:/9j/old');
+    expect(photoLines(run(withPhoto(lines, DATA), lines).lines)).toEqual(['item3.PHOTO;ENCODING=b;TYPE=PNG:AAAABBBBCCCC']);
+    const added = card('FN:Jan');
+    expect(photoLines(run(withPhoto(added, DATA), added).lines)).toEqual(['PHOTO;ENCODING=b;TYPE=PNG:AAAABBBBCCCC']);
+  });
+
+  it('a data URI on a 4.0 card is written as a data URI', () => {
+    const lines = v4('FN:Jan', 'PHOTO;MEDIATYPE=image/jpeg:http://old.example/a.jpg');
+    expect(photoLines(run(withPhoto(lines, DATA), lines).lines)).toEqual(['PHOTO:data:image/png;base64,AAAABBBBCCCC']);
+    expect(photoLines(newCard({ name: 'Jan', photo: DATA }, DEFAULT_MAPPING, ctx).lines)).toEqual([
+      'PHOTO:data:image/png;base64,AAAABBBBCCCC',
+    ]);
+  });
+
+  it('a URL on a 3.0 card is written with VALUE=uri', () => {
+    const lines = card('FN:Jan', 'PHOTO;ENCODING=b;TYPE=JPEG:/9j/old');
+    expect(photoLines(run(withPhoto(lines, 'https://x.example/p.jpg'), lines).lines)).toEqual([
+      'PHOTO;VALUE=uri:https://x.example/p.jpg',
+    ]);
+  });
+
+  it('a URL on a 4.0 card is written as is', () => {
+    const lines = v4('FN:Jan', 'PHOTO;ENCODING=b;TYPE=JPEG:/9j/old');
+    expect(photoLines(run(withPhoto(lines, 'http://x.example/p.jpg'), lines).lines)).toEqual(['PHOTO:http://x.example/p.jpg']);
+    expect(photoLines(newCard({ name: 'Jan', photo: 'https://x.example/p.jpg' }, DEFAULT_MAPPING, ctx).lines)).toEqual([
+      'PHOTO:https://x.example/p.jpg',
+    ]);
+  });
+});
