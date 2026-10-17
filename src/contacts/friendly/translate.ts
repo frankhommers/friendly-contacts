@@ -114,3 +114,6 @@ export function toFriendly(lines: VCardLine[], rows: MappingRow[], ctx: Relation
 
   return { props, source };
 }
+
+export { newCard, patch } from './patch';
+export type { PatchResult } from './patch';
