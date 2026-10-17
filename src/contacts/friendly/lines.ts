@@ -54,14 +54,17 @@ function parseLine(text: string): VCardLine | undefined {
   return line;
 }
 
-/** Parses one card; unfolds, drops BEGIN/END, keeps everything else in order. */
+/**
+ * Parses one card; unfolds, drops BEGIN/END, keeps everything else in order. A line without ':' becomes
+ * `{ name: '', params: [], value: '', raw }` (no mapping row matches the empty name).
+ */
 export function parseCard(raw: string): VCardLine[] {
   const unfolded = raw.replace(/(\r\n|\n|\r)[ \t]/g, '');
   const lines: VCardLine[] = [];
   for (const text of unfolded.split(/\r\n|\n|\r/)) {
     if (text === '') continue;
-    const line = parseLine(text);
-    if (!line) continue;
+    // A line without ':' (e.g. a vCard 2.1 quoted-printable continuation) is kept as is, so a PUT writes it back.
+    const line = parseLine(text) ?? { name: '', params: [], value: '', raw: text };
     if (!line.group && (line.name === 'BEGIN' || line.name === 'END')) continue;
     lines.push(line);
   }

@@ -10,6 +10,7 @@ import {
   typesOf,
   unescapeText,
 } from 'src/contacts/friendly/lines';
+import { DEFAULT_MAPPING, rowForLine } from 'src/contacts/friendly/mapping';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { describe, expect, it } from 'vitest';
 
@@ -46,6 +47,23 @@ describe('friendly lines', () => {
     expect(parseCard(serializeCard(parsed))).toEqual(parsed);
     const unfolded = fixture.replace(/\r?\n[ \t]/g, '');
     for (const line of parsed) expect(unfolded).toContain(serializeLine(line));
+  });
+
+  it('keeps lines without a colon (2.1 quoted-printable continuations) in place', () => {
+    const card = [
+      'BEGIN:VCARD',
+      'VERSION:2.1',
+      'NOTE;ENCODING=QUOTED-PRINTABLE:first line=0D=0A=',
+      'second line',
+      'FN:Jan',
+      'END:VCARD',
+      '',
+    ].join('\r\n');
+    const lines = parseCard(card);
+    expect(lines[2]).toEqual({ name: '', params: [], value: '', raw: 'second line' });
+    expect(lines.map(serializeLine)).toEqual(['VERSION:2.1', 'NOTE;ENCODING=QUOTED-PRINTABLE:first line=0D=0A=', 'second line', 'FN:Jan']);
+    expect(serializeCard(lines)).toBe(card);
+    expect(rowForLine(lines[2], DEFAULT_MAPPING)).toEqual([]);
   });
 
   it('serialises lines without raw from their parts', () => {
