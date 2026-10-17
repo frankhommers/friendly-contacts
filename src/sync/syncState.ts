@@ -21,7 +21,9 @@ export interface SyncState {
 
 type SyncIndex = Record<string, { etag: string; href: string }>;
 
-const fileNameOf = (uid: string) => cleanUid(uid).replace(/[^A-Za-z0-9._-]/g, '_');
+/** A safe file name per UID, one-to-one: other characters (and `_` itself) become `_<hex>_`. */
+const fileNameOf = (uid: string) =>
+  cleanUid(uid).replace(/[^A-Za-z0-9.-]/g, (c) => `_${c.codePointAt(0)!.toString(16)}_`);
 
 /**
  * Stores the card as it was at the last successful sync ("base"), per UID:

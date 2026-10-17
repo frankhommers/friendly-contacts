@@ -46,8 +46,9 @@ describe('SyncState', () => {
   it('replaces unsafe characters in file names', async () => {
     const { store, files } = memoryStore();
     const state = createSyncState(store, 'sync');
-    await state.set('a/b:c*d', entry);
-    expect([...files.keys()]).toContain('sync/c_d.vcf');
+    await state.set('a/b:c*d_e', entry);
+    expect([...files.keys()]).toContain('sync/a_2f_b_3a_c_2a_d_5f_e.vcf');
+    expect(await state.get('a/b:c*d_e')).toEqual(entry);
   });
 
   it('remove deletes both', async () => {

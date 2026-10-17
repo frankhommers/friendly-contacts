@@ -7,6 +7,9 @@ import { AppHttpResponse, PlatformHttpClient } from "src/util/platformHttpClient
 import { cleanUid, fnOutOfString, nOutOfString, uidOutOfString } from "src/util/vcard";
 
 
+const escapeXml = (text: string): string =>
+  text.replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]!);
+
 export function carddavGenericAdapter(): AdapterInterface {
 
   const getAuthHeader = (settings:ContactsPluginSettings) => authorizationHeader(settings.CardDAV);
@@ -73,7 +76,7 @@ export function carddavGenericAdapter(): AdapterInterface {
   </D:prop>
   <C:filter>
     <C:prop-filter name="UID">
-      <C:text-match match-type="contains">${uid}</C:text-match>
+      <C:text-match match-type="contains">${escapeXml(cleanUid(uid))}</C:text-match>
     </C:prop-filter>
   </C:filter>
 </C:addressbook-query>`;
@@ -183,7 +186,7 @@ export function carddavGenericAdapter(): AdapterInterface {
     const settings = getSettings();
     const vcfUrl = opts?.href
       ? new URL(opts.href, settings.CardDAV.addressBookUrl).toString()
-      : settings.CardDAV.addressBookUrl + `/${vcard.uid}.vcf`;
+      : settings.CardDAV.addressBookUrl + `/${encodeURIComponent(vcard.uid ?? '')}.vcf`;
     const headers: Record<string, string> = {
       ['Authorization']: getAuthHeader(settings),
       ['Content-Type']: 'text/vcard; version=4.0; charset=utf-8;'

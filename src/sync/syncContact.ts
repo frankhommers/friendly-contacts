@@ -132,7 +132,7 @@ async function createCard(note: NoteIO, deps: SyncDeps, local: Props, uid: strin
   // The server picks the href; ask for it. The base must still be stored when that lookup fails.
   const found = await deps.adapter.getMetaByUid(id);
   const meta = !isResponse(found) && found && sameUid(found, id) ? found : undefined;
-  const stored: SyncStateEntry = { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${id}.vcf` };
+  const stored: SyncStateEntry = { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${encodeURIComponent(id)}.vcf` };
 
   for (const warning of card.warnings) deps.notify(warning);
   await deps.state.set(uid, stored);

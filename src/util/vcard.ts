@@ -1,12 +1,7 @@
 export function uidOutOfString(messyString: string):string|undefined {
   const unfolded = messyString.replace(/\r\n[ \t]/g, '');
-  const match = unfolded.match(/^uid:.*$/gim);
-  let uid;
-  if(match) {
-    const uidLine = match[0]
-    uid = cleanUid(uidLine);
-  }
-  return uid
+  const match = /^uid(?:;[^:\r\n]*)?:(.*)$/im.exec(unfolded);
+  return match ? cleanUid(match[1]) : undefined;
 }
 
 export function nOutOfString(messyString: string):string|undefined {
@@ -19,12 +14,15 @@ export function nOutOfString(messyString: string):string|undefined {
   return line.slice(line.indexOf(':') + 1).trim();
 }
 
+/**
+ * The UID as compared and stored: without a leading `urn:uuid:` and trimmed. Anything else is kept:
+ * legacy macOS UIDs such as `XXXX:ABPerson` differ only before the colon.
+ */
 export function cleanUid(uid: string | undefined): string {
   if (!uid) {
     return '';
   }
-  const parts = uid.split(':');
-  return parts.length > 1 ? parts.at(-1)!.trim() : uid;
+  return uid.trim().replace(/^urn:uuid:/i, '').trim();
 }
 
 export function fnOutOfString(messyString: string):string|undefined {
@@ -40,14 +38,7 @@ export function fnOutOfString(messyString: string):string|undefined {
 }
 
 
-// Zero dependency uuid generator as its not used for millions of records
+/** A random version 4 UUID (Web Crypto; available in Electron and Node 19+). */
 export function generateUUID(): string {
-  const timestamp = Date.now().toString(16).padStart(12, '0');
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  }).replace(/^(.{24})/, (_, p1) => {
-    return timestamp + p1.slice(timestamp.length);
-  });
+  return globalThis.crypto.randomUUID();
 }
