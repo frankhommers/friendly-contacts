@@ -12,6 +12,8 @@ export interface VCardLine {
   name: string;
   params: [string, string][];
   value: string;
+  /** Original unfolded line as parsed; serializeLine emits it verbatim. Edited/new lines must omit it. */
+  raw?: string;
 }
 
 const MAX_OCTETS = 75;
@@ -47,7 +49,7 @@ function parseLine(text: string): VCardLine | undefined {
       if (eq < 0) return ['TYPE', p];
       return [p.slice(0, eq).toUpperCase(), p.slice(eq + 1)];
     });
-  const line: VCardLine = { name, params, value: rest[0] };
+  const line: VCardLine = { name, params, value: rest[0], raw: text };
   if (group !== undefined) line.group = group;
   return line;
 }
@@ -66,8 +68,9 @@ export function parseCard(raw: string): VCardLine[] {
   return lines;
 }
 
-/** One unfolded content line (no line terminator). */
+/** One unfolded content line (no line terminator); `raw` wins when present. */
 export function serializeLine(line: VCardLine): string {
+  if (line.raw !== undefined) return line.raw;
   const params = line.params.map(([k, v]) => `;${k}=${v}`).join('');
   return `${line.group ? `${line.group}.` : ''}${line.name}${params}:${line.value}`;
 }

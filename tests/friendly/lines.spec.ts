@@ -45,8 +45,17 @@ describe('friendly lines', () => {
     const parsed = parseCard(fixture);
     expect(parseCard(serializeCard(parsed))).toEqual(parsed);
     const unfolded = fixture.replace(/\r?\n[ \t]/g, '');
-    // names and param names are normalised to upper case, so compare case-insensitively
-    for (const line of parsed) expect(unfolded.toUpperCase()).toContain(serializeLine(line).toUpperCase());
+    for (const line of parsed) expect(unfolded).toContain(serializeLine(line));
+  });
+
+  it('serialises lines without raw from their parts', () => {
+    expect(serializeLine({ group: 'item1', name: 'TEL', params: [['TYPE', 'CELL']], value: '06' })).toBe(
+      'item1.TEL;TYPE=CELL:06',
+    );
+    const parsed = parseCard('BEGIN:VCARD\nitem1.tel;type=cell:06\nEND:VCARD')[0];
+    expect(serializeLine(parsed)).toBe('item1.tel;type=cell:06');
+    const { raw: _raw, ...edited } = parsed;
+    expect(serializeLine(edited)).toBe('item1.TEL;TYPE=cell:06');
   });
 
   it('unescapes and escapes text', () => {
