@@ -166,6 +166,8 @@ async function createCard(note: NoteIO, deps: SyncDeps, local: Props, uid: strin
   const meta = !isResponse(found) && found && sameUid(found, id) ? found : undefined;
   const stored: SyncStateEntry = { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${encodeURIComponent(id)}.vcf` };
 
+  // Like after any sync, the note takes the card's canonical properties (e.g. `mobile-2` alone becomes `mobile`).
+  await writeNote(note, deps, local, toFriendly(card.lines, deps.rows, deps.ctx).props, []);
   for (const warning of card.warnings) deps.notify(warning);
   await deps.state.set(uid, stored);
   return 'created';

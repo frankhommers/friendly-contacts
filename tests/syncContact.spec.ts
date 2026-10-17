@@ -614,6 +614,15 @@ describe('syncContact', () => {
     expect(await p.run()).toBe('unchanged');
   });
 
+  it('a created card settles the note too', async () => {
+    const t = setup({ local: { name: 'Sem Jansen', uid: 'sem-0001', 'mobile-2': '06-55555555' } });
+    expect(await t.run()).toBe('created');
+    expect(t.note.frontmatter.mobile).toBe('06-55555555');
+    expect(t.note.frontmatter).not.toHaveProperty('mobile-2');
+    expect(await t.run()).toBe('unchanged');
+    expect(t.pushes).toHaveLength(1);
+  });
+
   it('numbered component and list-relation keys are left alone in the note', async () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), 'street-2': 'Elders 2', 'children-2': ['[[X]]'] } });
     expect(await t.run()).toBe('unchanged');
