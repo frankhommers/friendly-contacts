@@ -6,7 +6,8 @@ export class FolderSuggest extends AbstractInputSuggest<string> {
   folders: string[];
   private inputEl: HTMLInputElement;
 
-  constructor(app: App, inputEl: HTMLInputElement) {
+  /** With `onSelect` the caller decides what picking a folder does; without it the contacts folder setting changes. */
+  constructor(app: App, inputEl: HTMLInputElement, private selectHandler?: (folder: string) => void) {
     super(app, inputEl);
     this.inputEl = inputEl;
     this.folders = this.getAllFolderPaths().filter(folder => folder.toLowerCase() !== '/');
@@ -31,6 +32,11 @@ export class FolderSuggest extends AbstractInputSuggest<string> {
     // Trim folder and Strip ending slash if there
     let value = folder.trim()
     value = value.replace(/\/$/, "");
+    if (this.selectHandler) {
+      this.selectHandler(value);
+      this.close();
+      return;
+    }
     updateSetting('contactsFolder', value);
     insightQueueStore.clear();
     this.close();

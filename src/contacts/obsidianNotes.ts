@@ -13,7 +13,8 @@ import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relati
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
-import { getSettings } from "src/context/sharedSettingsContext";
+import { normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
+import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import { createContactFile, findContactFiles, isFileInFolder } from "src/file/file";
 import { getCurrentAdapter } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
@@ -56,8 +57,8 @@ export function noteIO(app: App, file: TFile): NoteIO {
 }
 
 /** The contact notes in the contacts folder, with their UID (`uid`, or `UID` in old-style notes). */
-export function contactNotes(app: App): ContactNote[] {
-  const folder = app.vault.getAbstractFileByPath(normalizePath(getSettings().contactsFolder));
+export function contactNotes(app: App, folderPath: string = getSettings().contactsFolder): ContactNote[] {
+  const folder = app.vault.getAbstractFileByPath(normalizePath(folderPath));
   if (!(folder instanceof TFolder)) return [];
   return findContactFiles(folder).flatMap((file) => {
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
@@ -319,4 +320,55 @@ export async function importRemoteCard(
     });
   }
   return true;
+}
+
+/** Moves every contact note in the contacts folder to `toFolder`, then points the setting at it. */
+export async function moveContacts(
+  app: App,
+  toFolder: string,
+  fromFolder: string = getSettings().contactsFolder,
+): Promise<{ moved: number; skipped: SkippedMove[] }> {
+  const from = normalizeFolder(fromFolder);
+  const to = normalizeFolder(toFolder);
+  const files = new Map(contactNotes(app, from).map(({ file }) => [file.path, file]));
+  const plan = planMoves([...files.keys()], from, to, (path) => app.vault.getAbstractFileByPath(path) !== null);
+  const skipped = [...plan.skipped];
+  let moved = 0;
+  for (const move of plan.moves) {
+    const file = files.get(move.from);
+    if (!file) continue;
+    try {
+      await ensureFolder(app, move.to.slice(0, Math.max(move.to.lastIndexOf("/"), 0)));
+      await app.fileManager.renameFile(file, move.to);
+      moved++;
+    } catch (error) {
+      skipped.push({ from: move.from, reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  await updateSetting("contactsFolder", to);
+  return { moved, skipped };
+}
+
+async function ensureFolder(app: App, path: string): Promise<void> {
+  let current = "";
+  for (const part of path.split("/").filter(Boolean)) {
+    current = current === "" ? part : `${current}/${part}`;
+    if (app.vault.getAbstractFileByPath(current)) continue;
+    try {
+      await app.vault.createFolder(current);
+    } catch (error) {
+      if (!app.vault.getAbstractFileByPath(current)) throw error; // "already exists" is fine
+    }
+  }
+}
+
+/** Tells the owner what a move did; skipped files are listed in the console. */
+export function reportMove(result: { moved: number; skipped: SkippedMove[] }, toFolder: string): void {
+  const { moved, skipped } = result;
+  let text = `Moved ${moved} contacts to ${toFolder === "" ? "the vault root" : toFolder}`;
+  if (skipped.length > 0) {
+    text += `, skipped ${skipped.length}, see console`;
+    console.log("Friendly Contacts: skipped while moving contacts:\n" + skipped.map((s) => `${s.from}: ${s.reason}`).join("\n"));
+  }
+  new Notice(text);
 }

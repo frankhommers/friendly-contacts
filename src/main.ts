@@ -10,10 +10,11 @@ import myScrollTo from "src/util/myScrollTo";
 
 import {updateFrontMatter} from "./contacts";
 import {vcard} from "./contacts/vcard";
-import { convertContactNotes, obsidianMirrorEnv } from "./contacts/obsidianNotes";
+import { contactNotes, convertContactNotes, obsidianMirrorEnv } from "./contacts/obsidianNotes";
 import { RelationMirror } from "./contacts/relationMirror";
 import { isContactFrontmatter } from "./contacts/friendlyNotes";
 import { isFileInFolder } from "src/file/file";
+import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
 
@@ -77,6 +78,19 @@ export default class ContactsPlugin extends Plugin {
         if (failed > 0) parts.push(`${failed} failed, see console`);
         if (moved.length > 0) console.log("Friendly Contacts: old vCard values that differed from existing properties were moved to numbered properties or merged:\n" + moved.join("\n"));
         new Notice(parts.join("; "));
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-move",
+      name: "Move contacts to folder…",
+      callback: () => {
+        const folder = getSettings().contactsFolder;
+        if (contactNotes(this.app, folder).length === 0) {
+          new Notice("No contacts to move.");
+          return;
+        }
+        new MoveContactsModal(this.app, () => contactNotes(this.app, folder).length, () => folder).open();
       },
     });
 

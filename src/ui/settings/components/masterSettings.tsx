@@ -1,7 +1,11 @@
 import { App, Setting } from "obsidian";
 import * as React from "react";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
+import { contactNotes } from "src/contacts/obsidianNotes";
+import { normalizeFolder } from "src/contacts/moveContacts";
+import { insightQueueStore } from "src/insights/insightsQueStore";
 import { FolderSuggest } from "src/settings/FolderSuggest";
+import { confirmMoveContacts } from "src/ui/modals/moveContactsModal";
 
 interface MasterSettingProps {
   app: App;
@@ -27,7 +31,37 @@ export function MasterSetting({ app }: MasterSettingProps) {
         .setName("Contacts folder location")
         .setDesc(folderDesc)
         .addSearch((cb) => {
-          new FolderSuggest(app, cb.inputEl);
+          // The folder that was active when the field got focus; the move starts from there.
+          let activeFolder = getSettings().contactsFolder;
+
+          const setFolder = async (folder: string) => {
+            await updateSetting('contactsFolder', folder);
+            insightQueueStore.clear();
+          };
+
+          // Offers to move the contacts when a different, existing folder was chosen; otherwise only the setting changes.
+          const commit = (raw: string) => {
+            const value = normalizeFolder(raw);
+            const previous = activeFolder;
+            if (normalizeFolder(previous) === value) return;
+            if (value !== '' && !app.vault.getFolderByPath(value)) return;
+            activeFolder = value;
+            const count = contactNotes(app, previous).length;
+            if (count === 0) {
+              void setFolder(value);
+              return;
+            }
+            confirmMoveContacts(app, count, previous, value, () => void setFolder(value), "Don't move");
+          };
+
+          new FolderSuggest(app, cb.inputEl, (folder) => {
+            cb.setValue(folder);
+            commit(folder);
+          });
+          cb.inputEl.addEventListener('focus', () => {
+            activeFolder = getSettings().contactsFolder;
+          });
+          cb.inputEl.addEventListener('blur', () => commit(cb.inputEl.value));
           cb.setPlaceholder("Example: Contacts")
             .setValue(getSettings().contactsFolder)
             .onChange(async(value) => {
