@@ -204,15 +204,17 @@ export function carddavGenericAdapter(): AdapterInterface {
     });
   }
 
-  const deleteContact = async (href: string): Promise<AppHttpResponse> => {
+  const deleteContact = async (href: string, ifMatch?: string): Promise<AppHttpResponse> => {
     const settings = getSettings();
     const vcfUrl = new URL(href, settings.CardDAV.addressBookUrl).toString();
+    const headers: Record<string, string> = { Authorization: getAuthHeader(settings) };
+    if (ifMatch) {
+      headers['If-Match'] = `"${ifMatch}"`;
+    }
     return await PlatformHttpClient.request({
       url: vcfUrl,
       method: 'DELETE',
-      headers: {
-        Authorization: getAuthHeader(settings),
-      }
+      headers
     });
   }
 

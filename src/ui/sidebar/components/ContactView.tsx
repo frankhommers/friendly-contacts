@@ -5,6 +5,7 @@ import { getApp } from "src/context/sharedAppContext";
 import { fileId, openFile } from "src/file/file";
 import { sync } from "src/sync";
 import { useSyncEnabled } from "src/ui/hooks/syncEnabledHook";
+import { ConfirmModal } from "src/ui/modals/confirmModal";
 import Avatar from "src/ui/sidebar/components/elements/Avatar";
 import { CopyableItem } from "src/ui/sidebar/components/CopyableItem";
 import { getUiName, uiSafeString } from "src/util/nameUtils";
@@ -176,7 +177,13 @@ export const ContactView = (props: ContactProps) => {
       );
       menu.addItem((item:MenuItem) =>
         item.setSection("vcf-sync-danger").setTitle("Delete").setIcon("trash-2").onClick(() =>{
-          sync.deleteOnRemote(myContact);
+          const name = myContact.file.basename;
+          new ConfirmModal(
+            getApp(),
+            `Delete ${name} from the server? This also removes it from everyone who shares this address book.`,
+            "Delete",
+            () => { void sync.deleteOnRemote(myContact); },
+          ).open();
         })
       );
       menu.showAtPosition({ x: event.pageX, y: event.pageY });

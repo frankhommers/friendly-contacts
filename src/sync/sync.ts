@@ -74,12 +74,21 @@ export async function deleteOnRemote(contact: Contact): Promise<boolean> {
     new Notice(`Not deleting: the server card found for ${contact.file.basename} has another UID (${meta.uid ?? 'none'}).`);
     return false;
   }
-  const res = await adapter.delete(meta.href);
+  if (!meta.etag) {
+    new Notice(`Not deleting ${contact.file.basename}: the server sent no ETag, so the delete cannot be made safe.`);
+    return false;
+  }
+  const res = await adapter.delete(meta.href, meta.etag);
+  if (res.status === 412) {
+    new Notice(`Not deleted: ${contact.file.basename} was changed on the server in the meantime. Sync it and try again.`);
+    return false;
+  }
   if (res.errorMessage || res.status < 200 || res.status >= 300) {
     new Notice(res.errorMessage || res.data || `Delete failed: HTTP ${res.status}`);
     return false;
   }
   await contactSyncState().remove(uid);
+  new Notice(`Deleted ${contact.file.basename} from the server; the note stays.`);
   return true;
 }
 

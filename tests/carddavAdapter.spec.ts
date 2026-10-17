@@ -61,6 +61,16 @@ describe('carddav adapter', () => {
     expect(res.headers?.etag).toBe('"e3"');
   });
 
+  it('delete sends If-Match when given', async () => {
+    const adapter = carddavGenericAdapter();
+    await adapter.delete('/frank/contacts/ABC.vcf', 'e7');
+    expect(last?.method).toBe('DELETE');
+    expect(last?.url).toBe('/frank/contacts/ABC.vcf');
+    expect(last?.headers['if-match']).toBe('"e7"');
+    await adapter.delete('/frank/contacts/ABC.vcf');
+    expect(last?.headers['if-match']).toBeUndefined();
+  });
+
   it('push resolves a relative href against the address book', async () => {
     await carddavGenericAdapter().push({ uid: 'abc', raw: 'RAW' }, { href: 'ABC.vcf' });
     expect(last?.url).toBe('/frank/contacts/ABC.vcf');

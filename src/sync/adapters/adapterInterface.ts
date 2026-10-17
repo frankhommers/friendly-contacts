@@ -12,11 +12,12 @@ export interface AdapterInterface {
   push(vcard: VCardRaw, opts?: PushOptions): Promise<AppHttpResponse>;
 
   /**
-   * delete a single vCard identified by its UID.
-   * @param href The unique path of the vCard to pull
+   * Delete a single vCard.
+   * @param href The unique path of the vCard to delete
+   * @param ifMatch ETag (without quotes) the card must still have on the server
    * @returns Promise that resolves on success
    */
-  delete(href: string): Promise<AppHttpResponse>;
+  delete(href: string, ifMatch?: string): Promise<AppHttpResponse>;
 
   /**
    * Pull (fetch) a single vCard by UID.
