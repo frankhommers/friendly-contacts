@@ -5,6 +5,7 @@
 
 import { MappingRow, rowForProperty } from 'src/contacts/friendly/mapping';
 import { FriendlyValue } from 'src/contacts/friendly/translate';
+import { parseKey } from 'src/contacts/contactDataKeys';
 import { hasValue, isVCardKey, recordToFriendly } from 'src/contacts/friendlyNotes';
 
 type Frontmatter = Record<string, unknown>;
@@ -28,19 +29,44 @@ const sameValue = (a: unknown, b: unknown): boolean =>
     ? JSON.stringify([a].flat().map(String)) === JSON.stringify([b].flat().map(String))
     : String(a).trim() === String(b).trim();
 
+/** vCard bookkeeping that means nothing in a note (the server keeps its own copy). */
+const TECHNICAL_KEYS = new Set(['VERSION', 'PRODID', 'REV', 'X-CREATED', 'X-ABLABEL', 'X-ABSHOWAS']);
+
+/** Upstream keys that are vCard noise: VERSION, PRODID, REV, X-CREATED, X-ABLABEL, X-ABSHOWAS, empty N.PREFIX/N.SUFFIX. */
+export function technicalKeys(fm: Frontmatter): string[] {
+  return Object.keys(fm).filter((key) => {
+    let parsed;
+    try {
+      parsed = parseKey(key);
+    } catch {
+      return false;
+    }
+    const name = parsed.key.toUpperCase();
+    if (TECHNICAL_KEYS.has(name)) return true;
+    const subkey = parsed.subkey?.toUpperCase();
+    return name === 'N' && (subkey === 'PREFIX' || subkey === 'SUFFIX') && !hasValue(fm[key]);
+  });
+}
+
 /**
- * The friendly properties an old-style note's vCard keys stand for. Other keys, and vCard keys with no
- * friendly property (e.g. `X-FOO`), are neither set nor removed, so no data is lost.
+ * The friendly properties an old-style note's vCard keys stand for, plus the removal of technical keys
+ * (see technicalKeys). Other keys, and vCard keys with no friendly property (e.g. `X-FOO`), are neither set
+ * nor removed, so no data is lost.
  */
 export function convertFrontmatter(fm: Frontmatter, rows: MappingRow[]): ConvertResult {
+  const technical = technicalKeys(fm);
   const record: Record<string, string> = {};
   for (const [key, value] of Object.entries(fm)) {
-    if (isVCardKey(key) && hasValue(value)) record[key] = asText(value);
+    if (isVCardKey(key) && hasValue(value) && !technical.includes(key)) record[key] = asText(value);
   }
   const result: ConvertResult = { set: {}, remove: [], moved: [] };
-  if (Object.keys(record).length === 0) return result;
+  if (Object.keys(record).length === 0) {
+    result.remove = technical;
+    return result;
+  }
 
   result.remove = Object.keys(record).filter((key) => Object.keys(recordToFriendly({ [key]: record[key] }, rows)).length > 0);
+  result.remove.push(...technical);
   for (const [property, value] of Object.entries(recordToFriendly(record, rows))) {
     const existing = fm[property];
     if (!hasValue(existing) && !(property in result.set)) {

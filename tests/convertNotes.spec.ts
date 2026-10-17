@@ -62,16 +62,54 @@ describe('convertFrontmatter', () => {
   });
 
   it('leaves a note that Sync no longer refuses', () => {
-    const fm: Record<string, unknown> = { FN: 'Jan', UID: 'urn:uuid:1', 'TEL[CELL]': '06', 'X-CREATED': '2019' };
+    const fm: Record<string, unknown> = { FN: 'Jan', UID: 'urn:uuid:1', 'TEL[CELL]': '06', 'X-CUSTOM': '2019' };
     const { set, remove } = convertFrontmatter(fm, DEFAULT_MAPPING);
     Object.assign(fm, set);
     remove.forEach((key) => delete fm[key]);
-    expect(fm['X-CREATED']).toBe('2019');
+    expect(fm['X-CUSTOM']).toBe('2019');
     expect(hasVCardValues(fm, DEFAULT_MAPPING)).toBe(false);
   });
 
   it('ignores empty vCard keys', () => {
     expect(convertFrontmatter({ FN: '', name: 'Jan' }, DEFAULT_MAPPING)).toEqual({ set: {}, remove: [], moved: [] });
+  });
+});
+
+describe('convertFrontmatter technical keys', () => {
+  it('removes vCard noise and empty name prefix/suffix, keeps other unmapped keys', () => {
+    const fm = {
+      FN: 'Jan',
+      VERSION: '3.0',
+      PRODID: '-//Apple Inc.//iPhone OS 17.0//EN',
+      REV: '2024-01-01T00:00:00Z',
+      'X-CREATED': '2019-04-02T10:11:12Z',
+      'X-ABLABEL': '_$!<Mobile>!$_',
+      'X-ABLABEL[1:]': 'werk',
+      'X-ABSHOWAS': 'COMPANY',
+      'N.PREFIX': '',
+      'N.SUFFIX': null,
+      'X-CUSTOM': 'keep me',
+      'TEL[WORK,FAX]': '030',
+      'met-via': 'x',
+    };
+    const result = convertFrontmatter(fm, DEFAULT_MAPPING);
+    expect(result.set).toEqual({ name: 'Jan' });
+    expect([...result.remove].sort()).toEqual(
+      ['FN', 'VERSION', 'PRODID', 'REV', 'X-CREATED', 'X-ABLABEL', 'X-ABLABEL[1:]', 'X-ABSHOWAS', 'N.PREFIX', 'N.SUFFIX'].sort(),
+    );
+  });
+
+  it('keeps a name prefix or suffix that has a value', () => {
+    const result = convertFrontmatter({ FN: 'Jan', 'N.PREFIX': 'Dr.', 'N.SUFFIX': 'jr' }, DEFAULT_MAPPING);
+    expect(result.remove).toEqual(['FN']);
+  });
+
+  it('cleans technical keys from an otherwise friendly note', () => {
+    expect(convertFrontmatter({ name: 'Jan', 'X-CREATED': '2019', VERSION: '3.0' }, DEFAULT_MAPPING)).toEqual({
+      set: {},
+      remove: ['X-CREATED', 'VERSION'],
+      moved: [],
+    });
   });
 });
 

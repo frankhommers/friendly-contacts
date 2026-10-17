@@ -5,7 +5,7 @@
 
 import { App, normalizePath, Notice, parseYaml, TFile, TFolder } from "obsidian";
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
-import { convertFrontmatter, Rename, renameAllInFrontmatter } from "src/contacts/convertNotes";
+import { convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
@@ -114,7 +114,7 @@ export async function convertContactNotes(app: App): Promise<{ converted: number
   let failed = 0;
   for (const { file } of contactNotes(app)) {
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!frontmatter || !hasVCardValues(frontmatter, rows)) continue;
+    if (!frontmatter || (!hasVCardValues(frontmatter, rows) && technicalKeys(frontmatter).length === 0)) continue;
     try {
       await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         // Decided on the live frontmatter, not the cache.
