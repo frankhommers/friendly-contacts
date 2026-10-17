@@ -282,6 +282,26 @@ Mirroring happens between notes; each side reaches Radicale when that note is sy
   **"Check relationships"** lists one-sided relationships and offers per item: add the inverse, or remove.
 - Changes that arrive through Sync mirror like manual edits.
 
+### Link format
+
+- Properties only support wiki-style links (`"[[...]]"`), also when "Use [[Wikilinks]]" is off, so relationship
+  properties are always written as `[[...]]`.
+- The link text follows the vault's "New link format" setting (shortest path / relative / absolute): it is produced by
+  Obsidian (`metadataCache.fileToLinktext(file, sourcePath)`), never built from the file name by hand.
+- Links are always resolved through Obsidian (`getFirstLinkpathDest(linkpath, sourcePath)`), never compared as text:
+  `[[Anna de Vries]]`, `[[People/Anna de Vries]]` and `[[Anna de Vries|Anna]]` are the same person.
+- Reading also accepts a markdown link typed by hand (`[Anna](People/Anna%20de%20Vries.md)`).
+- A contact that only exists in Radicale (no note yet) is written as `[[<file name it would get on import>]]`.
+
+## Moving contacts
+
+- Command **"Move contacts to folder…"**: pick a folder, all contact notes move there (sub-folders inside the contacts
+  folder keep their relative place), then the contacts folder setting is updated.
+- Changing the contacts folder in settings offers the same move ("Move 87 contacts from People to Areas/People?").
+- Moves go through `app.fileManager.renameFile`, so Obsidian updates links in other notes per the user's settings.
+- A target file that already exists is skipped and reported, never overwritten.
+- Sync state and relationships are keyed by UID, so moving changes nothing there.
+
 ## Testing
 
 - `lines.ts`: round trip on fixtures, including an Apple 3.0 card shaped like the owner's data (`item1.TEL;type=CELL;

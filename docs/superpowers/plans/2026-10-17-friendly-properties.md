@@ -406,6 +406,15 @@ Rules:
   - `findOneSided(all: { path: string; name: string; snapshot: RelationSnapshot }[], rows): { path: string; property: string; target: string }[]`
 - Remote name resolution used by `ObsidianRelationContext` (Task 9): `resolveRemoteName(name: string, remote: { uid: string; fileName: string }[]): { uid: string } | { text: string } | { ambiguous: true }` — exact match on `fileName`.
 
+- Amendment (link format, see spec "Link format"):
+  - `linkTarget` also accepts a markdown link `[Anna](People/Anna%20de%20Vries.md)` and returns the decoded link path
+    without `.md` (`People/Anna de Vries`).
+  - `relationSnapshot(props, rows, resolve?: (linkpath: string) => string | undefined)` stores the resolved file path
+    when `resolve` gives one, else the link path. Snapshots compare paths, never names.
+  - `planMirrorWrites` takes `sourceLink: string` (the link text to write, made by the caller) instead of building
+    `[[sourceName]]`. The "points back" check compares resolved paths with `sourcePath`.
+  - Adapt the tests below accordingly: snapshots hold paths like `Sem.md`.
+
 - [ ] **Step 1: Write failing tests**
   - `child adds parent`: Jan before `{}` after `{children:['Sem']}`, Sem resolves with `{}` -> `[{targetPath:'Sem.md', property:'parents', link:'[[Jan]]', op:'add'}]`.
   - `already mirrored is a no-op`: Sem has `parents:['Jan']` -> `[]`.
@@ -557,6 +566,11 @@ UI:
     - `resolveLink`:
       - `metadataCache.getFirstLinkpathDest` gives a contact note with `uid`: that note's uid;
       - otherwise `resolveRemoteName`.
+  - Link format:
+    - `ObsidianRelationContext` is created per note (`sourcePath`).
+    - `uidToName` returns `metadataCache.fileToLinktext(file, sourcePath)` for contact notes, and the import file name
+      for remote-only contacts.
+    - `resolveLink` uses `getFirstLinkpathDest(linkpath, sourcePath)`.
   - `friendlyKey(vcardKey: string, rows: MappingRow[]): string` — for `UID`, `PHOTO`, `FN` callers of `updateFrontMatterValue`
 - Changes:
   - **Old functions keep their signatures.**
@@ -615,7 +629,9 @@ UI:
     onRenamed(oldPath: string, newPath: string): void;
   }
   ```
-  - `resolveLink` wraps `getFirstLinkpathDest`.
+  - `resolveLink` wraps `getFirstLinkpathDest(linkpath, fromPath)`.
+  - Mirror writes use `metadataCache.fileToLinktext(sourceFile, targetPath)` as the link text, wrapped in `[[...]]`
+    (vault's "New link format"). The env gets `linkTo(targetPath: string, fromPath: string): string` for this.
   - `apply` uses `processFrontMatter`: ensure present / ensure absent in the list, or the text for `spouse`.
   - `init()` builds the snapshot.
   - `onChanged`:
@@ -709,6 +725,42 @@ UI:
 
 ---
 
+### Task 13: Move contacts to another folder
+
+**Files:**
+- Create: `src/contacts/moveContacts.ts`, `tests/moveContacts.spec.ts`, `src/ui/modals/moveContactsModal.ts`
+- Modify: `src/main.ts`, `src/ui/settings/components/masterSettings.tsx`
+
+**Interfaces:**
+- Produces:
+  - `planMoves(paths: string[], fromFolder: string, toFolder: string, exists: (path: string) => boolean): { moves: { from: string; to: string }[]; skipped: { from: string; reason: string }[] }` (pure)
+    - keeps the path relative to `fromFolder` (`People/Family/Jan.md` -> `Areas/People/Family/Jan.md`);
+    - an empty `fromFolder` means the vault root;
+    - a target that exists, or a source not inside `fromFolder`, is skipped with a reason;
+    - a `toFolder` inside `fromFolder` is allowed only if no contact already lives in it; otherwise everything is
+      skipped with reason `target is inside the contacts folder`.
+  - `moveContacts(app: App, toFolder: string): Promise<{ moved: number; skipped: { from: string; reason: string }[] }>`
+    - creates missing folders;
+    - moves each file with `app.fileManager.renameFile`;
+    - then `updateSetting('contactsFolder', toFolder)`.
+  - Command `friendly-contacts-move` "Move contacts to folder…" opens a folder picker (reuse `src/settings/FolderSuggest.ts`) and a confirm modal: "Move N contacts from X to Y?".
+  - Changing the contacts folder in `masterSettings.tsx` opens the same confirm modal when the old folder had contacts.
+    "Don't move" only changes the setting.
+  - A Notice reports moved and skipped counts, and lists skipped files in the console.
+
+- [ ] **Step 1: Write failing tests for `planMoves`**
+  - `keeps relative sub-folders`: `['People/Jan.md','People/Family/Sem.md']` from `People` to `Areas/People` gives both
+    moves with the relative paths kept.
+  - `skips existing targets`: `exists('Areas/People/Jan.md')` true gives `Jan` in `skipped`, with reason containing `exists`.
+  - `vault root as source`: from `''` to `People`, `Jan.md` goes to `People/Jan.md`.
+  - `refuses a target inside the source with contacts in it`.
+- [ ] **Step 2: Run** `npx vitest run tests/moveContacts.spec.ts` — Expected: FAIL.
+- [ ] **Step 3: Implement**, including the command, the modal and the settings hook.
+- [ ] **Step 4: Run** `npm run test:run && npm run build` — Expected: PASS.
+- [ ] **Step 5: Commit** `git commit -m "feat: move contacts to another folder"`.
+
+---
+
 ## Spec coverage check
 
 | Spec section | Task |
@@ -723,3 +775,5 @@ UI:
 | Mirroring, echo guard, device toggle, no reconcile, Check relationships | 2, 6, 10, 11 |
 | Testing section incl. manual Radicale run | every task, 12 |
 | Toggle "Friendly properties" | dropped (Global Constraints) |
+| Link format | 6, 9, 10 |
+| Moving contacts | 13 |
