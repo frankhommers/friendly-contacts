@@ -1,5 +1,6 @@
 import { MarkdownView, WorkspaceLeaf } from "obsidian";
 import { fileId } from "src/file/file";
+import { CONTACTS_VIEW_CONFIG } from "src/util/constants";
 
 let debounceTimer: number
 let lastContactLeaf: WorkspaceLeaf | null = null;
@@ -18,7 +19,7 @@ const handleLeafEvent = (leaf: WorkspaceLeaf | null):void => {
       lastContactLeaf = leaf;
       scrollToLeaf(lastContactLeaf);
     }
-  } else if (viewType === 'contacts-view' && lastContactLeaf !== null) {
+  } else if (viewType === CONTACTS_VIEW_CONFIG.type && lastContactLeaf !== null) {
     scrollToLeaf(lastContactLeaf);
   } else if (leaf === null && lastContactLeaf !== null) {
     scrollToLeaf(lastContactLeaf);

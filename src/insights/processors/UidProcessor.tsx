@@ -59,6 +59,8 @@ export const UidProcessor: InsightProcessor = {
 
   async process(contacts: Contact[]): Promise<void> {
     const activeProcessor = getSettings().processors[`${this.settingPropertyName}`] as boolean;
+    // Without a contacts folder every note with a name counts as a contact; never write into those automatically.
+    if (getSettings().contactsFolder === '') return;
 
     for (const contact of contacts) {
 

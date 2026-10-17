@@ -77,6 +77,8 @@ export function obsidianMirrorEnv(app: App): MirrorEnv {
   };
   return {
     listContacts() {
+      // No contacts folder configured: mirroring stays out of the vault.
+      if (getSettings().contactsFolder === "") return [];
       const folder = app.vault.getAbstractFileByPath(normalizePath(getSettings().contactsFolder));
       if (!(folder instanceof TFolder)) return [];
       return findContactFiles(folder).flatMap((file) => {

@@ -1,5 +1,6 @@
 export const CONTACTS_VIEW_CONFIG = {
-	type: "contacts-view",
+	// Not upstream's "contacts-view": both plugins can be enabled side by side.
+	type: "friendly-contacts-view",
 	name: "Contacts",
 	icon: "contact",
 };

@@ -119,7 +119,8 @@ export default class ContactsPlugin extends Plugin {
 		// One queue: handlers never overlap, so snapshots and writes stay in event order.
 		let queue: Promise<void> = Promise.resolve();
 		const enqueue = (action: () => Promise<void> | void) => {
-			if (!ready) return;
+			// Without a contacts folder every note with a name looks like a contact: no automatic writes then.
+			if (!ready || getSettings().contactsFolder === '') return;
 			queue = queue.then(action).catch((error) => {
 				console.error('Friendly Contacts: relationship mirroring failed', error);
 				new Notice('Relationship mirroring failed; see the console.');
