@@ -23,7 +23,8 @@ function canonical(value: FriendlyValue | undefined): string | string[] | undefi
   return text === '' ? undefined : text;
 }
 
-function sameValue(a: FriendlyValue | undefined, b: FriendlyValue | undefined): boolean {
+/** Equal as the merge sees them: absent values match, text is trimmed, lists compare as sorted link-target sets. */
+export function sameValue(a: FriendlyValue | undefined, b: FriendlyValue | undefined): boolean {
   const x = canonical(a);
   const y = canonical(b);
   if (x === undefined || y === undefined) return x === y;
