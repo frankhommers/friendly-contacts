@@ -9,6 +9,16 @@ export function uidOutOfString(messyString: string):string|undefined {
   return uid
 }
 
+export function nOutOfString(messyString: string):string|undefined {
+  const unfolded = messyString.replace(/\r\n[ \t]/g, '');
+  const match = unfolded.match(/^n(?:;[^:\r\n]*)?:.*$/gim);
+  if(!match) {
+    return undefined;
+  }
+  const line = match[0];
+  return line.slice(line.indexOf(':') + 1).trim();
+}
+
 export function cleanUid(uid: string | undefined): string {
   if (!uid) {
     return '';

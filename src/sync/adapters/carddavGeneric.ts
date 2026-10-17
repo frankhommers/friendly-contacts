@@ -1,10 +1,10 @@
 import { getSettings } from "src/context/sharedSettingsContext";
 import { authorizationHeader, StoredCredentials } from "src/settings/carddavCredentials";
 import { ContactsPluginSettings } from "src/settings/settings";
-import { VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
+import { PushOptions, VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import { AppHttpResponse, PlatformHttpClient } from "src/util/platformHttpClient";
-import { fnOutOfString, uidOutOfString } from "src/util/vcard";
+import { fnOutOfString, nOutOfString, uidOutOfString } from "src/util/vcard";
 
 
 export function carddavGenericAdapter(): AdapterInterface {
@@ -44,6 +44,7 @@ export function carddavGenericAdapter(): AdapterInterface {
     <C:address-data>
       <C:prop name="UID"/>
       <C:prop name="FN"/>
+      <C:prop name="N"/>
     </C:address-data>
   </D:prop>
   <C:filter>
@@ -96,7 +97,8 @@ export function carddavGenericAdapter(): AdapterInterface {
       etag: etag?.replace(/"/g, '') || '', // Remove quotes from etag
       lastModified: lastModified ? new Date(lastModified) : new Date(),
       uid: uidOutOfString(adressData),
-      fn: fnOutOfString(adressData)
+      fn: fnOutOfString(adressData),
+      n: nOutOfString(adressData)
     }
   }
 
@@ -112,6 +114,7 @@ export function carddavGenericAdapter(): AdapterInterface {
     <C:address-data>
       <C:prop name="UID"/>
       <C:prop name="FN"/>
+      <C:prop name="N"/>
     </C:address-data>
   </D:prop>
 </C:addressbook-query>`;
@@ -160,7 +163,8 @@ export function carddavGenericAdapter(): AdapterInterface {
         etag: etag?.replace(/"/g, '') || '', // Remove quotes from etag
         lastModified: lastModified ? new Date(lastModified) : new Date(),
         uid: uidOutOfString(adressData),
-        fn: fnOutOfString(adressData)
+        fn: fnOutOfString(adressData),
+        n: nOutOfString(adressData)
       });
     });
 
@@ -187,20 +191,34 @@ export function carddavGenericAdapter(): AdapterInterface {
     return {
       uid: uidOutOfString(res.data),
       raw: res.data,
+      etag: res.headers?.etag?.replace(/"/g, ''),
+      href,
     }
   }
 
-  const push = async (vcard: VCardRaw): Promise<AppHttpResponse> => {
+  /**
+   * The new ETag of a pushed card is in `res.headers.etag` (still quoted, as sent by the server).
+   * Not every server returns it on PUT; callers then need a follow-up pull/getMetaByUid.
+   */
+  const push = async (vcard: VCardRaw, opts?: PushOptions): Promise<AppHttpResponse> => {
     const settings = getSettings();
-    const vcfUrl = settings.CardDAV.addressBookUrl + `/${vcard.uid}.vcf`;
+    const vcfUrl = opts?.href
+      ? new URL(opts.href, settings.CardDAV.addressBookUrl).toString()
+      : settings.CardDAV.addressBookUrl + `/${vcard.uid}.vcf`;
+    const headers: Record<string, string> = {
+      ['Authorization']: getAuthHeader(settings),
+      ['Content-Type']: 'text/vcard; version=4.0; charset=utf-8;'
+    };
+    if (opts?.ifMatch) {
+      headers['If-Match'] = `"${opts.ifMatch}"`;
+    } else if (opts?.ifNoneMatch) {
+      headers['If-None-Match'] = '*';
+    }
     return await PlatformHttpClient.request({
       url: vcfUrl,
       method: 'PUT',
       body: vcard.raw,
-      headers: {
-        ['Authorization']: getAuthHeader(settings),
-        ['Content-Type']: 'text/vcard; version=4.0; charset=utf-8;'
-      }
+      headers
     });
   }
 

@@ -1,4 +1,4 @@
-import { VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
+import { PushOptions, VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
 import { StoredCredentials } from "src/settings/carddavCredentials";
 import { AppHttpResponse } from "src/util/platformHttpClient";
 
@@ -6,9 +6,10 @@ export interface AdapterInterface {
   /**
    * Push a single vCard (add or update) identified by its UID.
    * @param vcard The vCard object or string to push
-   * @returns Promise that resolves on success
+   * @param opts href to write to, and ETag preconditions (If-Match / If-None-Match)
+   * @returns The response; the new ETag (quoted) is in headers.etag when the server sends it
    */
-  push(vcard: VCardRaw): Promise<AppHttpResponse>;
+  push(vcard: VCardRaw, opts?: PushOptions): Promise<AppHttpResponse>;
 
   /**
    * delete a single vCard identified by its UID.
