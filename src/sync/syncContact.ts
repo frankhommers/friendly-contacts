@@ -8,9 +8,9 @@
  */
 
 import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
-import { isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
+import { isMappedProperty, MappingRow, rowForProperty } from 'src/contacts/friendly/mapping';
 import { Conflict, coerceNoteProps, mergeFriendly, renderConflictCallout, sameValue } from 'src/contacts/friendly/merge';
-import { RelationContext } from 'src/contacts/friendly/relations';
+import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
 import { FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
@@ -54,8 +54,9 @@ const cardUid = (raw: string): string => cleanUid(parseCard(raw).find((l) => !l.
 
 export async function syncContact(note: NoteIO, deps: SyncDeps): Promise<SyncOutcome> {
   try {
-    const { props: local, warnings } = coerceNoteProps(await note.readFrontmatter(), deps.rows);
+    const { props: coerced, warnings } = coerceNoteProps(await note.readFrontmatter(), deps.rows);
     for (const warning of warnings) deps.notify(warning);
+    const local: Props = Object.fromEntries(Object.entries(coerced).filter(([p]) => !isUnrepresentable(p, deps.rows)));
 
     let uid = typeof local.uid === 'string' ? local.uid.trim() : '';
     let lookup = true;
@@ -96,7 +97,7 @@ async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string,
   const mine: Props = { ...local };
   if (serverFriendly.props.uid !== undefined) mine.uid = serverFriendly.props.uid;
 
-  const { merged, conflicts } = mergeFriendly(baseProps, serverFriendly.props, mine);
+  const { merged, conflicts } = mergeFriendly(baseProps, serverFriendly.props, canonicalRelations(mine, deps));
   const patched = patch(serverLines, serverFriendly, merged, deps.rows, deps.ctx);
   const raw = serializeCard(patched.lines);
   const etag = server.etag || meta.etag;
@@ -113,11 +114,42 @@ async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string,
     stored = { raw, etag: responseEtag(res), href: meta.href };
   }
 
-  const noteChanged = await writeNote(note, deps, mine, merged, conflicts);
+  // The note takes the card as it now is on the server, so numbering (`mobile-2` -> `mobile`) and link text
+  // are canonical and the next Sync finds nothing to do.
+  const final = serverChanged ? toFriendly(patched.lines, deps.rows, deps.ctx).props : serverFriendly.props;
+  const noteChanged = await writeNote(note, deps, mine, final, conflicts);
   for (const warning of patched.warnings) deps.notify(warning);
   await deps.state.set(uid, stored);
   if (serverChanged) return noteChanged ? 'both' : 'pushed';
   return noteChanged ? 'pulled' : 'unchanged';
+}
+
+/**
+ * Relation links as the card would show them: a link that resolves to a known contact becomes `[[<its name>]]`,
+ * so `[[06 People/Sem de Vries]]` and the server's `[[Sem de Vries]]` are not seen as a change.
+ */
+function canonicalRelations(props: Props, deps: SyncDeps): Props {
+  const canonical = (item: string): string => {
+    const resolved = deps.ctx.resolveLink(linkTarget(item.trim()));
+    const name = 'uid' in resolved ? deps.ctx.uidToName(resolved.uid) : undefined;
+    return name !== undefined && name !== '' ? toLink(name) : item;
+  };
+  const result: Props = { ...props };
+  for (const [property, value] of Object.entries(props)) {
+    if (rowForProperty(property, deps.rows)?.row.kind !== 'relation') continue;
+    result[property] = Array.isArray(value) ? value.map(canonical) : canonical(value);
+  }
+  return result;
+}
+
+/**
+ * Note keys no card line can hold (`street-2`, `children-2`: component rows and list relations are never
+ * numbered). Sync treats them like local-only properties: never pushed, never removed.
+ */
+function isUnrepresentable(property: string, rows: MappingRow[]): boolean {
+  const found = rowForProperty(property, rows);
+  if (!found || found.ordinal < 2) return false;
+  return found.row.kind === 'component' || (found.row.kind === 'relation' && !found.row.single);
 }
 
 /** No card on the server: create one from the note; never overwrites (If-None-Match). */
@@ -161,21 +193,22 @@ async function pullCard(adapter: AdapterInterface, href: string, uid: string): P
 const responseEtag = (res: AppHttpResponse): string => res.headers?.etag?.replace(/"/g, '') ?? '';
 
 /**
- * Saves the user's conflicting values in a callout first, then writes changed and removed mapped properties,
- * so a failed append never loses a value. Returns whether properties changed.
+ * Saves the user's conflicting values in a callout first, then makes the note's mapped properties equal to
+ * `final` (the card's friendly properties), so a failed append never loses a value. Returns whether
+ * properties changed.
  */
 async function writeNote(
   note: NoteIO,
   deps: SyncDeps,
   local: Props,
-  merged: Props,
+  final: Props,
   conflicts: Conflict[],
 ): Promise<boolean> {
   const set: Props = {};
-  for (const [property, value] of Object.entries(merged)) {
+  for (const [property, value] of Object.entries(final)) {
     if (!sameValue(value, local[property], property)) set[property] = value;
   }
-  const remove = Object.keys(local).filter((p) => !(p in merged) && isMappedProperty(p, deps.rows));
+  const remove = Object.keys(local).filter((p) => !(p in final) && isMappedProperty(p, deps.rows));
   const changed = Object.keys(set).length > 0 || remove.length > 0;
 
   if (conflicts.length > 0) {

@@ -570,4 +570,55 @@ describe('syncContact', () => {
     await t.run();
     expect(t.pushes[0].vcard.raw).toBe(serializeCard(parseCard(t.pushes[0].vcard.raw)));
   });
+
+  it('deleting mobile but keeping mobile-2 settles: the note is renumbered and the Apple label stays', async () => {
+    const v1 = edit(V1, 'TEL;type=WORK;type=VOICE', 'item3.TEL;type=CELL:06-22222222\r\nitem3.X-ABLabel:Werk mobiel\r\nTEL;type=WORK;type=VOICE');
+    const local = { ...friendlyOf(v1) };
+    expect(local).toMatchObject({ mobile: '06-12345678', 'mobile-2': '06-22222222' });
+    delete local.mobile;
+    const t = setup({ server: v1, base: v1, local });
+
+    expect(await t.run()).toBe('both');
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter.mobile).toBe('06-22222222');
+    expect(t.note.frontmatter).not.toHaveProperty('mobile-2');
+    const card = lineTexts(t.cards.get(HREF)!.raw);
+    expect(card).toContain('item3.TEL;type=CELL:06-22222222');
+    expect(card).toContain('item3.X-ABLabel:Werk mobiel');
+    expect(card.join('\n')).not.toContain('06-12345678');
+
+    expect(await t.run()).toBe('unchanged');
+    expect(t.pushes).toHaveLength(1);
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('item3.X-ABLabel:Werk mobiel');
+  });
+
+  it('a relation written as a path settles to the canonical link text', async () => {
+    const sem: RelationContext = {
+      uidToName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+      resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
+    };
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), children: ['[[06 People/Sem de Vries]]'] }, ctx: sem });
+    expect(await t.run()).toBe('both');
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
+    expect(t.note.frontmatter.children).toEqual(['[[Sem de Vries]]']);
+
+    expect(await t.run()).toBe('unchanged');
+    expect(t.pushes).toHaveLength(1);
+
+    // Already on the server, written as a path in the note: only the note changes.
+    const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
+    const p = setup({ server, base: server, local: { ...friendlyOf(server), spouse: '[[06 People/Sem de Vries|Sem]]' }, ctx: sem });
+    expect(await p.run()).toBe('pulled');
+    expect(p.pushes).toEqual([]);
+    expect(p.note.frontmatter.spouse).toBe('[[Sem de Vries]]');
+    expect(await p.run()).toBe('unchanged');
+  });
+
+  it('numbered component and list-relation keys are left alone in the note', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), 'street-2': 'Elders 2', 'children-2': ['[[X]]'] } });
+    expect(await t.run()).toBe('unchanged');
+    expect(t.pushes).toEqual([]);
+    expect(t.note.frontmatter['street-2']).toBe('Elders 2');
+    expect(t.note.frontmatter['children-2']).toEqual(['[[X]]']);
+  });
 });
