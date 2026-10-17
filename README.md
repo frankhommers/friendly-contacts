@@ -2,14 +2,14 @@
 
 <div align="center">
 
-<!-- TOC --><a name="-vcf-contacts-plugin-for-obsidian"></a>
-# VCF Contacts Plugin for Obsidian  
+<!-- TOC --><a name="-friendly-contacts-plugin-for-obsidian"></a>
+# Friendly Contacts Plugin for Obsidian  
 **Bring people into your knowledge vault.**  
 
 
 A powerful way to manage, link, and export contact data directly within [Obsidian](https://obsidian.md).
 
-![VCF Contacts Plugin Interface](assets/vfz-contacts-overview.jpg)
+![Friendly Contacts Plugin Interface](assets/vfz-contacts-overview.jpg)
 
 </div>
 
@@ -17,13 +17,13 @@ A powerful way to manage, link, and export contact data directly within [Obsidia
 
 ## About this fork
 
-Friendly Contacts is a fork of VCF Contacts. It shows contact properties with readable English names, syncs with CardDAV without losing data, and supports relationships between contacts. Its settings are separate from the original VCF Contacts plugin, so to migrate, copy `data.json` from `.obsidian/plugins/vcf-contacts/` to `.obsidian/plugins/friendly-contacts/`.
+Friendly Contacts is a fork of [VCF Contacts](https://github.com/broekema41/obsidian-vcf-contacts) by Roland Broekema. It shows contact properties with readable English names, syncs with CardDAV without losing data, and supports relationships between contacts. Its settings are separate from the original VCF Contacts plugin, so to migrate, copy `data.json` from `.obsidian/plugins/vcf-contacts/` to `.obsidian/plugins/friendly-contacts/`.
 
 ---
 
 <!-- TOC start -->
 # Table of Contents
-- [VCF Contacts Plugin for Obsidian  ](#-vcf-contacts-plugin-for-obsidian)
+- [Friendly Contacts Plugin for Obsidian  ](#-friendly-contacts-plugin-for-obsidian)
    * [🚀 Features at a Glance](#-features-at-a-glance)
    * [📦 Installation](#-installation)
       + [🔄 Automatic via Community Plugins](#-automatic-via-community-plugins)
@@ -71,10 +71,8 @@ Friendly Contacts is a fork of VCF Contacts. It shows contact properties with re
 <!-- TOC --><a name="-automatic-via-community-plugins"></a>
 ### 🔄 Automatic via Community Plugins
 
-1. Open **Settings → Community Plugins**
-2. Disable **Safe Mode** (if enabled)
-3. Click **Browse**, search for `VCF Contacts`
-4. Click **Install**, then **Enable**
+Friendly Contacts is not in the Community Plugins list (searching there finds the original VCF Contacts).
+Install it manually, see below.
 
 <!-- TOC --><a name="-manual-installation"></a>
 ### 🧰 Manual Installation
@@ -82,7 +80,7 @@ Friendly Contacts is a fork of VCF Contacts. It shows contact properties with re
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the GitHub Releases page.
 2. Create the plugin folder in your vault:
-   <VaultFolder>```/.obsidian/plugins/obsidian-vcf-contacts```
+   <VaultFolder>```/.obsidian/plugins/friendly-contacts```
 3. Move the downloaded files into this folder.
 4. Restart Obsidian and enable the plugin from ```Settings → Community Plugins```.
 
@@ -163,15 +161,15 @@ Open the Command Palette with:
 - **Ctrl + P** (Windows/Linux)
 - **Cmd + P** (macOS)
 
-Search for **“VCF Contacts”** to see all available commands.
+Search for **“Friendly Contacts”** to see all available commands.
 
-1) **VCF Contacts: Create Contact**  
+1) **Friendly Contacts: Create Contact**  
 Create a new contact using your configured default fields.
 
-2) **VCF Contacts: Open Contacts Sidebar**  
+2) **Friendly Contacts: Open Contacts Sidebar**  
 Open the contacts sidebar view.
 
-3) **VCF Contacts: Apply Default Fields to Current File**  
+3) **Friendly Contacts: Apply Default Fields to Current File**  
 Adds any missing default fields (as defined in **Settings → Default Contact Fields**) to the currently open contact file.  
 Existing fields are not overwritten.
 
@@ -462,6 +460,8 @@ Ready to make a difference? [Sign up here.](https://tally.so/r/mR6rKj)
 
 <!-- TOC --><a name="-acknowledgements"></a>
 ## 🙏 Acknowledgements
+
+Friendly Contacts is a fork of **[VCF Contacts](https://github.com/broekema41/obsidian-vcf-contacts) by Roland Broekema**; nearly everything in this README, and most of the plugin, is his work.
 
 This plugin started as a fork of **Vadim Beskrovnov’s Contacts plugin**. While the codebase has since evolved significantly, his original work laid the foundation. Immense thanks to Vadim for the early inspiration and groundwork.
 
