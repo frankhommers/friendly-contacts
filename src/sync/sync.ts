@@ -101,7 +101,7 @@ export async function syncContact(contact: Contact): Promise<SyncOutcome | undef
   const app = getApp();
   const rows = getSettings().friendly.mapping;
   const note = noteIO(app, contact.file);
-  if (hasVCardValues(await note.readFrontmatter())) {
+  if (hasVCardValues(await note.readFrontmatter(), rows)) {
     // Sync reads only friendly properties: a UID kept in `UID` is not seen, and syncing would create a second card.
     new Notice(`${contact.file.basename} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.`);
     return undefined;

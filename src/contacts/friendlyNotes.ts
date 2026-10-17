@@ -41,11 +41,15 @@ export const hasValue = (value: unknown): boolean =>
   Array.isArray(value) ? value.some(hasValue) : value !== undefined && value !== null && String(value).trim() !== '';
 
 /**
- * The note still holds data under vCard keys (`FN`, `UID`, `TEL[CELL]`, `X-...`): an upstream note, or one
- * half converted. Sync does not read those keys, so such a note must be converted first.
+ * The note still holds data under vCard keys that have a friendly property (`FN`, `UID`, `TEL[CELL]`, ...):
+ * an upstream note, or one half converted. Sync does not read those keys, so such a note must be converted
+ * first. Keys with no friendly property (`X-CREATED`, `TEL[WORK,FAX]`) are local-only and do not count.
  */
-export function hasVCardValues(frontmatter: Record<string, unknown>): boolean {
-  return Object.entries(frontmatter).some(([key, value]) => isVCardKey(key) && hasValue(value));
+export function hasVCardValues(frontmatter: Record<string, unknown>, rows: MappingRow[] = DEFAULT_MAPPING): boolean {
+  return Object.entries(frontmatter).some(
+    ([key, value]) =>
+      isVCardKey(key) && hasValue(value) && (key === 'UID' || key === 'FN' || friendlyKey(key, rows) !== key),
+  );
 }
 
 export function isContactFrontmatter(frontmatter: Record<string, unknown> | undefined | null): boolean {

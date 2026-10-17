@@ -111,7 +111,7 @@ export async function convertContactNotes(app: App): Promise<{ converted: number
   let failed = 0;
   for (const { file } of contactNotes(app)) {
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!frontmatter || !hasVCardValues(frontmatter)) continue;
+    if (!frontmatter || !hasVCardValues(frontmatter, rows)) continue;
     try {
       await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         // Decided on the live frontmatter, not the cache.

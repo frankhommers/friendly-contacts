@@ -48,6 +48,6 @@ export async function updateFrontMatter(file: TFile, record: Record<string, any>
 export async function updateFrontMatterValue(file: TFile, key: string, value: string) {
   const rows = getSettings().friendly.mapping;
   await getApp().fileManager.processFrontMatter(currentFile(file), (frontmatter: Record<string, unknown>) => {
-    frontmatter[hasVCardValues(frontmatter) ? key : friendlyKey(key, rows)] = value;
+    frontmatter[hasVCardValues(frontmatter, rows) ? key : friendlyKey(key, rows)] = value;
   });
 }

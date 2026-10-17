@@ -105,7 +105,18 @@ describe('hasVCardValues', () => {
     expect(hasVCardValues({ FN: 'X', tags: [] })).toBe(true);
     expect(hasVCardValues({ name: 'Jan', 'TEL[CELL]': '06' })).toBe(true);
     expect(hasVCardValues({ name: 'Jan', 'ADR[HOME].STREET': 'Dorpsstraat 1' })).toBe(true);
-    expect(hasVCardValues({ name: 'Jan', 'X-FOO': 'bar' })).toBe(true);
+  });
+
+  it('ignores vCard keys without a friendly property: they stay local-only', () => {
+    expect(hasVCardValues({ name: 'Jan', 'X-CREATED': '2019' })).toBe(false);
+    expect(hasVCardValues({ name: 'Jan', 'X-ABLABEL': 'x', 'TEL[WORK,FAX]': '1', 'N.PREFIX': 'Dr.' })).toBe(false);
+    expect(hasVCardValues({ 'TEL[CELL]': '06', name: 'Jan' })).toBe(true);
+  });
+
+  it('follows the mapping it is given', () => {
+    const rows = DEFAULT_MAPPING.filter((row) => row.property !== 'mobile');
+    expect(hasVCardValues({ name: 'Jan', 'TEL[CELL]': '06' }, rows)).toBe(false);
+    expect(hasVCardValues({ name: 'Jan', UID: 'urn:uuid:x' }, rows)).toBe(true);
   });
 
   it('is false for friendly notes and empty vCard keys', () => {

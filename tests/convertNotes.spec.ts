@@ -1,5 +1,6 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { convertFrontmatter, renameInFrontmatter } from 'src/contacts/convertNotes';
+import { hasVCardValues } from 'src/contacts/friendlyNotes';
 import { describe, expect, it } from 'vitest';
 
 describe('convertFrontmatter', () => {
@@ -40,6 +41,15 @@ describe('convertFrontmatter', () => {
     const result = convertFrontmatter({ FN: 'Jan', 'X-CUSTOM': 'keep me' }, DEFAULT_MAPPING);
     expect(result.set).toEqual({ name: 'Jan' });
     expect(result.remove).toEqual(['FN']);
+  });
+
+  it('leaves a note that Sync no longer refuses', () => {
+    const fm: Record<string, unknown> = { FN: 'Jan', UID: 'urn:uuid:1', 'TEL[CELL]': '06', 'X-CREATED': '2019' };
+    const { set, remove } = convertFrontmatter(fm, DEFAULT_MAPPING);
+    Object.assign(fm, set);
+    remove.forEach((key) => delete fm[key]);
+    expect(fm['X-CREATED']).toBe('2019');
+    expect(hasVCardValues(fm, DEFAULT_MAPPING)).toBe(false);
   });
 
   it('ignores empty vCard keys', () => {

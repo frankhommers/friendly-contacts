@@ -19,7 +19,7 @@ export async function addDefaultFields(file: TFile):Promise<VCardForObsidianReco
   }
   const record: Record<string, any> = { ...frontMatter };
   // Friendly fields next to vCard keys would make a half-converted note; such notes are converted first.
-  if (hasVCardValues(frontMatter)) {
+  if (hasVCardValues(frontMatter, friendly.mapping)) {
     return record;
   }
   for (const key of createFieldsKeys) {
