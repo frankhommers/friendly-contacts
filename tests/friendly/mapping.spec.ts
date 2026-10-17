@@ -6,6 +6,7 @@ import {
   MappingRow,
   rowForLine,
   rowForProperty,
+  renameRow,
   validateMapping,
 } from 'src/contacts/friendly/mapping';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -99,5 +100,42 @@ describe('friendly mapping', () => {
     expect(errors.some((e) => e.includes('mobile'))).toBe(true);
     expect(errors.some((e) => e.includes('TEL') && e.includes('vCard'))).toBe(true);
     expect(errors.some((e) => e.includes('TEL[CELL'))).toBe(true);
+  });
+
+  it('reports a mirror that names no relation row', () => {
+    const rows = DEFAULT_MAPPING.map((r) => (r.property === 'parents' ? { ...r, mirror: 'children2' } : r)) as MappingRow[];
+    const errors = validateMapping(rows);
+    expect(errors.some((e) => e.includes('parents') && e.includes('children2'))).toBe(true);
+    const withField = DEFAULT_MAPPING.map((r) => (r.property === 'parents' ? { ...r, mirror: 'mobile' } : r)) as MappingRow[];
+    expect(validateMapping(withField).some((e) => e.includes('mobile'))).toBe(true);
+  });
+});
+
+describe('renameRow', () => {
+  const mirrorOf = (rows: MappingRow[], property: string) => {
+    const row = rows.find((r) => r.property === property);
+    return row?.kind === 'relation' ? row.mirror : undefined;
+  };
+
+  it('renames the row and repoints the mirrors that named it', () => {
+    const rows = renameRow(DEFAULT_MAPPING, 'children', 'kids');
+    expect(names(rows)).toContain('kids');
+    expect(names(rows)).not.toContain('children');
+    expect(mirrorOf(rows, 'parents')).toBe('kids');
+    expect(validateMapping(rows)).toEqual([]);
+  });
+
+  it('repoints self-mirrors too', () => {
+    const rows = renameRow(DEFAULT_MAPPING, 'spouse', 'partner');
+    expect(mirrorOf(rows, 'partner')).toBe('partner');
+    expect(validateMapping(rows)).toEqual([]);
+  });
+
+  it('leaves other rows alone and does not mutate its input', () => {
+    const before = structuredClone(DEFAULT_MAPPING);
+    const rows = renameRow(DEFAULT_MAPPING, 'mobile', 'cell');
+    expect(DEFAULT_MAPPING).toEqual(before);
+    expect(names(rows).indexOf('cell')).toBe(names(DEFAULT_MAPPING).indexOf('mobile'));
+    expect(mirrorOf(rows, 'siblings')).toBe('siblings');
   });
 });

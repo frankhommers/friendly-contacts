@@ -71,11 +71,11 @@ export default class ContactsPlugin extends Plugin {
       id: "friendly-contacts-convert",
       name: "Convert contacts to friendly properties",
       callback: async () => {
-        const { converted, kept, failed } = await convertContactNotes(this.app);
+        const { converted, moved, failed } = await convertContactNotes(this.app);
         const parts = [`Converted ${converted} contacts`];
-        if (kept.length > 0) parts.push(`${kept.length} values kept, see console`);
+        if (moved.length > 0) parts.push(`${moved.length} notes had conflicting values, see console`);
         if (failed > 0) parts.push(`${failed} failed, see console`);
-        if (kept.length > 0) console.log("Friendly Contacts: existing values kept over the old vCard values:\n" + kept.join("\n"));
+        if (moved.length > 0) console.log("Friendly Contacts: old vCard values that differed from existing properties were moved to numbered properties or merged:\n" + moved.join("\n"));
         new Notice(parts.join("; "));
       },
     });

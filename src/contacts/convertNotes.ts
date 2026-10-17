@@ -3,7 +3,7 @@
  * Pure; the Obsidian side (processFrontMatter over the vault) is in obsidianNotes.ts.
  */
 
-import { MappingRow } from 'src/contacts/friendly/mapping';
+import { MappingRow, rowForProperty } from 'src/contacts/friendly/mapping';
 import { FriendlyValue } from 'src/contacts/friendly/translate';
 import { hasValue, isVCardKey, recordToFriendly } from 'src/contacts/friendlyNotes';
 
@@ -13,8 +13,11 @@ export interface ConvertResult {
   set: Record<string, FriendlyValue>;
   /** vCard keys whose data now lives in a friendly property. */
   remove: string[];
-  /** Friendly properties that already had a different value; the existing value wins. */
-  kept: string[];
+  /**
+   * Conflicts with a friendly property that already had a different value, as `name -> name-2` (a text value
+   * moved to the next free numbered slot) or `categories (merged)` (list items added). The existing value stays.
+   */
+  moved: string[];
 }
 
 const asText = (value: unknown): string =>
@@ -34,14 +37,30 @@ export function convertFrontmatter(fm: Frontmatter, rows: MappingRow[]): Convert
   for (const [key, value] of Object.entries(fm)) {
     if (isVCardKey(key) && hasValue(value)) record[key] = asText(value);
   }
-  const result: ConvertResult = { set: {}, remove: [], kept: [] };
+  const result: ConvertResult = { set: {}, remove: [], moved: [] };
   if (Object.keys(record).length === 0) return result;
 
   result.remove = Object.keys(record).filter((key) => Object.keys(recordToFriendly({ [key]: record[key] }, rows)).length > 0);
   for (const [property, value] of Object.entries(recordToFriendly(record, rows))) {
     const existing = fm[property];
-    if (!hasValue(existing)) result.set[property] = value;
-    else if (!sameValue(existing, value)) result.kept.push(property);
+    if (!hasValue(existing) && !(property in result.set)) {
+      result.set[property] = value;
+    } else if (Array.isArray(value)) {
+      const current = [existing].flat().filter(hasValue).map(String);
+      const merged = [...new Set([...current, ...value])];
+      if (merged.length > current.length) {
+        result.set[property] = merged;
+        result.moved.push(`${property} (merged)`);
+      }
+    } else if (!sameValue(existing, value)) {
+      const base = rowForProperty(property, rows)?.row.property ?? property;
+      const slots = [base, ...Array.from({ length: 50 }, (_, i) => `${base}-${i + 2}`)];
+      if (slots.some((slot) => hasValue(fm[slot]) && sameValue(fm[slot], value))) continue;
+      const free = slots.find((slot) => !hasValue(fm[slot]) && !(slot in result.set));
+      if (free === undefined) continue;
+      result.set[free] = value;
+      result.moved.push(`${property} -> ${free}`);
+    }
   }
   return result;
 }

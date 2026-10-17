@@ -178,6 +178,18 @@ const VCARD_NAMES = new Set([
   'AGENT', 'GENDER', 'KIND', 'SOURCE', 'XML', 'CLIENTPIDMAP',
 ]);
 
+/**
+ * Renames the row `from` to `to`, and repoints every relation whose `mirror` named `from`
+ * (also its own, e.g. `spouse`), so the mirrors stay valid.
+ */
+export function renameRow(rows: MappingRow[], from: string, to: string): MappingRow[] {
+  return rows.map((row) => {
+    const renamed = row.property === from ? { ...row, property: to } : { ...row };
+    if (renamed.kind === 'relation' && renamed.mirror === from) renamed.mirror = to;
+    return renamed;
+  });
+}
+
 /** Human-readable problems with a mapping; empty when valid. */
 export function validateMapping(rows: MappingRow[]): string[] {
   const errors: string[] = [];
@@ -196,8 +208,11 @@ export function validateMapping(rows: MappingRow[]): string[] {
       for (const pattern of row.read) {
         if (!parsePattern(pattern)) errors.push(`Unparsable pattern for "${key}": ${pattern}`);
       }
-    } else if (row.types.length === 0) {
-      errors.push(`Relation "${key}" has no types.`);
+    } else {
+      if (row.types.length === 0) errors.push(`Relation "${key}" has no types.`);
+      if (row.mirror !== undefined && !rows.some((r) => r.kind === 'relation' && r.property === row.mirror)) {
+        errors.push(`Relation "${key}" is mirrored by "${row.mirror}", which is not a relation.`);
+      }
     }
     if (row.write.trim() === '') errors.push(`Property "${key}" has no write key.`);
   }

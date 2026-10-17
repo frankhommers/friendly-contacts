@@ -10,12 +10,12 @@ describe('convertFrontmatter', () => {
     expect(result.set).toEqual({ name: 'Jan', firstname: 'Jan', lastname: 'de Vries', mobile: '06' });
     expect(result.remove).toEqual(expect.arrayContaining(['FN', 'N.GN', 'N.FN', 'TEL[CELL]']));
     expect(result.remove).not.toContain('met-via');
-    expect(result.kept).toEqual([]);
+    expect(result.moved).toEqual([]);
   });
 
   it('is idempotent on an already friendly note', () => {
     const fm = { name: 'Jan', firstname: 'Jan', mobile: '06', uid: 'urn:uuid:1', children: ['[[Sem]]'] };
-    expect(convertFrontmatter(fm, DEFAULT_MAPPING)).toEqual({ set: {}, remove: [], kept: [] });
+    expect(convertFrontmatter(fm, DEFAULT_MAPPING)).toEqual({ set: {}, remove: [], moved: [] });
   });
 
   it('converts the UID and numbers extra values', () => {
@@ -24,17 +24,35 @@ describe('convertFrontmatter', () => {
     expect(set).toMatchObject({ uid: 'urn:uuid:1', phone: '1', 'phone-2': '2' });
   });
 
-  it('keeps an existing different friendly value, removes the vCard key and reports the conflict', () => {
-    const fm = { FN: 'Jan de Vries', name: 'Johan', 'TEL[CELL]': '06' };
+  it('keeps an existing different text value and moves the vCard value to the next free slot', () => {
+    const fm = { FN: 'Jan de Vries', name: 'Johan', 'name-2': 'J.', 'TEL[CELL]': '06' };
     const result = convertFrontmatter(fm, DEFAULT_MAPPING);
-    expect(result.set).toEqual({ mobile: '06' });
+    expect(result.set).toEqual({ mobile: '06', 'name-3': 'Jan de Vries' });
     expect(result.remove).toContain('FN');
-    expect(result.kept).toEqual(['name']);
+    expect(result.moved).toEqual(['name -> name-3']);
+  });
+
+  it('numbers around values the vCard itself brings along', () => {
+    const fm = { phone: 'A', TEL: '1', 'TEL[HOME]': '2' };
+    expect(convertFrontmatter(fm, DEFAULT_MAPPING).set).toEqual({ 'phone-2': '1', 'phone-3': '2' });
+  });
+
+  it('merges list values without duplicates', () => {
+    const fm = { CATEGORIES: 'family,work', categories: ['work', 'club'] };
+    const result = convertFrontmatter(fm, DEFAULT_MAPPING);
+    expect(result.set).toEqual({ categories: ['work', 'club', 'family'] });
+    expect(result.moved).toEqual(['categories (merged)']);
+    expect(result.remove).toEqual(['CATEGORIES']);
+  });
+
+  it('adds nothing when the slots already hold the vCard value', () => {
+    const result = convertFrontmatter({ FN: 'Jan', name: 'Johan', 'name-2': 'Jan' }, DEFAULT_MAPPING);
+    expect(result).toEqual({ set: {}, remove: ['FN'], moved: [] });
   });
 
   it('does not set a friendly value the note already has', () => {
     const result = convertFrontmatter({ FN: 'Jan', name: 'Jan' }, DEFAULT_MAPPING);
-    expect(result).toEqual({ set: {}, remove: ['FN'], kept: [] });
+    expect(result).toEqual({ set: {}, remove: ['FN'], moved: [] });
   });
 
   it('does not remove a vCard key whose data has no friendly property', () => {
@@ -53,7 +71,7 @@ describe('convertFrontmatter', () => {
   });
 
   it('ignores empty vCard keys', () => {
-    expect(convertFrontmatter({ FN: '', name: 'Jan' }, DEFAULT_MAPPING)).toEqual({ set: {}, remove: [], kept: [] });
+    expect(convertFrontmatter({ FN: '', name: 'Jan' }, DEFAULT_MAPPING)).toEqual({ set: {}, remove: [], moved: [] });
   });
 });
 

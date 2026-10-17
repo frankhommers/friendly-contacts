@@ -104,9 +104,9 @@ export function obsidianMirrorEnv(app: App): MirrorEnv {
 }
 
 /** Old-style contact notes (vCard keys) -> friendly properties, in place; the body is untouched. */
-export async function convertContactNotes(app: App): Promise<{ converted: number; kept: string[]; failed: number }> {
+export async function convertContactNotes(app: App): Promise<{ converted: number; moved: string[]; failed: number }> {
   const rows = getSettings().friendly.mapping;
-  const kept: string[] = [];
+  const moved: string[] = [];
   let converted = 0;
   let failed = 0;
   for (const { file } of contactNotes(app)) {
@@ -118,7 +118,7 @@ export async function convertContactNotes(app: App): Promise<{ converted: number
         const result = convertFrontmatter(fm, rows);
         for (const [key, value] of Object.entries(result.set)) fm[key] = value;
         for (const key of result.remove) delete fm[key];
-        if (result.kept.length > 0) kept.push(`${file.path}: ${result.kept.join(", ")}`);
+        if (result.moved.length > 0) moved.push(`${file.path}: ${result.moved.join(", ")}`);
       });
       converted++;
     } catch (error) {
@@ -126,7 +126,7 @@ export async function convertContactNotes(app: App): Promise<{ converted: number
       console.error(`Friendly Contacts: could not convert ${file.path}`, error);
     }
   }
-  return { converted, kept, failed };
+  return { converted, moved, failed };
 }
 
 /** Contact notes where renaming `from` to `to` would move a value (and none that would be skipped). */

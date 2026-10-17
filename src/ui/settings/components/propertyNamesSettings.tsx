@@ -1,6 +1,6 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
-import { DEFAULT_MAPPING, MappingRow, validateMapping } from "src/contacts/friendly/mapping";
+import { DEFAULT_MAPPING, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
 import { notesToRename, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings, updateSetting } from "src/context/sharedSettingsContext";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
@@ -61,6 +61,13 @@ export function PropertyNamesSettings({ app }: { app: App }) {
 
   const edit = (index: number, change: (row: MappingRow) => MappingRow) =>
     commit(rows.map((row, i) => (i === index ? change(row) : row)));
+
+  /** Renames row `index`; mirrors naming it follow (unless the name is shared, then only this row changes). */
+  const rename = (index: number, to: string) => {
+    const from = rows[index].property;
+    if (rows.filter((r) => r.property === from).length > 1) return edit(index, (r) => ({ ...r, property: to }));
+    return commit(renameRow(rows, from, to));
+  };
 
   const reset = async () => {
     setRows(DEFAULT_MAPPING);
@@ -128,7 +135,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                 <CommitInput
                   label="Property name"
                   value={row.property}
-                  onCommit={(text) => edit(i, (r) => ({ ...r, property: text.trim() }))}
+                  onCommit={(text) => rename(i, text.trim())}
                 />
               </td>
               <td>
