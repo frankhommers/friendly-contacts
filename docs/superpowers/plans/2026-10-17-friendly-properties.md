@@ -100,8 +100,8 @@ changed `checkConnectivity` only).
 - [ ] **Step 2: Give the fork its own identity**
 
 In `manifest.json`:
-- `"id": "vcf-contacts-friendly"`
-- `"name": "VCF Contacts Friendly"`
+- `"id": "friendly-contacts"`
+- `"name": "Friendly Contacts"`
 - `"version": "3.0.0-alpha.1"`
 - keep `author`
 - set `"forkedFrom": "https://github.com/broekema41/obsidian-vcf-contacts"`
@@ -688,7 +688,7 @@ UI:
   - Auth `htpasswd` (plain).
   - Load `tests/fixtures/appleV3.vcf` as `/frank/contacts/ABC-DEF.vcf` with `curl -T`.
 - [ ] **Step 2: Install the build into a scratch vault**
-  - Copy `main.js`, `manifest.json` and `styles.css` to `<vault>/.obsidian/plugins/vcf-contacts-friendly/`.
+  - Copy `main.js`, `manifest.json` and `styles.css` to `<vault>/.obsidian/plugins/friendly-contacts/`.
   - Configure sync to the local server.
 - [ ] **Step 3: Run the checklist.** For each step, record the server card (`curl -u frank:… …/ABC-DEF.vcf`):
   1. Import from the insights panel: the note looks like the spec example, and `sync-state` holds the card.
