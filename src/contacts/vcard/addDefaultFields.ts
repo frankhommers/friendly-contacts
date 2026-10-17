@@ -1,11 +1,14 @@
 import { TFile } from "obsidian";
-import { friendlyKey, isOldStyleNote } from "src/contacts/friendlyNotes";
+import { friendlyKey, hasVCardValues } from "src/contacts/friendlyNotes";
 import { getApp } from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 
 import { VCardForObsidianRecord } from "./shared/vcard";
 
-/** The note's frontmatter plus every missing default field (empty), as friendly properties. */
+/**
+ * The note's frontmatter plus every missing default field (empty), as friendly properties.
+ * A note that still holds vCard keys is returned unchanged.
+ */
 export async function addDefaultFields(file: TFile):Promise<VCardForObsidianRecord> {
   const { createFieldsKeys, friendly } = getSettings();
   const { metadataCache } = getApp();
@@ -14,10 +17,13 @@ export async function addDefaultFields(file: TFile):Promise<VCardForObsidianReco
   if (!frontMatter) {
     throw new Error('No frontmatter found.');
   }
-  const oldStyle = isOldStyleNote(frontMatter, friendly.mapping);
   const record: Record<string, any> = { ...frontMatter };
+  // Friendly fields next to vCard keys would make a half-converted note; such notes are converted first.
+  if (hasVCardValues(frontMatter)) {
+    return record;
+  }
   for (const key of createFieldsKeys) {
-    const property = oldStyle ? key : friendlyKey(key, friendly.mapping);
+    const property = friendlyKey(key, friendly.mapping);
     if (!(property in record)) {
       record[property] = "";
     }

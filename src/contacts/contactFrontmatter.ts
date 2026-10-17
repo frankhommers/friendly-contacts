@@ -1,5 +1,5 @@
 import { TFile } from "obsidian";
-import { friendlyKey, isContactFrontmatter, isOldStyleNote, legacyRecord } from "src/contacts/friendlyNotes";
+import { friendlyKey, hasVCardValues, isContactFrontmatter, legacyRecord } from "src/contacts/friendlyNotes";
 import { getApp } from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 
@@ -43,11 +43,11 @@ export async function updateFrontMatter(file: TFile, record: Record<string, any>
 
 /**
  * Sets one value given by its vCard key (`UID`, `PHOTO`, `FN`). Friendly notes get the friendly
- * property (`uid`, `photo`, `name`); old-style notes keep the vCard key.
+ * property (`uid`, `photo`, `name`); notes that still hold vCard keys keep the vCard key.
  */
 export async function updateFrontMatterValue(file: TFile, key: string, value: string) {
   const rows = getSettings().friendly.mapping;
   await getApp().fileManager.processFrontMatter(currentFile(file), (frontmatter: Record<string, unknown>) => {
-    frontmatter[isOldStyleNote(frontmatter, rows) ? key : friendlyKey(key, rows)] = value;
+    frontmatter[hasVCardValues(frontmatter) ? key : friendlyKey(key, rows)] = value;
   });
 }

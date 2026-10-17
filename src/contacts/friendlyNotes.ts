@@ -37,11 +37,15 @@ export function isVCardKey(key: string): boolean {
   return Object.prototype.hasOwnProperty.call(VCardSupportedKey, parsed.key) || parsed.key.startsWith('X-');
 }
 
-/** A note written by upstream: vCard keys, and no friendly property with a value. */
-export function isOldStyleNote(frontmatter: Record<string, unknown>, rows: MappingRow[]): boolean {
-  return (
-    Object.keys(frontmatter).some(isVCardKey) && Object.keys(coerceNoteProps(frontmatter, rows).props).length === 0
-  );
+const hasValue = (value: unknown): boolean =>
+  Array.isArray(value) ? value.some(hasValue) : value !== undefined && value !== null && String(value).trim() !== '';
+
+/**
+ * The note still holds data under vCard keys (`FN`, `UID`, `TEL[CELL]`, `X-...`): an upstream note, or one
+ * half converted. Sync does not read those keys, so such a note must be converted first.
+ */
+export function hasVCardValues(frontmatter: Record<string, unknown>): boolean {
+  return Object.entries(frontmatter).some(([key, value]) => isVCardKey(key) && hasValue(value));
 }
 
 export function isContactFrontmatter(frontmatter: Record<string, unknown> | undefined | null): boolean {

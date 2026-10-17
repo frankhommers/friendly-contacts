@@ -94,11 +94,13 @@ export async function remoteContacts(): Promise<RemoteContact[]> {
 export class ObsidianRelationContext implements RelationContext {
   private pending: Promise<void>[] = [];
 
+  /** `readOnly`: never writes a UID to a linked note; such a link resolves like an unknown name. */
   constructor(
     private app: App,
     private sourcePath: string,
     private contacts: ContactNote[],
     private remote: RemoteContact[],
+    private readOnly = false,
   ) {}
 
   uidToName(uid: string): string | undefined {
@@ -111,7 +113,7 @@ export class ObsidianRelationContext implements RelationContext {
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true } {
     const dest = this.app.metadataCache.getFirstLinkpathDest(name, this.sourcePath);
     const note = dest ? this.contacts.find((c) => c.file.path === dest.path) : undefined;
-    if (!note) return resolveRemoteName(name, this.remote);
+    if (!note || (note.uid === undefined && this.readOnly)) return resolveRemoteName(name, this.remote);
     if (note.uid === undefined) {
       // Like the UID processor: a contact that gets linked needs an identity.
       note.uid = `urn:uuid:${generateUUID()}`;
@@ -135,6 +137,16 @@ export async function relationContextFor(app: App, sourcePath: string): Promise<
   return new ObsidianRelationContext(app, sourcePath, contactNotes(app), await remoteContacts());
 }
 
+/** Contact notes and remote contacts, gathered once for a batch (e.g. an export of many notes). */
+export interface ContactLookups {
+  contacts: ContactNote[];
+  remote: RemoteContact[];
+}
+
+export async function contactLookups(app: App): Promise<ContactLookups> {
+  return { contacts: contactNotes(app), remote: await remoteContacts() };
+}
+
 let sharedState: { dir: string; state: SyncState } | undefined;
 
 /** The one sync-state store (its writes are queued, so every caller must share it). */
@@ -144,14 +156,18 @@ export function contactSyncState(app: App = getApp()): SyncState {
   return sharedState.state;
 }
 
-/** The vCard a friendly note exports as: the last synced card patched with the note, else a new card. */
+/**
+ * The vCard a friendly note exports as: the last synced card patched with the note, else a new card.
+ * Read-only: exporting never writes to the vault.
+ */
 export async function friendlyNoteCard(
   app: App,
   file: TFile,
   props: Record<string, FriendlyValue>,
   rows: MappingRow[],
+  lookups: ContactLookups,
 ): Promise<string> {
-  const ctx = await relationContextFor(app, file.path);
+  const ctx = new ObsidianRelationContext(app, file.path, lookups.contacts, lookups.remote, true);
   const uid = typeof props.uid === "string" ? props.uid.trim() : "";
   const base = uid !== "" ? await contactSyncState(app).get(uid) : undefined;
   let lines;
@@ -161,15 +177,15 @@ export async function friendlyNoteCard(
   } else {
     lines = newCard(props, rows, ctx).lines;
   }
-  await ctx.settle();
   return serializeCard(lines);
 }
 
 /**
  * Creates a friendly contact note from one card in the contacts folder.
- * Returns the card's UID ('' when it has none), or undefined when the card has no name.
+ * Returns the card's UID ('' when it has none) and whether the note now holds this card, or undefined
+ * when the card has no name. An existing file is only replaced when the user says so, maybe later.
  */
-export async function importCard(app: App, card: string): Promise<{ uid: string } | undefined> {
+export async function importCard(app: App, card: string): Promise<{ uid: string; written: boolean } | undefined> {
   const { contactsFolder, defaultHashtag, friendly } = getSettings();
   const lines = parseCard(card);
   const value = (name: string) => lines.find((line) => line.name === name)?.value;
@@ -177,8 +193,10 @@ export async function importCard(app: App, card: string): Promise<{ uid: string 
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(`${contactsFolder}/${fileName}.md`));
   const props = toFriendly(lines, friendly.mapping, ctx).props;
-  await createContactFile(app, contactsFolder, renderFriendlyNote(props, defaultHashtag, friendly.mapping), `${fileName}.md`);
-  return { uid: cleanUid(value("UID")) };
+  const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
+  const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
+  const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;
+  return { uid: cleanUid(value("UID")), written };
 }
 
 /** Imports a card pulled from the server and stores it as the base for the next Sync. */
@@ -189,7 +207,8 @@ export async function importRemoteCard(
 ): Promise<boolean> {
   const imported = await importCard(app, pulled.raw);
   if (!imported) return false;
-  if (imported.uid !== "") {
+  // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
+  if (imported.uid !== "" && imported.written) {
     await contactSyncState(app).set(imported.uid, {
       raw: pulled.raw,
       etag: pulled.etag || meta.etag || "",

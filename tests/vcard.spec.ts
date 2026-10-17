@@ -315,26 +315,19 @@ describe('vcard tostring', () => {
 
 
 describe('vcard addDefaultFields', () => {
-  it('should add missing default fields while preserving existing values', async () => {
+  it('leaves a note that still holds vCard keys unchanged', async () => {
     const result = await vcard.addDefaultFields({ basename: 'base.frontmatter' } as TFile);
 
-    expect(result['N.GN']).toBe('Liam');
-    expect(result[ 'URL[WORK]']).toBe('https://storycraft.ie/liam');
-    expect(result['EMAIL[HOME]']).toBe('liam.green@lucky.ie');
-    expect(result['EMAIL[WORK]']).toBe('liam@storycraft.ie');
-    expect(result['CATEGORIES']).toBe('Writing, Mythology');
-    // The default fields are friendly property names now.
-    expect(result['firstname']).toBe('');
-    expect(result['mobile']).toBe('');
-    expect(result['work-email']).toBe('');
+    expect(result).toEqual(fixtures.readFrontmatterFixture('base.frontmatter'));
+    expect(result).not.toHaveProperty('mobile');
   });
 
-  it('adds friendly default fields to a friendly note and keeps its values', async () => {
+  it('should add missing default fields while preserving existing values', async () => {
     const result = await vcard.addDefaultFields({ basename: 'friendly.frontmatter' } as TFile);
 
     expect(result['name']).toBe('Jan de Vries');
     expect(result['mobile']).toBe('06-12345678');
-    expect(result['TEL[WORK]']).toBe('030-1234567');
+    expect(result['FN']).toBe('');
     expect(result['firstname']).toBe('');
     expect(result['city']).toBe('');
     expect(result).not.toHaveProperty('N.GN');

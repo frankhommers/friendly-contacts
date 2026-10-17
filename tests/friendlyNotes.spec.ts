@@ -6,7 +6,7 @@ import {
   contactFileName,
   friendlyKey,
   isContactFrontmatter,
-  isOldStyleNote,
+  hasVCardValues,
   legacyRecord,
   recordToFriendly,
   renderFriendlyNote,
@@ -99,12 +99,19 @@ describe('isContactFrontmatter', () => {
   });
 });
 
-describe('isOldStyleNote', () => {
-  it('has vCard keys and no friendly values', () => {
-    expect(isOldStyleNote({ FN: 'X', tags: [] }, DEFAULT_MAPPING)).toBe(true);
-    expect(isOldStyleNote({ FN: 'X', mobile: '', city: null }, DEFAULT_MAPPING)).toBe(true);
-    expect(isOldStyleNote({ FN: 'X', uid: 'a' }, DEFAULT_MAPPING)).toBe(false);
-    expect(isOldStyleNote({ name: 'X' }, DEFAULT_MAPPING)).toBe(false);
+describe('hasVCardValues', () => {
+  it('is true for any vCard key with a value, also next to friendly ones', () => {
+    expect(hasVCardValues({ FN: 'Jan', UID: 'urn:uuid:x', mobile: '06' })).toBe(true);
+    expect(hasVCardValues({ FN: 'X', tags: [] })).toBe(true);
+    expect(hasVCardValues({ name: 'Jan', 'TEL[CELL]': '06' })).toBe(true);
+    expect(hasVCardValues({ name: 'Jan', 'ADR[HOME].STREET': 'Dorpsstraat 1' })).toBe(true);
+    expect(hasVCardValues({ name: 'Jan', 'X-FOO': 'bar' })).toBe(true);
+  });
+
+  it('is false for friendly notes and empty vCard keys', () => {
+    expect(hasVCardValues({ name: 'Jan', mobile: '06' })).toBe(false);
+    expect(hasVCardValues({ FN: '', name: 'Jan', mobile: '06' })).toBe(false);
+    expect(hasVCardValues({ FN: '  ', UID: null, CATEGORIES: [], name: 'Jan' })).toBe(false);
   });
 });
 
