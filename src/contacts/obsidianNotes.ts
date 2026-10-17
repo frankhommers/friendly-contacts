@@ -7,12 +7,13 @@ import { App, normalizePath, Notice, parseYaml, TFile, TFolder } from "obsidian"
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
+import type { MirrorEnv } from "src/contacts/relationMirror";
 import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
-import { createContactFile, findContactFiles } from "src/file/file";
+import { createContactFile, findContactFiles, isFileInFolder } from "src/file/file";
 import { getCurrentAdapter } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
 import type { NoteIO } from "src/sync/syncContact";
@@ -63,6 +64,41 @@ export function contactNotes(app: App): ContactNote[] {
     const uid: unknown = frontmatter.uid ?? frontmatter.UID;
     return [{ file, uid: typeof uid === "string" && uid.trim() !== "" ? uid.trim() : undefined }];
   });
+}
+
+/** Relationship mirroring against the vault: contact notes, link resolution and property writes. */
+export function obsidianMirrorEnv(app: App): MirrorEnv {
+  const contactFrontmatter = (file: TFile) => {
+    const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+    return frontmatter && isContactFrontmatter(frontmatter) ? { ...frontmatter } : undefined;
+  };
+  return {
+    listContacts() {
+      const folder = app.vault.getAbstractFileByPath(normalizePath(getSettings().contactsFolder));
+      if (!(folder instanceof TFolder)) return [];
+      return findContactFiles(folder).flatMap((file) => {
+        const frontmatter = contactFrontmatter(file);
+        return frontmatter ? [{ path: file.path, frontmatter }] : [];
+      });
+    },
+    resolveLink(linkpath, fromPath) {
+      const file = app.metadataCache.getFirstLinkpathDest(linkpath, fromPath);
+      return file && isFileInFolder(file) && contactFrontmatter(file) ? file.path : undefined;
+    },
+    linkTo(targetPath, fromPath) {
+      const file = app.vault.getAbstractFileByPath(targetPath);
+      if (!(file instanceof TFile)) throw new Error(`Contact note not found: ${targetPath}`);
+      return `[[${app.metadataCache.fileToLinktext(file, fromPath)}]]`;
+    },
+    async setProperty(path, property, value) {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return;
+      await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+        if (value === undefined) delete frontmatter[property];
+        else frontmatter[property] = value;
+      });
+    },
+  };
 }
 
 const REMOTE_TTL_MS = 5 * 60 * 1000;
