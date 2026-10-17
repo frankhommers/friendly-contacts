@@ -103,7 +103,22 @@ function setPart(parts: string[], index: number, value: string): void {
   parts[index] = value;
 }
 
-function patchField(s: State, row: FieldRow, prov: Provenance | undefined, before: unknown, after: unknown): void {
+/** `firstname lastname`, trimmed; empty when both are empty. */
+function derivedName(props: Record<string, FriendlyValue>): string {
+  return [props.firstname, props.lastname]
+    .map(text)
+    .filter((s) => s !== '')
+    .join(' ');
+}
+
+function patchField(
+  s: State,
+  row: FieldRow,
+  prov: Provenance | undefined,
+  before: unknown,
+  after: unknown,
+  props: Record<string, FriendlyValue>,
+): void {
   const isList = row.format === 'list';
   if (isList ? sameSet(list(before), list(after)) : text(before) === text(after)) return;
   let value: string;
@@ -111,9 +126,13 @@ function patchField(s: State, row: FieldRow, prov: Provenance | undefined, befor
   else if (row.property === 'photo') value = text(after);
   else value = escapeText(text(after));
 
+  // The UID and FN lines are never deleted: an emptied FN falls back to the name parts, else stays as it is.
+  if (prov && value === '' && row.property === 'name') value = escapeText(derivedName(props));
+  if (prov && value === '' && (row.property === 'uid' || row.property === 'name')) return;
+
   if (prov) {
     if (value === '') removeLine(s, prov.line);
-    else setLine(s, prov.line, withValue(s.base[prov.line], value));
+    else if (value !== s.base[prov.line].value) setLine(s, prov.line, withValue(s.base[prov.line], value));
   } else if (value !== '') {
     addLine(s, row.write, value);
   }
@@ -177,13 +196,17 @@ function addRelated(s: State, row: RelationRow, name: string, ctx: RelationConte
 function patchRelation(
   s: State,
   row: RelationRow,
+  key: string,
   prov: Provenance | Provenance[] | undefined,
   before: unknown,
   after: unknown,
   ctx: RelationContext,
 ): void {
   if (row.single) {
-    const name = target(text(after));
+    if (Array.isArray(after) && after.length > 1) {
+      s.warnings.push(`"${key}" holds a list; only its first item is used.`);
+    }
+    const name = target(text(Array.isArray(after) ? after[0] : after));
     if (target(text(before)) === name) return;
     const p = single(prov);
     if (name === '') {
@@ -254,11 +277,11 @@ export function patch(
     const prov = before.source[key];
     const was = before.props[key];
     const now = after[key];
-    if (row.kind === 'field') patchField(s, row, single(prov), was, now);
+    if (row.kind === 'field') patchField(s, row, single(prov), was, now, after);
     // toFriendly never numbers component rows or list relations; such keys have no line to map to.
     else if (ordinal > 1 && !(row.kind === 'relation' && row.single)) continue;
     else if (row.kind === 'component') patchComponent(s, row, single(prov), was, now, rows);
-    else patchRelation(s, row, prov, was, now, ctx);
+    else patchRelation(s, row, key, prov, was, now, ctx);
   }
   finishComponents(s);
 
@@ -275,12 +298,12 @@ export function newCard(
   props: Record<string, FriendlyValue>,
   rows: MappingRow[],
   ctx: RelationContext,
-): VCardLine[] {
+): PatchResult {
   const base: VCardLine[] = [{ name: 'VERSION', params: [], value: '4.0' }];
   if (text(props.uid) === '') base.push({ name: 'UID', params: [], value: `urn:uuid:${generateUUID()}` });
   if (text(props.name) === '') {
-    const fn = [props.firstname, props.lastname].map(text).filter((s) => s !== '').join(' ');
+    const fn = derivedName(props);
     if (fn !== '') base.push({ name: 'FN', params: [], value: escapeText(fn) });
   }
-  return patch(base, { props: {}, source: {} }, props, rows, ctx).lines;
+  return patch(base, { props: {}, source: {} }, props, rows, ctx);
 }

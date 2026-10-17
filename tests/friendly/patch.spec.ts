@@ -155,6 +155,34 @@ describe('patch', () => {
     ]);
   });
 
+  it('removing uid keeps the UID line', () => {
+    const uid = base.find((l) => l.name === 'UID');
+    const result = run(without('uid'));
+    expect(result.lines.find((l) => l.name === 'UID')).toBe(uid);
+    expect(result.lines).toEqual(base);
+    expect(run({ ...before.props, uid: '' }).lines.find((l) => l.name === 'UID')).toBe(uid);
+  });
+
+  it('emptying name derives FN from first and last name', () => {
+    const { lines } = run({ ...before.props, name: '', firstname: 'Johan' });
+    expect(texts(lines.filter((l) => l.name === 'FN'))).toEqual(['FN:Johan de Vries']);
+    expect(texts(run(without('name')).lines.filter((l) => l.name === 'FN'))).toEqual(['FN:Jan de Vries']);
+  });
+
+  it('emptying name without first/last keeps FN', () => {
+    const lines = card('FN:Jan');
+    const result = run({ name: ' ' }, lines);
+    expect(result.lines).toEqual(lines);
+    expect(result.lines[1]).toBe(lines[1]);
+  });
+
+  it('uses the first item of a list given for spouse', () => {
+    const { lines, warnings } = run({ name: 'X', spouse: ['[[Opa]]', '[[Oma]]'] }, card('FN:X'));
+    expect(texts(lines)).toEqual(['VERSION:3.0', 'FN:X', 'RELATED;TYPE=spouse;VALUE=text:Opa']);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('spouse');
+  });
+
   it('local-only properties are ignored', () => {
     const { lines } = run({ ...before.props, 'met-via': '[[Piet]]' });
     expect(lines).toEqual(base);
@@ -168,7 +196,7 @@ describe('patch', () => {
 
 describe('newCard', () => {
   it('builds a card from properties', () => {
-    const lines = texts(newCard({ firstname: 'Anna', lastname: 'Smit', mobile: '06' }, DEFAULT_MAPPING, ctx));
+    const lines = texts(newCard({ firstname: 'Anna', lastname: 'Smit', mobile: '06' }, DEFAULT_MAPPING, ctx).lines);
     expect(lines[0]).toBe('VERSION:4.0');
     expect(lines.some((l) => /^UID:urn:uuid:[0-9a-f-]{36}$/.test(l))).toBe(true);
     expect(lines).toContain('FN:Anna Smit');
@@ -177,7 +205,14 @@ describe('newCard', () => {
   });
 
   it('keeps a given uid and name', () => {
-    const lines = texts(newCard({ uid: 'abc', name: 'Anna' }, DEFAULT_MAPPING, ctx));
+    const lines = texts(newCard({ uid: 'abc', name: 'Anna' }, DEFAULT_MAPPING, ctx).lines);
     expect(lines).toEqual(['VERSION:4.0', 'FN:Anna', 'UID:abc']);
+  });
+
+  it('returns relation warnings', () => {
+    const { lines, warnings } = newCard({ name: 'Anna', children: ['[[Jan]]'] }, DEFAULT_MAPPING, ctx);
+    expect(texts(lines)).toContain('RELATED;TYPE=child;VALUE=text:Jan');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Jan');
   });
 });
