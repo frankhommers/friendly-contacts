@@ -173,7 +173,7 @@ async function writeNote(
 ): Promise<boolean> {
   const set: Props = {};
   for (const [property, value] of Object.entries(merged)) {
-    if (!sameValue(value, local[property])) set[property] = value;
+    if (!sameValue(value, local[property], property)) set[property] = value;
   }
   const remove = Object.keys(local).filter((p) => !(p in merged) && isMappedProperty(p, deps.rows));
   const changed = Object.keys(set).length > 0 || remove.length > 0;

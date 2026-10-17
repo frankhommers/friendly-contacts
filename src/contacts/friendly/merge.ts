@@ -1,6 +1,7 @@
 /** Three-way merge of friendly properties and coercion of raw note values. No obsidian / src/context imports. */
 
 import { isMappedProperty, MappingRow, rowForProperty } from './mapping';
+import { photoKey } from './photo';
 import { linkTarget } from './relations';
 import { FriendlyValue } from './translate';
 
@@ -12,21 +13,30 @@ export interface Conflict {
 
 type Props = Record<string, FriendlyValue>;
 
-/** Absent (undefined, '' or []) -> undefined; text -> trimmed; list -> sorted unique link targets. */
-function canonical(value: FriendlyValue | undefined): string | string[] | undefined {
+/** `photo` and `photo-2`, ...: compared as image data (the fixed name, see FIXED_PROPERTIES). */
+const isPhoto = (property: string | undefined): boolean => property !== undefined && /^photo(-\d+)?$/.test(property);
+
+/**
+ * Absent (undefined, '' or []) -> undefined; text -> trimmed; list -> sorted unique link targets;
+ * a photo -> its base64 data without whitespace.
+ */
+function canonical(value: FriendlyValue | undefined, property?: string): string | string[] | undefined {
   if (value === undefined) return undefined;
   if (Array.isArray(value)) {
     const items = new Set(value.map((v) => linkTarget(v.trim())).filter((v) => v !== ''));
     return items.size === 0 ? undefined : [...items].sort();
   }
-  const text = value.trim();
+  const text = isPhoto(property) ? photoKey(value) : value.trim();
   return text === '' ? undefined : text;
 }
 
-/** Equal as the merge sees them: absent values match, text is trimmed, lists compare as sorted link-target sets. */
-export function sameValue(a: FriendlyValue | undefined, b: FriendlyValue | undefined): boolean {
-  const x = canonical(a);
-  const y = canonical(b);
+/**
+ * Equal as the merge sees them: absent values match, text is trimmed, lists compare as sorted link-target sets,
+ * and for `property` photo a data URI equals the bare base64 of the same image.
+ */
+export function sameValue(a: FriendlyValue | undefined, b: FriendlyValue | undefined, property?: string): boolean {
+  const x = canonical(a, property);
+  const y = canonical(b, property);
   if (x === undefined || y === undefined) return x === y;
   if (typeof x === 'string' && typeof y === 'string') return x === y;
   const xs = typeof x === 'string' ? [x] : x;
@@ -48,16 +58,16 @@ export function mergeFriendly(
     const s = server[property];
     const l = local[property];
     let winner: FriendlyValue | undefined;
-    if (sameValue(s, l)) {
+    if (sameValue(s, l, property)) {
       winner = s;
     } else if (base === undefined) {
       // Without a base nothing tells a local edit from stale or junk data (e.g. a freshly converted upstream
       // note): the server wins, and every local value it does not have is kept in the conflict callout only.
       winner = s;
       if (canonical(l) !== undefined) conflicts.push({ property, local: l as FriendlyValue, server: s ?? '' });
-    } else if (sameValue(base[property], s)) {
+    } else if (sameValue(base[property], s, property)) {
       winner = l;
-    } else if (sameValue(base[property], l)) {
+    } else if (sameValue(base[property], l, property)) {
       winner = s;
     } else {
       winner = s;
@@ -120,7 +130,8 @@ export function renderConflictCallout(conflicts: Conflict[], when: Date): string
   const stamp = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
   const lines = [`> [!warning] Sync conflict ${stamp}`, '> The server value was kept. Your value was:'];
   for (const c of conflicts) {
-    const value = Array.isArray(c.local) ? c.local.join(', ') : c.local;
+    // Image data is never printed in the note body.
+    const value = isPhoto(c.property) ? '(image)' : Array.isArray(c.local) ? c.local.join(', ') : c.local;
     lines.push(`> - ${c.property}: ${value}`);
   }
   return lines.join('\n');

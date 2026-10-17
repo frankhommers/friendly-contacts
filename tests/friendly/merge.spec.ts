@@ -77,6 +77,20 @@ describe('mergeFriendly', () => {
   });
 });
 
+describe('mergeFriendly photo', () => {
+  it('a data URI and the bare base64 of the same image are equal', () => {
+    const r = mergeFriendly({ photo: '/9j/AA\n BB' }, { photo: '/9j/AABB' }, { photo: 'data:image/jpeg;base64,/9j/AABB' });
+    expect(r.conflicts).toEqual([]);
+    expect(r.merged).toEqual({ photo: '/9j/AABB' });
+    expect(mergeFriendly(undefined, { photo: '/9j/AABB' }, { photo: 'data:image/jpeg;base64,/9j/AA BB' }).conflicts).toEqual([]);
+  });
+
+  it('a different image is still a change', () => {
+    const r = mergeFriendly({ photo: '/9j/AABB' }, { photo: '/9j/AABB' }, { photo: 'data:image/png;base64,iVBOR' });
+    expect(r.merged).toEqual({ photo: 'data:image/png;base64,iVBOR' });
+  });
+});
+
 describe('coerceNoteProps', () => {
   it('coerces yaml values from the note', () => {
     const r = coerceNoteProps(
@@ -114,6 +128,7 @@ describe('renderConflictCallout', () => {
         [
           { property: 'mobile', local: '06-1111', server: '06-2222' },
           { property: 'children', local: ['[[A]]', '[[B]]'], server: [] },
+          { property: 'photo', local: 'data:image/jpeg;base64,/9j/AAAA', server: '/9j/BBBB' },
         ],
         when,
       ),
@@ -123,6 +138,7 @@ describe('renderConflictCallout', () => {
         '> The server value was kept. Your value was:',
         '> - mobile: 06-1111',
         '> - children: [[A]], [[B]]',
+        '> - photo: (image)',
       ].join('\n'),
     );
   });
