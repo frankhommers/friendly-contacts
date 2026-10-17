@@ -65,22 +65,45 @@ export function convertFrontmatter(fm: Frontmatter, rows: MappingRow[]): Convert
   return result;
 }
 
+export interface Rename {
+  from: string;
+  to: string;
+}
+
 /** Moves `from` (and `from-2`, `from-3`, ...) to `to`; skipped when the note already has a value under a target name. */
 export function renameInFrontmatter(
   fm: Frontmatter,
   from: string,
   to: string,
 ): { set: Record<string, FriendlyValue>; remove: string[] } | { skipped: true } {
+  return renameAllInFrontmatter(fm, [{ from, to }]);
+}
+
+/**
+ * Applies several renames at once (so `cell -> mobile` plus `mobile -> phone` works): every `from` (and its
+ * numbered extras) moves to its `to`. Skipped when a target name holds a value that is not itself moved away.
+ */
+export function renameAllInFrontmatter(
+  fm: Frontmatter,
+  renames: Rename[],
+): { set: Record<string, FriendlyValue>; remove: string[] } | { skipped: true } {
   const set: Record<string, FriendlyValue> = {};
-  const remove: string[] = [];
-  const isExtra = (key: string) => key.startsWith(`${from}-`) && /^\d+$/.test(key.slice(from.length + 1));
+  const moved: string[] = [];
+  const renameOf = (key: string): string | undefined => {
+    for (const { from, to } of renames) {
+      if (key === from) return to;
+      if (key.startsWith(`${from}-`) && /^\d+$/.test(key.slice(from.length + 1))) return to + key.slice(from.length);
+    }
+    return undefined;
+  };
   for (const [key, value] of Object.entries(fm)) {
-    if (key !== from && !isExtra(key)) continue;
-    if (!hasValue(value)) continue;
-    const target = to + key.slice(from.length);
-    if (hasValue(fm[target])) return { skipped: true };
+    const target = renameOf(key);
+    if (target === undefined || target === key || !hasValue(value)) continue;
     set[target] = value as FriendlyValue;
-    remove.push(key);
+    moved.push(key);
   }
-  return { set, remove };
+  for (const target of Object.keys(set)) {
+    if (hasValue(fm[target]) && !moved.includes(target)) return { skipped: true };
+  }
+  return { set, remove: moved.filter((key) => !(key in set)) };
 }

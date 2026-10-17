@@ -1,7 +1,10 @@
 import { parseCard } from 'src/contacts/friendly/lines';
 import {
   DEFAULT_MAPPING,
+  FIXED_PROPERTIES,
+  isFixedProperty,
   isMappedProperty,
+  mappingRenames,
   matchesPattern,
   MappingRow,
   rowForLine,
@@ -137,5 +140,38 @@ describe('renameRow', () => {
     expect(DEFAULT_MAPPING).toEqual(before);
     expect(names(rows).indexOf('cell')).toBe(names(DEFAULT_MAPPING).indexOf('mobile'));
     expect(mirrorOf(rows, 'siblings')).toBe('siblings');
+  });
+});
+
+describe('fixed rows', () => {
+  it('uid, name and photo cannot be renamed or removed', () => {
+    expect(FIXED_PROPERTIES).toEqual(['uid', 'name', 'photo']);
+    for (const property of FIXED_PROPERTIES) {
+      expect(isFixedProperty(property)).toBe(true);
+      const renamed = renameRow(DEFAULT_MAPPING, property, `my-${property}`);
+      expect(validateMapping(renamed).some((e) => e.includes(`"${property}"`))).toBe(true);
+      const removed = DEFAULT_MAPPING.filter((r) => r.property !== property);
+      expect(validateMapping(removed).some((e) => e.includes(`"${property}"`))).toBe(true);
+    }
+    expect(isFixedProperty('mobile')).toBe(false);
+  });
+});
+
+describe('mappingRenames', () => {
+  it('lists the renamed rows, old name to new name', () => {
+    const renamed = renameRow(renameRow(DEFAULT_MAPPING, 'mobile', 'cell'), 'children', 'kids');
+    expect(mappingRenames(DEFAULT_MAPPING, renamed)).toEqual([
+      { from: 'mobile', to: 'cell' },
+      { from: 'children', to: 'kids' },
+    ]);
+    expect(mappingRenames(DEFAULT_MAPPING, DEFAULT_MAPPING)).toEqual([]);
+  });
+
+  it('Reset to defaults implies renaming every changed name back', () => {
+    const current = renameRow(renameRow(DEFAULT_MAPPING, 'mobile', 'cell'), 'phone', 'mobile');
+    expect(mappingRenames(current, DEFAULT_MAPPING)).toEqual([
+      { from: 'cell', to: 'mobile' },
+      { from: 'mobile', to: 'phone' },
+    ]);
   });
 });

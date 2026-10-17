@@ -190,9 +190,36 @@ export function renameRow(rows: MappingRow[], from: string, to: string): Mapping
   });
 }
 
+/**
+ * Rows whose names the code relies on (sync identity, card name, avatar): they cannot be renamed or removed.
+ * Renaming `uid` would make Sync assign a new UID and create a duplicate card.
+ */
+export const FIXED_PROPERTIES = ['uid', 'name', 'photo'] as const;
+
+export function isFixedProperty(property: string): boolean {
+  return (FIXED_PROPERTIES as readonly string[]).includes(property);
+}
+
+/** Property renames from `before` to `after`, row by row (the settings never add, remove or reorder rows). */
+export function mappingRenames(before: MappingRow[], after: MappingRow[]): { from: string; to: string }[] {
+  const renames: { from: string; to: string }[] = [];
+  const count = Math.min(before.length, after.length);
+  for (let i = 0; i < count; i++) {
+    const from = before[i].property;
+    const to = after[i].property;
+    if (from !== to) renames.push({ from, to });
+  }
+  return renames;
+}
+
 /** Human-readable problems with a mapping; empty when valid. */
 export function validateMapping(rows: MappingRow[]): string[] {
   const errors: string[] = [];
+  for (const property of FIXED_PROPERTIES) {
+    if (!rows.some((row) => row.kind === 'field' && row.property === property)) {
+      errors.push(`The property "${property}" cannot be renamed or removed.`);
+    }
+  }
   const seen = new Set<string>();
   for (const row of rows) {
     const key = row.property.trim();

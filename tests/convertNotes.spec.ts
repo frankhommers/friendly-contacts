@@ -1,5 +1,5 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { convertFrontmatter, renameInFrontmatter } from 'src/contacts/convertNotes';
+import { convertFrontmatter, renameAllInFrontmatter, renameInFrontmatter } from 'src/contacts/convertNotes';
 import { hasVCardValues } from 'src/contacts/friendlyNotes';
 import { describe, expect, it } from 'vitest';
 
@@ -96,5 +96,19 @@ describe('renameInFrontmatter', () => {
 
   it('does nothing for a note without the property', () => {
     expect(renameInFrontmatter({ name: 'Jan' }, 'mobile', 'cell')).toEqual({ set: {}, remove: [] });
+  });
+});
+
+describe('renameAllInFrontmatter', () => {
+  it('applies several renames at once, so swapped and chained names do not collide', () => {
+    const fm = { cell: '06', mobile: '030', 'mobile-2': '010', name: 'Jan' };
+    expect(renameAllInFrontmatter(fm, [{ from: 'cell', to: 'mobile' }, { from: 'mobile', to: 'phone' }])).toEqual({
+      set: { mobile: '06', phone: '030', 'phone-2': '010' },
+      remove: ['cell', 'mobile-2'],
+    });
+  });
+
+  it('skips a note where a target name holds a value that stays', () => {
+    expect(renameAllInFrontmatter({ mobile: '06', cell: '07' }, [{ from: 'mobile', to: 'cell' }])).toEqual({ skipped: true });
   });
 });

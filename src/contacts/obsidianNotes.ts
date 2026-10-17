@@ -5,7 +5,7 @@
 
 import { App, normalizePath, Notice, parseYaml, TFile, TFolder } from "obsidian";
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
-import { convertFrontmatter, renameInFrontmatter } from "src/contacts/convertNotes";
+import { convertFrontmatter, Rename, renameAllInFrontmatter } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
@@ -131,32 +131,28 @@ export async function convertContactNotes(app: App): Promise<{ converted: number
   return { converted, moved, failed };
 }
 
-/** Contact notes where renaming `from` to `to` would move a value (and none that would be skipped). */
-export function notesToRename(app: App, from: string, to: string): TFile[] {
+/** Contact notes where the renames would move a value (and none that would be skipped). */
+export function notesToRename(app: App, renames: Rename[]): TFile[] {
   return contactNotes(app).flatMap(({ file }) => {
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
-    const result = frontmatter ? renameInFrontmatter(frontmatter, from, to) : undefined;
-    return result && "set" in result && result.remove.length > 0 ? [file] : [];
+    const result = frontmatter ? renameAllInFrontmatter(frontmatter, renames) : undefined;
+    return result && "set" in result && Object.keys(result.set).length > 0 ? [file] : [];
   });
 }
 
-/** Renames property `from` to `to` in all contact notes; notes that already have a value under `to` are skipped. */
-export async function renamePropertyInNotes(
-  app: App,
-  from: string,
-  to: string,
-): Promise<{ renamed: number; skipped: string[] }> {
+/** Applies the renames in all contact notes at once; notes where a target name already has a value are skipped. */
+export async function renamePropertyInNotes(app: App, renames: Rename[]): Promise<{ renamed: number; skipped: string[] }> {
   let renamed = 0;
   const skipped: string[] = [];
   for (const { file } of contactNotes(app)) {
     try {
       const outcome = { value: "none" as "renamed" | "skipped" | "none" };
       await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-        const result = renameInFrontmatter(fm, from, to);
+        const result = renameAllInFrontmatter(fm, renames);
         if ("skipped" in result) outcome.value = "skipped";
-        else if (result.remove.length > 0) {
-          for (const [key, value] of Object.entries(result.set)) fm[key] = value;
+        else if (Object.keys(result.set).length > 0) {
           for (const key of result.remove) delete fm[key];
+          for (const [key, value] of Object.entries(result.set)) fm[key] = value;
           outcome.value = "renamed";
         }
       });
@@ -164,7 +160,7 @@ export async function renamePropertyInNotes(
       else if (outcome.value === "skipped") skipped.push(file.path);
     } catch (error) {
       skipped.push(file.path);
-      console.error(`Friendly Contacts: could not rename ${from} in ${file.path}`, error);
+      console.error(`Friendly Contacts: could not rename properties in ${file.path}`, error);
     }
   }
   return { renamed, skipped };

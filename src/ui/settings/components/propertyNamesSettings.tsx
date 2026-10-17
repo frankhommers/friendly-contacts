@@ -1,6 +1,6 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
-import { DEFAULT_MAPPING, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
 import { notesToRename, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings, updateSetting } from "src/context/sharedSettingsContext";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
@@ -35,18 +35,38 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     saved.current = mapping;
   };
 
-  const offerRenames = (before: MappingRow[], after: MappingRow[]) => {
-    after.forEach((row, i) => {
-      const from = before[i]?.property;
-      if (from === undefined || from === row.property) return;
-      const count = notesToRename(app, from, row.property).length;
-      if (count === 0) return;
-      new ConfirmModal(app, `Rename property ${from} to ${row.property} in ${count} contact notes?`, "Rename", async () => {
-        const { renamed, skipped } = await renamePropertyInNotes(app, from, row.property);
-        if (skipped.length > 0) console.log(`Friendly Contacts: not renamed, ${row.property} already has a value:\n${skipped.join("\n")}`);
-        new Notice(`Renamed ${from} to ${row.property} in ${renamed} contact notes` + (skipped.length > 0 ? `; ${skipped.length} skipped, see console` : ""));
-      }).open();
-    });
+  /** Draft back to the saved mapping (a cancelled rename or reset). */
+  const revert = () => {
+    setRows(saved.current);
+    setErrors([]);
+  };
+
+  /**
+   * Saves `next`. Property renames are always carried into the contact notes: a renamed property that is
+   * left behind in the notes would no longer be synced, and Sync would delete its value on the server.
+   * When notes are affected the owner confirms first; cancel keeps the saved mapping.
+   */
+  const saveWithRenames = async (next: MappingRow[]) => {
+    const renames = mappingRenames(saved.current, next);
+    const count = renames.length > 0 ? notesToRename(app, renames).length : 0;
+    if (count === 0) {
+      await save(next);
+      return;
+    }
+    const list = renames.map(({ from, to }) => `${from} to ${to}`).join(", ");
+    new ConfirmModal(
+      app,
+      `Rename ${list} in ${count} contact notes?`,
+      "Rename",
+      async () => {
+        await save(next);
+        const { renamed, skipped } = await renamePropertyInNotes(app, renames);
+        if (skipped.length > 0) console.log(`Friendly Contacts: not renamed, a new name already has a value:\n${skipped.join("\n")}`);
+        new Notice(`Renamed ${list} in ${renamed} contact notes` + (skipped.length > 0 ? `; ${skipped.length} skipped, see console` : ""));
+      },
+      "Cancel",
+      revert,
+    ).open();
   };
 
   const commit = async (next: MappingRow[]) => {
@@ -54,9 +74,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     const problems = validateMapping(next);
     setErrors(problems);
     if (problems.length > 0) return;
-    const before = saved.current;
-    await save(next);
-    offerRenames(before, next);
+    await saveWithRenames(next);
   };
 
   const edit = (index: number, change: (row: MappingRow) => MappingRow) =>
@@ -65,6 +83,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   /** Renames row `index`; mirrors naming it follow (unless the name is shared, then only this row changes). */
   const rename = (index: number, to: string) => {
     const from = rows[index].property;
+    if (isFixedProperty(from)) return;
     if (rows.filter((r) => r.property === from).length > 1) return edit(index, (r) => ({ ...r, property: to }));
     return commit(renameRow(rows, from, to));
   };
@@ -72,7 +91,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const reset = async () => {
     setRows(DEFAULT_MAPPING);
     setErrors([]);
-    await save(DEFAULT_MAPPING);
+    await saveWithRenames(DEFAULT_MAPPING);
   };
 
   return (
@@ -132,11 +151,15 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           {rows.map((row, i) => (
             <tr key={i}>
               <td>
-                <CommitInput
-                  label="Property name"
-                  value={row.property}
-                  onCommit={(text) => rename(i, text.trim())}
-                />
+                {isFixedProperty(row.property) ? (
+                  <span className="vcf-mapping-readonly" title="This name cannot be changed">{row.property}</span>
+                ) : (
+                  <CommitInput
+                    label="Property name"
+                    value={row.property}
+                    onCommit={(text) => rename(i, text.trim())}
+                  />
+                )}
               </td>
               <td>
                 {row.kind === "relation" ? (
