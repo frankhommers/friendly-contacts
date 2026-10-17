@@ -170,13 +170,8 @@ export const ContactView = (props: ContactProps) => {
       event.stopPropagation();
       const menu = new Menu();
       menu.addItem((item:MenuItem) =>
-        item.setSection("vcf-sync-main").setTitle("Push").setIcon("square-arrow-up").onClick(() =>{
-          sync.pushToRemote(myContact);
-        })
-      );
-      menu.addItem((item:MenuItem) =>
-        item.setSection("vcf-sync-main").setTitle("Pull").setIcon("square-arrow-down").onClick(() =>{
-          sync.updateFromRemote(myContact);
+        item.setSection("vcf-sync-main").setTitle("Sync").setIcon("refresh-cw").onClick(() =>{
+          sync.syncContact(myContact);
         })
       );
       menu.addItem((item:MenuItem) =>

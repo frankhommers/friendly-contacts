@@ -1,11 +1,13 @@
 import {computed} from "@preact/signals-core";
 import {Notice} from "obsidian";
-import {Contact, getFrontmatterFromFiles, updateFrontMatterValue} from "src/contacts";
-import {vcard} from "src/contacts/vcard";
-import { settings, updateSetting } from "src/context/sharedSettingsContext";
-import { UidProcessor } from "src/insights/processors/UidProcessor";
+import {Contact} from "src/contacts";
+import {isOldStyleNote} from "src/contacts/friendlyNotes";
+import {contactSyncState, noteIO, relationContextFor} from "src/contacts/obsidianNotes";
+import {getApp} from "src/context/sharedAppContext";
+import { getSettings, settings } from "src/context/sharedSettingsContext";
 import { getCurrentAdapter } from "src/sync/adapters";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
+import {syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
 import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
 
@@ -51,58 +53,69 @@ export async function getRawVcardFromRemote(href: string) {
   return undefined;
 }
 
-export async function deleteOnRemote(contact: Contact) {
+/** Deletes the contact's card on the server and forgets its sync state; true when deleted. */
+export async function deleteOnRemote(contact: Contact): Promise<boolean> {
   const adapter = getCurrentAdapter();
-  if (adapter) {
-    const meta = await getMetaByUID(contact.data['UID'])
-    if (adapter && meta) {
-      const res =  await adapter.delete(meta.href);
-      if(res.status && (res.status < 200 || res.status > 300)) {
-        new Notice(res.data);
-        return undefined;
-      }
-    }
-    return undefined;
+  if (!adapter) {
+    return false;
   }
+  const uid = cleanUid(contact.data['UID']);
+  if (!uid) {
+    new Notice(`${contact.file.basename} has no UID; there is no card on the server to delete.`);
+    return false;
+  }
+  const meta = await getMetaByUID(uid);
+  if (!meta) {
+    new Notice(`${contact.file.basename} was not found on the server.`);
+    return false;
+  }
+  const res = await adapter.delete(meta.href);
+  if (res.errorMessage || res.status < 200 || res.status >= 300) {
+    new Notice(res.errorMessage || res.data || `Delete failed: HTTP ${res.status}`);
+    return false;
+  }
+  await contactSyncState().remove(uid);
+  return true;
 }
 
-export async function pushToRemote(contact: Contact) {
+const OUTCOME_TEXT: Record<Exclude<SyncOutcome, 'failed'>, string> = {
+  unchanged: 'already in sync',
+  pulled: 'updated from the server',
+  pushed: 'sent to the server',
+  both: 'updated from and sent to the server',
+  created: 'created on the server',
+};
+
+/** One Sync of a contact note with its card on the server (see src/sync/syncContact.ts). */
+export async function syncContact(contact: Contact): Promise<SyncOutcome | undefined> {
   const adapter = getCurrentAdapter();
-  if (adapter) {
-    let frontmatter = (await getFrontmatterFromFiles([contact.file]))[0]
-    const result = await vcard.toString([contact.file]);
-    if (result.errors.length > 0) {
-      return;
-    }
-
-    if(!frontmatter.data['UID'] && settings.value) {
-      if(!settings.value.processors[UidProcessor.settingPropertyName]) {
-        await updateSetting(`processors.${UidProcessor.settingPropertyName}`, true);
-        new Notice(`Setting for processors.${UidProcessor.settingPropertyName} set to active as it is required for sync`);
-      }
-
-      await UidProcessor.process([contact]);
-      // wait for frontmatter to be updated by obsidian.
-      await new Promise(resolve => setTimeout(resolve, 250));
-      frontmatter = (await getFrontmatterFromFiles([contact.file]))[0]
-    }
-
-    const res = await adapter.push({
-      uid: frontmatter.data['UID'].split(':').pop(),
-      raw: result.vcards
-    })
-
-
-    if (res && "errorMessage" in res && res.errorMessage) {
-      new Notice(res.errorMessage);
-      return;
-    }
-
-    if(res.status && (res.status < 200 || res.status > 300)) {
-      new Notice(res.data);
-      return;
-    }
+  if (!adapter) {
+    new Notice('Sync is not set up.');
+    return undefined;
   }
+  const app = getApp();
+  const rows = getSettings().friendly.mapping;
+  const frontmatter = app.metadataCache.getFileCache(contact.file)?.frontmatter ?? {};
+  if (isOldStyleNote(frontmatter, rows)) {
+    // Its UID is in `UID`, which Sync does not read; syncing would create a second card.
+    new Notice(`${contact.file.basename} still uses vCard property names (FN, TEL[CELL], ...); Sync needs friendly properties.`);
+    return undefined;
+  }
+
+  const ctx = await relationContextFor(app, contact.file.path);
+  const outcome = await syncNote(noteIO(app, contact.file), {
+    adapter,
+    state: contactSyncState(app),
+    rows,
+    ctx,
+    notify: (message) => new Notice(message),
+    now: () => new Date(),
+  });
+  await ctx.settle();
+  if (outcome !== 'failed') {
+    new Notice(`${contact.file.basename}: ${OUTCOME_TEXT[outcome]}.`);
+  }
+  return outcome;
 }
 
 export async function pullFromRemote(href: string): Promise<VCardRaw | undefined> {
@@ -115,50 +128,6 @@ export async function pullFromRemote(href: string): Promise<VCardRaw | undefined
   return remoteRaw;
 }
 
-
-export async function updateFromRemote(contact: Contact) {
-  const meta = await getMetaByUID(contact.data['UID'])
-
-  if (meta) {
-    const remoteRaw = await getRawVcardFromRemote(meta.href);
-
-    if (remoteRaw && "errorMessage" in remoteRaw) {
-      new Notice(remoteRaw.errorMessage);
-      return;
-    }
-
-    if (remoteRaw) {
-      const remoteVcf = await vcard.parse(remoteRaw.raw).next();
-
-      if(remoteVcf?.value?.[1] && typeof remoteVcf?.value?.[1] !== 'string') {
-        for (const [key, value] of Object.entries(remoteVcf.value?.[1])) {
-
-          if (key === 'UID') {
-            continue;
-          }
-
-          const localValue = contact.data[key];
-
-          if (key === 'PHOTO' ) {
-            if(!localValue || localValue=== '') {
-              await updateFrontMatterValue(contact.file, key, value);
-            }
-            continue;
-          }
-
-          if (!localValue || localValue === '') {
-            await updateFrontMatterValue(contact.file, key, value);
-            continue;
-          }
-
-          if(value.length !== 0 && localValue !== value) {
-            await updateFrontMatterValue(contact.file, key, value);
-          }
-        }
-      }
-    }
-  }
-}
 
 async function getList() {
   const adapter = getCurrentAdapter()

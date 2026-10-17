@@ -3,15 +3,13 @@ import {
   enabled,
   getUnknownFromRemote,
   pullFromRemote,
-  pushToRemote,
-  updateFromRemote
+  syncContact,
 } from "src/sync/sync";
 
 export const sync = {
   getUnknownFromRemote,
   pullFromRemote,
-  updateFromRemote,
-  pushToRemote,
+  syncContact,
   deleteOnRemote,
   enabled,
 };
