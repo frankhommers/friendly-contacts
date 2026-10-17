@@ -51,17 +51,31 @@ export function MasterSetting({ app }: MasterSettingProps) {
               void setFolder(value);
               return;
             }
-            confirmMoveContacts(app, count, previous, value, () => void setFolder(value), "Don't move");
+            confirmMoveContacts(app, count, previous, value, () => void setFolder(value), "Don't move", (result) => {
+              // Nothing moved: the setting stayed, so show the folder that is still in use.
+              if (result.moved === 0) {
+                activeFolder = previous;
+                cb.setValue(previous);
+              }
+            });
           };
 
+          let selections = 0;
           new FolderSuggest(app, cb.inputEl, (folder) => {
+            selections++;
             cb.setValue(folder);
             commit(folder);
           });
           cb.inputEl.addEventListener('focus', () => {
             activeFolder = getSettings().contactsFolder;
           });
-          cb.inputEl.addEventListener('blur', () => commit(cb.inputEl.value));
+          cb.inputEl.addEventListener('blur', () => {
+            // Wait a tick: a suggestion picked right after typing must win over the typed text.
+            const seen = selections;
+            setTimeout(() => {
+              if (selections === seen) commit(cb.inputEl.value);
+            }, 0);
+          });
           cb.setPlaceholder("Example: Contacts")
             .setValue(getSettings().contactsFolder)
             .onChange(async(value) => {

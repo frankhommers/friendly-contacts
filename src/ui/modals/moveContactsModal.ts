@@ -12,13 +12,24 @@ export function confirmMoveContacts(
   toFolder: string,
   onDecline?: () => void,
   cancelLabel = "Cancel",
+  onResult?: (result: { moved: number }) => void,
 ): void {
   const label = (folder: string) => (normalizeFolder(folder) === "" ? "the vault root" : normalizeFolder(folder));
   const modal = new ConfirmModal(
     app,
     `Move ${count} contacts from ${label(fromFolder)} to ${label(toFolder)}?`,
     "Move",
-    async () => reportMove(await moveContacts(app, toFolder, fromFolder), normalizeFolder(toFolder)),
+    async () => {
+      try {
+        const result = await moveContacts(app, toFolder, fromFolder);
+        reportMove(result, normalizeFolder(toFolder));
+        onResult?.(result);
+      } catch (error) {
+        console.error("Friendly Contacts: moving contacts failed", error);
+        new Notice("Moving contacts failed, see console");
+        onResult?.({ moved: 0 });
+      }
+    },
     cancelLabel,
     onDecline,
   );
@@ -50,6 +61,10 @@ export class MoveContactsModal extends Modal {
         const target = normalizeFolder(this.target);
         if (target === "" || !this.app.vault.getFolderByPath(target)) {
           new Notice("Pick an existing folder.");
+          return;
+        }
+        if (target === normalizeFolder(this.currentFolder())) {
+          new Notice(`Contacts are already in ${target}`);
           return;
         }
         this.close();

@@ -13,9 +13,10 @@ import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relati
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
-import { normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
+import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import { createContactFile, findContactFiles, isFileInFolder } from "src/file/file";
+import { insightQueueStore } from "src/insights/insightsQueStore";
 import { getCurrentAdapter } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
 import type { NoteIO } from "src/sync/syncContact";
@@ -345,7 +346,11 @@ export async function moveContacts(
       skipped.push({ from: move.from, reason: error instanceof Error ? error.message : String(error) });
     }
   }
-  await updateSetting("contactsFolder", to);
+  // Only follow the contacts when some actually moved; otherwise the plugin would look in an empty folder.
+  if (moved > 0) {
+    await updateSetting("contactsFolder", to);
+    insightQueueStore.clear();
+  }
   return { moved, skipped };
 }
 
@@ -365,10 +370,8 @@ async function ensureFolder(app: App, path: string): Promise<void> {
 /** Tells the owner what a move did; skipped files are listed in the console. */
 export function reportMove(result: { moved: number; skipped: SkippedMove[] }, toFolder: string): void {
   const { moved, skipped } = result;
-  let text = `Moved ${moved} contacts to ${toFolder === "" ? "the vault root" : toFolder}`;
   if (skipped.length > 0) {
-    text += `, skipped ${skipped.length}, see console`;
     console.log("Friendly Contacts: skipped while moving contacts:\n" + skipped.map((s) => `${s.from}: ${s.reason}`).join("\n"));
   }
-  new Notice(text);
+  new Notice(moveNotice(moved, skipped.length, toFolder));
 }

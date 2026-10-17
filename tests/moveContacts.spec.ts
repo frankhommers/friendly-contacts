@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { planMoves } from "src/contacts/moveContacts";
+import { moveNotice, planMoves } from "src/contacts/moveContacts";
 
 const none = () => false;
 
@@ -51,5 +51,23 @@ describe("planMoves", () => {
   it("allows moving out of the vault root into a sub-folder when the root has no contacts there", () => {
     const plan = planMoves(["Jan.md"], "", "People", none);
     expect(plan.moves).toEqual([{ from: "Jan.md", to: "People/Jan.md" }]);
+  });
+});
+
+describe("moveNotice", () => {
+  it("reports moved contacts", () => {
+    expect(moveNotice(3, 0, "Areas/People")).toBe("Moved 3 contacts to Areas/People");
+  });
+
+  it("adds the skipped count", () => {
+    expect(moveNotice(2, 1, "Areas/People")).toBe("Moved 2 contacts to Areas/People, skipped 1, see console");
+  });
+
+  it("says nothing moved and that the setting stays when everything was skipped", () => {
+    expect(moveNotice(0, 4, "Areas/People")).toBe("No contacts moved, skipped 4, see console");
+  });
+
+  it("names the vault root", () => {
+    expect(moveNotice(1, 0, "")).toBe("Moved 1 contacts to the vault root");
   });
 });

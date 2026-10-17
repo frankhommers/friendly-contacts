@@ -64,3 +64,10 @@ export function planMoves(
   }
   return plan;
 }
+
+/** The Notice text after a move; when nothing moved the contacts folder setting is left alone. */
+export function moveNotice(moved: number, skipped: number, toFolder: string): string {
+  const target = toFolder === "" ? "the vault root" : toFolder;
+  if (moved === 0) return `No contacts moved${skipped > 0 ? `, skipped ${skipped}, see console` : ""}`;
+  return `Moved ${moved} contacts to ${target}${skipped > 0 ? `, skipped ${skipped}, see console` : ""}`;
+}
