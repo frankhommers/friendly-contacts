@@ -37,7 +37,7 @@ export function isVCardKey(key: string): boolean {
   return Object.prototype.hasOwnProperty.call(VCardSupportedKey, parsed.key) || parsed.key.startsWith('X-');
 }
 
-const hasValue = (value: unknown): boolean =>
+export const hasValue = (value: unknown): boolean =>
   Array.isArray(value) ? value.some(hasValue) : value !== undefined && value !== null && String(value).trim() !== '';
 
 /**

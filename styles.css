@@ -460,3 +460,35 @@
   color: var(--text-normal);
   opacity: 1;
 }
+
+/* Property names table in the settings. */
+.vcf-mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.vcf-mapping-table th {
+  text-align: left;
+  font-weight: var(--font-semibold);
+}
+
+.vcf-mapping-table td,
+.vcf-mapping-table th {
+  padding: 2px 4px;
+}
+
+.vcf-mapping-table input {
+  width: 100%;
+}
+
+.vcf-mapping-readonly {
+  color: var(--text-muted);
+}
+
+.vcf-mapping-errors {
+  margin: 8px 0;
+}
+
+.vcf-relations-list .setting-item-control {
+  gap: 6px;
+}

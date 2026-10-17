@@ -10,10 +10,11 @@ import myScrollTo from "src/util/myScrollTo";
 
 import {updateFrontMatter} from "./contacts";
 import {vcard} from "./contacts/vcard";
-import { obsidianMirrorEnv } from "./contacts/obsidianNotes";
+import { convertContactNotes, obsidianMirrorEnv } from "./contacts/obsidianNotes";
 import { RelationMirror } from "./contacts/relationMirror";
 import { isContactFrontmatter } from "./contacts/friendlyNotes";
 import { isFileInFolder } from "src/file/file";
+import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
 
 export default class ContactsPlugin extends Plugin {
@@ -64,6 +65,32 @@ export default class ContactsPlugin extends Plugin {
         const records = await vcard.addDefaultFields(file);
         updateFrontMatter(file, records)
       }
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-convert",
+      name: "Convert contacts to friendly properties",
+      callback: async () => {
+        const { converted, kept, failed } = await convertContactNotes(this.app);
+        const parts = [`Converted ${converted} contacts`];
+        if (kept.length > 0) parts.push(`${kept.length} values kept, see console`);
+        if (failed > 0) parts.push(`${failed} failed, see console`);
+        if (kept.length > 0) console.log("Friendly Contacts: existing values kept over the old vCard values:\n" + kept.join("\n"));
+        new Notice(parts.join("; "));
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-check-relations",
+      name: "Check relationships",
+      callback: () => {
+        const items = oneSidedRelations(this.app, getSettings().friendly.mapping);
+        if (items.length === 0) {
+          new Notice("All relationships are two-sided.");
+          return;
+        }
+        new CheckRelationsModal(this.app, items, () => getSettings().friendly.mapping).open();
+      },
     });
 
     this.setupRelationMirror();

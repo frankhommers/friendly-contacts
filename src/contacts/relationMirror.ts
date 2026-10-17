@@ -161,3 +161,48 @@ export class RelationMirror {
     });
   }
 }
+
+export interface OneSidedItem {
+  /** Note holding the relation. */
+  path: string;
+  property: string;
+  /** Note it points to, which does not point back. */
+  target: string;
+}
+
+/** Writes the missing side of a one-sided relation. 'blocked': the other side is single-valued and taken. */
+export async function addOtherSide(env: MirrorEnv, rows: MappingRow[], item: OneSidedItem): Promise<'added' | 'blocked'> {
+  const inverse = inverseProperty(item.property, rows);
+  if (inverse === undefined) throw new Error(`${item.property} has no mirror property`);
+  const inverseRow = rows.find((r) => r.kind === 'relation' && r.property === inverse);
+  const single = inverseRow?.kind === 'relation' && inverseRow.single === true;
+  const pointsToSource = (entry: unknown) =>
+    typeof entry === 'string' && env.resolveLink(linkTarget(entry.trim()), item.target) === item.path;
+  let result: 'added' | 'blocked' = 'added';
+  await env.updateProperty(item.target, inverse, (current) => {
+    const items = asItems(current);
+    if (items.some(pointsToSource)) return current as string | string[] | undefined;
+    if (single && items.some((i) => typeof i === 'string' && i.trim() !== '')) {
+      result = 'blocked';
+      return current as string | string[] | undefined;
+    }
+    const link = env.linkTo(item.path, item.target);
+    return single ? link : [...(items as string[]), link];
+  });
+  return result;
+}
+
+/** Removes the item's target from the relation property of the note holding it. */
+export async function removeRelation(env: MirrorEnv, rows: MappingRow[], item: OneSidedItem): Promise<void> {
+  const row = rows.find((r) => r.kind === 'relation' && r.property === item.property);
+  const single = row?.kind === 'relation' && row.single === true;
+  const pointsToTarget = (entry: unknown) =>
+    typeof entry === 'string' && env.resolveLink(linkTarget(entry.trim()), item.path) === item.target;
+  await env.updateProperty(item.path, item.property, (current) => {
+    const items = asItems(current);
+    const kept = items.filter((entry) => !pointsToTarget(entry));
+    if (kept.length === items.length) return current as string | string[] | undefined;
+    if (kept.length === 0) return undefined;
+    return single ? (kept[0] as string) : (kept as string[]);
+  });
+}

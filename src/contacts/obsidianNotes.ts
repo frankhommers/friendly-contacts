@@ -5,12 +5,13 @@
 
 import { App, normalizePath, Notice, parseYaml, TFile, TFolder } from "obsidian";
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
+import { convertFrontmatter, renameInFrontmatter } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
-import { contactFileName, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
+import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { createContactFile, findContactFiles, isFileInFolder } from "src/file/file";
@@ -100,6 +101,71 @@ export function obsidianMirrorEnv(app: App): MirrorEnv {
       });
     },
   };
+}
+
+/** Old-style contact notes (vCard keys) -> friendly properties, in place; the body is untouched. */
+export async function convertContactNotes(app: App): Promise<{ converted: number; kept: string[]; failed: number }> {
+  const rows = getSettings().friendly.mapping;
+  const kept: string[] = [];
+  let converted = 0;
+  let failed = 0;
+  for (const { file } of contactNotes(app)) {
+    const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!frontmatter || !hasVCardValues(frontmatter)) continue;
+    try {
+      await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        // Decided on the live frontmatter, not the cache.
+        const result = convertFrontmatter(fm, rows);
+        for (const [key, value] of Object.entries(result.set)) fm[key] = value;
+        for (const key of result.remove) delete fm[key];
+        if (result.kept.length > 0) kept.push(`${file.path}: ${result.kept.join(", ")}`);
+      });
+      converted++;
+    } catch (error) {
+      failed++;
+      console.error(`Friendly Contacts: could not convert ${file.path}`, error);
+    }
+  }
+  return { converted, kept, failed };
+}
+
+/** Contact notes where renaming `from` to `to` would move a value (and none that would be skipped). */
+export function notesToRename(app: App, from: string, to: string): TFile[] {
+  return contactNotes(app).flatMap(({ file }) => {
+    const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+    const result = frontmatter ? renameInFrontmatter(frontmatter, from, to) : undefined;
+    return result && "set" in result && result.remove.length > 0 ? [file] : [];
+  });
+}
+
+/** Renames property `from` to `to` in all contact notes; notes that already have a value under `to` are skipped. */
+export async function renamePropertyInNotes(
+  app: App,
+  from: string,
+  to: string,
+): Promise<{ renamed: number; skipped: string[] }> {
+  let renamed = 0;
+  const skipped: string[] = [];
+  for (const { file } of contactNotes(app)) {
+    try {
+      const outcome = { value: "none" as "renamed" | "skipped" | "none" };
+      await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        const result = renameInFrontmatter(fm, from, to);
+        if ("skipped" in result) outcome.value = "skipped";
+        else if (result.remove.length > 0) {
+          for (const [key, value] of Object.entries(result.set)) fm[key] = value;
+          for (const key of result.remove) delete fm[key];
+          outcome.value = "renamed";
+        }
+      });
+      if (outcome.value === "renamed") renamed++;
+      else if (outcome.value === "skipped") skipped.push(file.path);
+    } catch (error) {
+      skipped.push(file.path);
+      console.error(`Friendly Contacts: could not rename ${from} in ${file.path}`, error);
+    }
+  }
+  return { renamed, skipped };
 }
 
 const REMOTE_TTL_MS = 5 * 60 * 1000;

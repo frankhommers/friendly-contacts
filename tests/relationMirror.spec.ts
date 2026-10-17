@@ -1,5 +1,5 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { MirrorEnv, RelationMirror } from 'src/contacts/relationMirror';
+import { addOtherSide, MirrorEnv, RelationMirror, removeRelation } from 'src/contacts/relationMirror';
 import { describe, expect, it } from 'vitest';
 
 type Fm = Record<string, unknown>;
@@ -212,5 +212,37 @@ describe('RelationMirror', () => {
     files['Sem.md'].parents = ['[[Jan]]'];
     await mirror.onChanged('Sem.md', files['Sem.md']);
     expect(files['Jan.md'].children).toEqual(['[[Sem]]', '[[Lot]]']);
+  });
+});
+
+describe('fixing one-sided relations', () => {
+  const item = { path: 'Jan.md', property: 'children', target: 'Sem.md' };
+
+  it('adds the other side', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { children: ['[[Sem]]'] }, 'Sem.md': { parents: ['[[Piet]]'] } });
+    expect(await addOtherSide(env, DEFAULT_MAPPING, item)).toBe('added');
+    expect(files['Sem.md'].parents).toEqual(['[[Piet]]', '[[Jan]]']);
+  });
+
+  it('does not overwrite a single-valued other side', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { spouse: '[[Sem]]' }, 'Sem.md': { spouse: '[[Piet]]' } });
+    expect(await addOtherSide(env, DEFAULT_MAPPING, { path: 'Jan.md', property: 'spouse', target: 'Sem.md' })).toBe('blocked');
+    expect(files['Sem.md'].spouse).toBe('[[Piet]]');
+  });
+
+  it('removes the item and keeps the others', async () => {
+    const { env, files } = makeEnv({
+      'Jan.md': { children: ['[[Sem]]', '[[Lot]]'] },
+      'Sem.md': {},
+      'Lot.md': {},
+    });
+    await removeRelation(env, DEFAULT_MAPPING, item);
+    expect(files['Jan.md'].children).toEqual(['[[Lot]]']);
+  });
+
+  it('deletes the property when the last item goes', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { children: ['[[Sem]]'] }, 'Sem.md': {} });
+    await removeRelation(env, DEFAULT_MAPPING, item);
+    expect(files['Jan.md']).not.toHaveProperty('children');
   });
 });

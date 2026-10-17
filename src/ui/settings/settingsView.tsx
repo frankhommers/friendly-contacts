@@ -5,6 +5,7 @@ import ContactsPlugin from "src/main";
 import { CardFieldSettings } from "src/ui/settings/components/cardFieldSettings";
 import { InsightSettings } from "src/ui/settings/components/insightsSettings";
 import { MasterSetting } from "src/ui/settings/components/masterSettings";
+import { PropertyNamesSettings } from "src/ui/settings/components/propertyNamesSettings";
 import { SynchronizationSettings } from "src/ui/settings/components/synchronizationSettings";
 
 export class ContactsSettingTab extends PluginSettingTab {
@@ -29,6 +30,7 @@ export class ContactsSettingTab extends PluginSettingTab {
           app={this.app}
         />
         <CardFieldSettings />
+        <PropertyNamesSettings app={this.app} />
         <InsightSettings />
         <SynchronizationSettings />
       </>
