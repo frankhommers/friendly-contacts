@@ -91,8 +91,28 @@ const OUTCOME_TEXT: Record<Exclude<SyncOutcome, 'failed'>, string> = {
   created: 'created on the server',
 };
 
+/** Notes with a Sync in progress; a second Sync of the same note would merge against a stale read. */
+const running = new Set<string>();
+
 /** One Sync of a contact note with its card on the server (see src/sync/syncContact.ts). */
 export async function syncContact(contact: Contact): Promise<SyncOutcome | undefined> {
+  const key = contact.file.path;
+  if (running.has(key)) {
+    new Notice(`Sync already running for ${contact.file.basename}.`);
+    return undefined;
+  }
+  running.add(key);
+  try {
+    return await runSync(contact);
+  } catch (error) {
+    new Notice(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    return 'failed';
+  } finally {
+    running.delete(key);
+  }
+}
+
+async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
   const adapter = getCurrentAdapter();
   if (!adapter) {
     new Notice('Sync is not set up.');

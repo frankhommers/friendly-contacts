@@ -33,14 +33,13 @@ export interface RemoteContact {
   fileName: string;
 }
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
+const FRONTMATTER = /^---\r?\n((?:[\s\S]*?\r?\n)?)---[ \t]*(?:\r?\n|$)/;
 
 /** Reads and writes one contact note for Sync; only the given properties are touched. */
 export function noteIO(app: App, file: TFile): NoteIO {
   return {
     async readFrontmatter() {
-      const cached = app.metadataCache.getFileCache(file)?.frontmatter;
-      if (cached) return { ...cached };
+      // From the file itself: the metadata cache can lag behind a write made a moment ago (e.g. by the last Sync).
       const match = FRONTMATTER.exec(await app.vault.read(file));
       const parsed: unknown = match ? parseYaml(match[1]) : undefined;
       return parsed && typeof parsed === "object" ? { ...(parsed as Record<string, unknown>) } : {};
