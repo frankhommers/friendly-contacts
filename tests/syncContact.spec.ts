@@ -47,6 +47,8 @@ function fakeAdapter() {
     pullResult: undefined as VCardRaw | undefined,
     /** Thrown from getMetaByUid (e.g. a parser crash). */
     metaThrows: undefined as Error | undefined,
+    /** The server sends no ETag on GET and none in the lookup. */
+    noEtags: false,
   };
 
   const uidOf = (raw: string) => parseCard(raw).find((l) => l.name === 'UID')?.value;
@@ -60,18 +62,20 @@ function fakeAdapter() {
     async getMetaByUid(uid: string): Promise<VCardMeta | AppHttpResponse | undefined> {
       if (options.metaThrows) throw options.metaThrows;
       if (options.metaError) return options.metaError;
-      const found = [...cards.entries()].filter(([, c]) => (uidOf(c.raw) ?? '').includes(uid));
-      if (found.length !== 1) return undefined;
+      // Like the CardDAV adapter: the server matches "contains", the adapter keeps the exact (cleanUid) match.
+      const found = [...cards.entries()].find(([, c]) => cleanUid(uidOf(c.raw)) === cleanUid(uid));
+      if (!found) return undefined;
       if (!options.metaAfterCreate && pushes.some((p) => p.opts?.ifNoneMatch)) return undefined;
-      const [href, card] = found[0];
-      return { href, etag: card.etag, lastModified: new Date(), uid: uidOf(card.raw), fn: undefined, n: undefined };
+      const [href, card] = found;
+      const etag = options.noEtags ? '' : card.etag;
+      return { href, etag, lastModified: new Date(), uid: cleanUid(uidOf(card.raw)), fn: undefined, n: undefined };
     },
     async pull(href: string): Promise<VCardRaw | AppHttpResponse | undefined> {
       if (options.pullError) return options.pullError;
       if (options.pullResult) return options.pullResult;
       const card = cards.get(href);
       if (!card) return { status: 404, data: '', headers: {}, errorMessage: '404 Not Found' };
-      return { uid: uidOf(card.raw), raw: card.raw, etag: card.etag, href };
+      return { uid: uidOf(card.raw), raw: card.raw, etag: options.noEtags ? undefined : card.etag, href };
     },
     async push(vcard: VCardRaw, opts?: PushOptions): Promise<AppHttpResponse> {
       const href = opts?.href ?? `/frank/contacts/${vcard.uid}.vcf`;
@@ -134,7 +138,9 @@ function memoryNote(frontmatter: Record<string, unknown>, body = 'Private notes 
   return { note, io };
 }
 
-function setup(opts: { server?: string; href?: string; base?: string; local?: Record<string, unknown> } = {}) {
+function setup(
+  opts: { server?: string; href?: string; base?: string; local?: Record<string, unknown>; ctx?: RelationContext } = {},
+) {
   const fake = fakeAdapter();
   const serverEtag = opts.server !== undefined ? fake.put(opts.href ?? HREF, opts.server) : undefined;
   const { state, entries } = memoryState(
@@ -146,7 +152,7 @@ function setup(opts: { server?: string; href?: string; base?: string; local?: Re
     adapter: fake.adapter,
     state,
     rows: DEFAULT_MAPPING,
-    ctx,
+    ctx: opts.ctx ?? ctx,
     notify: (msg) => notices.push(msg),
     now: () => new Date(2026, 9, 17, 9, 30),
   };
@@ -345,12 +351,62 @@ describe('syncContact', () => {
     }
   });
 
-  it('a PUT without etag stores the card as pulled again', async () => {
+  it('a PUT without etag stores the sent card with an empty etag', async () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
     t.options.etagOnPut = false;
     expect(await t.run()).toBe('pushed');
-    const card = t.cards.get(HREF)!;
-    expect(t.entries.get(UID)).toEqual({ raw: card.raw, etag: card.etag, href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF });
+  });
+
+  it('never PUTs without If-Match when no etag is known', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
+    t.options.noEtags = true;
+    expect(await t.run()).toBe('failed');
+    expect(t.pushes).toEqual([]);
+    expect(t.notices).toEqual([expect.stringContaining('ETag')]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.entries.get(UID)?.etag).toBe('old');
+  });
+
+  it('does not create when a base exists but the card is gone', async () => {
+    const t = setup({ base: V1 });
+    expect(await t.run()).toBe('failed');
+    expect(t.pushes).toEqual([]);
+    expect(t.notices).toEqual([expect.stringContaining('Jan de Vries was not found on the server')]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.entries.get(UID)?.etag).toBe('old');
+
+    const nameless = setup({ base: V1, local: { uid: UID, mobile: '06-1' } });
+    expect(await nameless.run()).toBe('failed');
+    expect(nameless.notices).toEqual([expect.stringContaining(`${UID} was not found on the server`)]);
+  });
+
+  it('a failing callout append keeps the local value in the note', async () => {
+    const v2 = edit(V1, 'type=pref:06-12345678', 'type=pref:06-11111111');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), mobile: '06-22222222' } });
+    t.io.appendToBody = async () => {
+      throw new Error('note is read-only');
+    };
+    expect(await t.run()).toBe('failed');
+    expect(t.note.writes).toEqual([]);
+    expect(t.note.frontmatter.mobile).toBe('06-22222222');
+    expect(t.notices.at(-1)).toContain('note is read-only');
+    expect(t.entries.get(UID)?.etag).toBe('old');
+  });
+
+  it('patch warnings are notified', async () => {
+    const ambiguous: RelationContext = { ...ctx, resolveLink: () => ({ ambiguous: true }) };
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), friends: ['[[Piet]]'] }, ctx: ambiguous });
+    expect(await t.run()).toBe('pushed');
+    expect(t.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
+    expect(lineTexts(t.pushes[0].vcard.raw)).toContain('RELATED;TYPE=friend;VALUE=text:Piet');
+  });
+
+  it('newCard warnings are notified', async () => {
+    const ambiguous: RelationContext = { ...ctx, resolveLink: () => ({ ambiguous: true }) };
+    const t = setup({ local: { name: 'Sem', uid: 'sem-0001', spouse: '[[Piet]]' }, ctx: ambiguous });
+    expect(await t.run()).toBe('created');
+    expect(t.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
   });
 
   it('lookup errors fail without writing', async () => {

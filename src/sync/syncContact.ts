@@ -80,10 +80,14 @@ export async function syncContact(note: NoteIO, deps: SyncDeps): Promise<SyncOut
 
 async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string, lookup: boolean): Promise<Attempt> {
   const meta = lookup ? await findCard(deps.adapter, uid) : undefined;
-  if (!meta) return createCard(note, deps, local, uid);
+  const base = await deps.state.get(uid);
+  if (!meta) {
+    // A synced card that is gone (deleted, or not found by the lookup) is never silently recreated as a duplicate.
+    if (base) throw new SyncError(`${typeof local.name === 'string' ? local.name : uid} was not found on the server.`);
+    return createCard(note, deps, local, uid);
+  }
 
   const server = await pullCard(deps.adapter, meta.href, uid);
-  const base = await deps.state.get(uid);
   const serverLines = parseCard(server.raw);
   const serverFriendly = toFriendly(serverLines, deps.rows, deps.ctx);
   const baseProps = base ? toFriendly(parseCard(base.raw), deps.rows, deps.ctx).props : undefined;
@@ -100,10 +104,12 @@ async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string,
   let stored: SyncStateEntry = { raw: server.raw, etag, href: meta.href };
   const serverChanged = raw !== serializeCard(serverLines);
   if (serverChanged) {
+    if (!etag) throw new SyncError(`the server sent no ETag for ${meta.href}; not writing without If-Match.`);
     const res = await deps.adapter.push({ uid: cleanUid(uid), raw }, { href: meta.href, ifMatch: etag });
     if (res.status === 412) return 'retry';
     if (!succeeded(res)) throw new SyncError(describeResponse(res));
-    stored = await storedAfterPut(deps.adapter, res, raw, meta.href, uid, '');
+    // Without an ETag in the response the base keeps etag ''; the base etag is never used for If-Match.
+    stored = { raw, etag: responseEtag(res), href: meta.href };
   }
 
   const noteChanged = await writeNote(note, deps, mine, merged, conflicts);
@@ -125,7 +131,7 @@ async function createCard(note: NoteIO, deps: SyncDeps, local: Props, uid: strin
   // The server picks the href; ask for it. The base must still be stored when that lookup fails.
   const found = await deps.adapter.getMetaByUid(id);
   const meta = !isResponse(found) && found && sameUid(found, id) ? found : undefined;
-  const stored = await storedAfterPut(deps.adapter, res, raw, meta?.href ?? `${id}.vcf`, uid, meta?.etag ?? '');
+  const stored: SyncStateEntry = { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${id}.vcf` };
 
   for (const warning of card.warnings) deps.notify(warning);
   await deps.state.set(uid, stored);
@@ -151,25 +157,12 @@ async function pullCard(adapter: AdapterInterface, href: string, uid: string): P
   return card;
 }
 
-/** Base after a successful PUT; without an ETag in the response, read the card back as the server stores it. */
-async function storedAfterPut(
-  adapter: AdapterInterface,
-  res: AppHttpResponse,
-  raw: string,
-  href: string,
-  uid: string,
-  fallbackEtag: string,
-): Promise<SyncStateEntry> {
-  const etag = res.headers?.etag?.replace(/"/g, '');
-  if (etag) return { raw, etag, href };
-  const card = await adapter.pull(href);
-  if (!isResponse(card) && card && cardUid(card.raw) === cleanUid(uid)) {
-    return { raw: card.raw, etag: card.etag || fallbackEtag, href };
-  }
-  return { raw, etag: fallbackEtag, href };
-}
+const responseEtag = (res: AppHttpResponse): string => res.headers?.etag?.replace(/"/g, '') ?? '';
 
-/** Writes changed and removed mapped properties, then the conflict callout. Returns whether properties changed. */
+/**
+ * Saves the user's conflicting values in a callout first, then writes changed and removed mapped properties,
+ * so a failed append never loses a value. Returns whether properties changed.
+ */
 async function writeNote(
   note: NoteIO,
   deps: SyncDeps,
@@ -183,12 +176,12 @@ async function writeNote(
   }
   const remove = Object.keys(local).filter((p) => !(p in merged) && isMappedProperty(p, deps.rows));
   const changed = Object.keys(set).length > 0 || remove.length > 0;
-  if (changed) await note.writeProps(set, remove);
 
   if (conflicts.length > 0) {
     await note.appendToBody(renderConflictCallout(conflicts, deps.now()));
     const names = conflicts.map((c) => c.property).join(', ');
     deps.notify(`Sync conflict: kept the server value for ${names}. Your value is noted at the end of the note.`);
   }
+  if (changed) await note.writeProps(set, remove);
   return changed;
 }

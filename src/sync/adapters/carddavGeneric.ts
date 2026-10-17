@@ -4,7 +4,7 @@ import { ContactsPluginSettings } from "src/settings/settings";
 import { PushOptions, VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import { AppHttpResponse, PlatformHttpClient } from "src/util/platformHttpClient";
-import { fnOutOfString, nOutOfString, uidOutOfString } from "src/util/vcard";
+import { cleanUid, fnOutOfString, nOutOfString, uidOutOfString } from "src/util/vcard";
 
 
 export function carddavGenericAdapter(): AdapterInterface {
@@ -32,6 +32,30 @@ export function carddavGenericAdapter(): AdapterInterface {
     return true;
   };
 
+
+  const metaOf = (response: Element): VCardMeta | undefined => {
+    if (!isVcfNode(response)) {
+      return;
+    }
+
+    const href = response.querySelector('href')?.textContent;
+    const etag = response.querySelector('getetag')?.textContent;
+    const lastModified = response.querySelector('getlastmodified')?.textContent;
+    const adressData = response.querySelector('address-data')?.textContent || '';
+
+    if (!href) {
+      return;
+    }
+
+    return {
+      href,
+      etag: etag?.replace(/"/g, '') || '', // Remove quotes from etag
+      lastModified: lastModified ? new Date(lastModified) : new Date(),
+      uid: uidOutOfString(adressData),
+      fn: fnOutOfString(adressData),
+      n: nOutOfString(adressData)
+    };
+  };
 
   const getMetaByUid = async (uid: string): Promise<VCardMeta | AppHttpResponse | undefined> => {
     const settings = getSettings();
@@ -71,35 +95,11 @@ export function carddavGenericAdapter(): AdapterInterface {
 
     const parser = new DOMParser();
     const xml = parser.parseFromString(res.data, 'application/xml');
-    const responses = xml.querySelectorAll('response');
-
-    if(!responses || responses.length !== 1) {
-      return;
-    }
-
-    const response = responses[0];
-
-    if (!isVcfNode(response)) {
-      return;
-    }
-
-    const href = response.querySelector('href')?.textContent || '';
-    const etag = response.querySelector('getetag')?.textContent || '';
-    const lastModified = response.querySelector('getlastmodified')?.textContent || '';
-    const adressData = response.querySelector('address-data')?.textContent || '';
-
-    if (!href) {
-      return;
-    }
-
-    return {
-      href,
-      etag: etag?.replace(/"/g, '') || '', // Remove quotes from etag
-      lastModified: lastModified ? new Date(lastModified) : new Date(),
-      uid: uidOutOfString(adressData),
-      fn: fnOutOfString(adressData),
-      n: nOutOfString(adressData)
-    }
+    // The filter is "contains": other cards whose UID contains this one match too. Only an exact UID is this card.
+    const wanted = cleanUid(uid);
+    return Array.from(xml.querySelectorAll('response'))
+      .map(metaOf)
+      .find(meta => meta !== undefined && meta.uid === wanted);
   }
 
 
@@ -141,31 +141,10 @@ export function carddavGenericAdapter(): AdapterInterface {
     const vcardMetas: VCardMeta[] = [];
 
     responses.forEach(response => {
-      if(!response) {
-        return;
+      const meta = metaOf(response);
+      if (meta) {
+        vcardMetas.push(meta);
       }
-
-      if (!isVcfNode(response)) {
-        return;
-      }
-
-      const href = response.querySelector('href')?.textContent;
-      const etag = response.querySelector('getetag')?.textContent;
-      const lastModified = response.querySelector('getlastmodified')?.textContent;
-      const adressData = response.querySelector('address-data')?.textContent || '';
-
-      if (!href) {
-        return;
-      }
-
-      vcardMetas.push({
-        href,
-        etag: etag?.replace(/"/g, '') || '', // Remove quotes from etag
-        lastModified: lastModified ? new Date(lastModified) : new Date(),
-        uid: uidOutOfString(adressData),
-        fn: fnOutOfString(adressData),
-        n: nOutOfString(adressData)
-      });
     });
 
     return vcardMetas;
