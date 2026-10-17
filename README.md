@@ -15,6 +15,12 @@ A powerful way to manage, link, and export contact data directly within [Obsidia
 
 ---
 
+## About this fork
+
+Friendly Contacts is a fork of VCF Contacts. It shows contact properties with readable English names, syncs with CardDAV without losing data, and supports relationships between contacts. Its settings are separate from the original VCF Contacts plugin, so to migrate, copy `data.json` from `.obsidian/plugins/vcf-contacts/` to `.obsidian/plugins/friendly-contacts/`.
+
+---
+
 <!-- TOC start -->
 # Table of Contents
 - [VCF Contacts Plugin for Obsidian  ](#-vcf-contacts-plugin-for-obsidian)
