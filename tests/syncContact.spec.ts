@@ -1,5 +1,6 @@
 import { parseCard, serializeCard, serializeLine } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { convertFrontmatter } from 'src/contacts/convertNotes';
+import { DEFAULT_MAPPING, isMappedProperty } from 'src/contacts/friendly/mapping';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -273,16 +274,62 @@ describe('syncContact', () => {
     expect(t.cards.get(HREF)!.raw).toBe(V1);
   });
 
-  it('no base merges server-first', async () => {
-    const local = { name: 'Jan de Vries', uid: UID, mobile: '06-12345678', role: 'Owner' };
+  it('no base: the server wins, local-only values go to the callout and nothing is pushed', async () => {
+    const local = { name: 'Jan de Vries', uid: UID, mobile: '06-12345678', role: 'Owner', 'met-via': 'x' };
     const t = setup({ server: V1, local });
-    expect(await t.run()).toBe('both');
-    const pushed = lineTexts(t.pushes[0].vcard.raw);
-    for (const line of lineTexts(V1)) if (!line.startsWith('REV:')) expect(pushed).toContain(line);
-    expect(pushed).toContain('ROLE:Owner');
+    expect(await t.run()).toBe('pulled');
+    expect(t.pushes).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(V1);
     expect(t.note.frontmatter.email).toBe('jan@example.nl');
-    expect(t.note.frontmatter.role).toBe('Owner');
-    expect(t.note.writes[0].remove).toEqual([]);
+    expect(t.note.frontmatter.role).toBeUndefined();
+    expect(t.note.frontmatter['met-via']).toBe('x');
+    expect(t.note.appended).toHaveLength(1);
+    expect(t.note.appended[0]).toContain('> - role: Owner');
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF });
+  });
+
+  it('first Sync of a converted upstream note keeps the server card and saves the stray values', async () => {
+    // Shaped like upstream output: it kept only the last TYPE (TEL[pref], TEL[VOICE], EMAIL[pref], ADR[pref]).
+    const upstream: Record<string, unknown> = {
+      'N.FN': 'de Vries',
+      'N.GN': 'Jan',
+      FN: 'Jan de Vries',
+      'TEL[pref]': '06-12345678',
+      'TEL[VOICE]': '030-1234567',
+      'EMAIL[pref]': 'jan@example.nl',
+      'ADR[pref].STREET': 'Dorpsstraat 1',
+      'ADR[pref].LOCALITY': 'Utrecht',
+      'ADR[pref].POSTAL': '1234 AB',
+      'ADR[pref].COUNTRY': 'Nederland',
+      UID,
+      'X-CREATED': '2019-04-02T10:11:12Z',
+      'met-via': '[[Piet]]',
+    };
+    const converted = convertFrontmatter(upstream, DEFAULT_MAPPING);
+    const fm: Record<string, unknown> = { ...upstream };
+    for (const key of converted.remove) delete fm[key];
+    Object.assign(fm, converted.set);
+    expect(fm).toMatchObject({ phone: '06-12345678', 'phone-2': '030-1234567', email: 'jan@example.nl', street: 'Dorpsstraat 1' });
+
+    const t = setup({ server: V1, local: fm });
+    expect(await t.run()).toBe('pulled');
+    expect(t.pushes).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(V1);
+
+    const mapped = Object.fromEntries(Object.entries(t.note.frontmatter).filter(([k]) => isMappedProperty(k, DEFAULT_MAPPING)));
+    expect(mapped).toEqual(friendlyOf(V1));
+    expect(t.note.frontmatter['met-via']).toBe('[[Piet]]');
+    expect(t.note.appended).toHaveLength(1);
+    const callout = t.note.appended[0];
+    expect(callout).toContain('> - phone: 06-12345678');
+    expect(callout).toContain('> - phone-2: 030-1234567');
+    expect(callout).not.toContain('jan@example.nl');
+    expect(callout).not.toContain('Dorpsstraat');
+
+    // The base is stored now: the next Sync is quiet.
+    expect(await t.run()).toBe('unchanged');
+    expect(t.pushes).toEqual([]);
+    expect(t.note.appended).toHaveLength(1);
   });
 
   it('no base with a differing value keeps the server value as a conflict', async () => {

@@ -14,7 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseCard } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { convertFrontmatter } from 'src/contacts/convertNotes';
+import { DEFAULT_MAPPING, isMappedProperty } from 'src/contacts/friendly/mapping';
 import { RelationContext, resolveRemoteName } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { contactFileName, renderFriendlyNote } from 'src/contacts/friendlyNotes';
@@ -458,6 +459,50 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await cardCount()).toBe(3);
 
     expect(await sync(piet)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+  });
+
+  it('8. the first Sync of a converted upstream note changes nothing on the server', async () => {
+    const uid = 'C0FFEE00-0000-4000-8000-000000000008';
+    const href = `${BOOK}converted.vcf`;
+    await putCard(href, readVcfFixture('appleV3.vcf').replace(JAN_UID, uid));
+    const before = await serverCard(href);
+    const etag = await serverEtag(href);
+
+    // Upstream kept only the last TYPE of each line: TEL[pref], TEL[VOICE], EMAIL[pref], ADR[pref].
+    const upstream: Record<string, unknown> = {
+      'N.FN': 'de Vries',
+      'N.GN': 'Jan',
+      FN: 'Jan de Vries',
+      'TEL[pref]': '06-12345678',
+      'TEL[VOICE]': '030-1234567',
+      'EMAIL[pref]': 'jan@example.nl',
+      'ADR[pref].STREET': 'Dorpsstraat 1',
+      'ADR[pref].LOCALITY': 'Utrecht',
+      'ADR[pref].POSTAL': '1234 AB',
+      'ADR[pref].COUNTRY': 'Nederland',
+      UID: uid,
+      'X-CREATED': '2019-04-02T10:11:12Z',
+    };
+    const converted = convertFrontmatter(upstream, DEFAULT_MAPPING);
+    const fm: Record<string, unknown> = { ...upstream };
+    for (const key of converted.remove) delete fm[key];
+    Object.assign(fm, converted.set);
+    const note = memoryNote(fm);
+
+    expect(await sync(note)).toBe('pulled');
+    expect(pushes).toEqual([]);
+    expect(await serverCard(href)).toBe(before);
+    expect(await serverEtag(href)).toBe(etag);
+
+    const server = toFriendly(parseCard(before), DEFAULT_MAPPING, await relationContext(adapter, notes)).props;
+    const mapped = Object.fromEntries(Object.entries(note.frontmatter).filter(([k]) => isMappedProperty(k, DEFAULT_MAPPING)));
+    expect(mapped).toEqual(server);
+    expect(note.appended).toHaveLength(1);
+    expect(note.appended[0]).toContain('> - phone: 06-12345678');
+    expect(note.appended[0]).toContain('> - phone-2: 030-1234567');
+
+    expect(await sync(note)).toBe('unchanged');
     expect(pushes).toEqual([]);
   });
 });

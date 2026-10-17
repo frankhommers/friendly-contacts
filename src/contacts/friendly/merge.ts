@@ -51,12 +51,10 @@ export function mergeFriendly(
     if (sameValue(s, l)) {
       winner = s;
     } else if (base === undefined) {
-      if (canonical(s) === undefined) winner = l;
-      else if (canonical(l) === undefined) winner = s;
-      else {
-        winner = s;
-        conflicts.push({ property, local: l as FriendlyValue, server: s as FriendlyValue });
-      }
+      // Without a base nothing tells a local edit from stale or junk data (e.g. a freshly converted upstream
+      // note): the server wins, and every local value it does not have is kept in the conflict callout only.
+      winner = s;
+      if (canonical(l) !== undefined) conflicts.push({ property, local: l as FriendlyValue, server: s ?? '' });
     } else if (sameValue(base[property], s)) {
       winner = l;
     } else if (sameValue(base[property], l)) {

@@ -39,10 +39,19 @@ describe('mergeFriendly', () => {
     expect(r.conflicts).toEqual([]);
   });
 
-  it('no base', () => {
-    const r = mergeFriendly(undefined, { mobile: '2', email: 'x' }, { mobile: '3', company: 'C' });
-    expect(r.merged).toEqual({ mobile: '2', email: 'x', company: 'C' });
-    expect(r.conflicts).toEqual([{ property: 'mobile', local: '3', server: '2' }]);
+  it('no base: the server wins every property; differing and local-only values are conflicts', () => {
+    const r = mergeFriendly(undefined, { mobile: '2', email: 'x', title: 't' }, { mobile: '3', company: 'C', title: ' t ' });
+    expect(r.merged).toEqual({ mobile: '2', email: 'x', title: 't' });
+    expect(r.conflicts).toEqual([
+      { property: 'mobile', local: '3', server: '2' },
+      { property: 'company', local: 'C', server: '' },
+    ]);
+  });
+
+  it('no base: a value only on the server is taken without a conflict', () => {
+    const r = mergeFriendly(undefined, { email: 'x' }, {});
+    expect(r.merged).toEqual({ email: 'x' });
+    expect(r.conflicts).toEqual([]);
   });
 
   it('relation lists compare as sets', () => {

@@ -102,7 +102,8 @@ async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string,
   const etag = server.etag || meta.etag;
 
   let stored: SyncStateEntry = { raw: server.raw, etag, href: meta.href };
-  const serverChanged = raw !== serializeCard(serverLines);
+  // Without a base the merge keeps the server card as it is; never PUT on a guess.
+  const serverChanged = baseProps !== undefined && raw !== serializeCard(serverLines);
   if (serverChanged) {
     if (!etag) throw new SyncError(`the server sent no ETag for ${meta.href}; not writing without If-Match.`);
     const res = await deps.adapter.push({ uid: cleanUid(uid), raw }, { href: meta.href, ifMatch: etag });
