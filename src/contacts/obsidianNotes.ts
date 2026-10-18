@@ -338,33 +338,38 @@ export async function friendlyNoteCard(
  * Creates a friendly contact note from one card in the contacts folder.
  * Returns the card's UID ('' when it has none) and whether the note now holds this card, or undefined
  * when the card has no name. An existing file is only replaced when the user says so, maybe later.
+ * `extra` (e.g. `{ source }`) is written into the frontmatter after the mapped properties.
  */
-export async function importCard(app: App, card: string): Promise<{ uid: string; written: boolean } | undefined> {
+export async function importCard(
+  app: App,
+  card: string,
+  extra: Record<string, FriendlyValue> = {},
+): Promise<{ uid: string; written: boolean } | undefined> {
   const { contactsFolder, defaultHashtag, friendly } = getSettings();
   const lines = parseCard(card);
   const value = (name: string) => lines.find((line) => line.name === name)?.value;
   const fileName = contactFileName(value("N"), value("FN"));
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(`${contactsFolder}/${fileName}.md`));
-  const props = toFriendly(lines, friendly.mapping, ctx).props;
+  const props = { ...toFriendly(lines, friendly.mapping, ctx).props, ...extra };
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;
   return { uid: cleanUid(value("UID")), written };
 }
 
-/** Imports a card pulled from the server of `sourceId` and stores it as that source's base for the next Sync. */
+/** Imports a card pulled from `source`: the note gets `source: <name>` and the card is that source's base for the next Sync. */
 export async function importRemoteCard(
   app: App,
   pulled: VCardRaw,
   meta: { href: string; etag?: string },
-  sourceId: string | undefined,
+  source: Source,
 ): Promise<boolean> {
-  const imported = await importCard(app, pulled.raw);
+  const imported = await importCard(app, pulled.raw, { source: source.name });
   if (!imported) return false;
   // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
-  if (imported.uid !== "" && imported.written && sourceId !== undefined) {
-    await contactSyncState(sourceId, app).set(imported.uid, {
+  if (imported.uid !== "" && imported.written) {
+    await contactSyncState(source.id, app).set(imported.uid, {
       raw: pulled.raw,
       etag: pulled.etag || meta.etag || "",
       href: pulled.href || meta.href,

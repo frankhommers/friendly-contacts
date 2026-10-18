@@ -131,3 +131,11 @@ export function planSync(
       'keep one copy (delete the others on the server) and set source: to that address book.',
   };
 }
+
+/** Remote cards whose UID has no note, sorted by file name; a UID present in two sources is offered once per source. */
+export function importCandidates<T extends { uid: string; fileName: string }>(remote: T[], noteUids: string[]): T[] {
+  const known = new Set(noteUids);
+  return remote
+    .filter((card) => !known.has(card.uid))
+    .sort((a, b) => a.fileName.localeCompare(b.fileName));
+}

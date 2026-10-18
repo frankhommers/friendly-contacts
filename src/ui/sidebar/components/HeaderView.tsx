@@ -10,6 +10,8 @@ type HeaderProps = {
   sort: Sort;
   onCreateContact: () => void;
   importVCF: () => void;
+  /** Present when an address book is active: opens the "Import contact from server" picker. */
+  importFromServer?: () => void;
   exportAllVCF: () => void;
   setDisplayInsightsView: Dispatch<SetStateAction<boolean>>;
 }
@@ -21,7 +23,7 @@ export const HeaderView = (props: HeaderProps) => {
 
 	useEffect(() => {
 		buttons.current.forEach(setIconForButton);
-	}, [buttons]);
+	}, [buttons, props.importFromServer !== undefined]);
 
   useEffect(() => {
     const unsubscribe = insightQueueStore.insightQueItemCount.subscribe((newValue) => {
@@ -55,6 +57,15 @@ export const HeaderView = (props: HeaderProps) => {
         aria-label="Import vcf"
         ref={(element) => (buttons.current[2] = element)}
         onClick={props.importVCF}/>
+      {props.importFromServer && (
+        <div
+          id="import-from-server-btn"
+          data-icon="cloud-download"
+          className={"clickable-icon nav-action-button "}
+          aria-label="Import contact from server"
+          ref={(element) => (buttons.current[9] = element)}
+          onClick={props.importFromServer}/>
+      )}
       <div
         id="import-vcf-btn"
         data-icon="file-up"

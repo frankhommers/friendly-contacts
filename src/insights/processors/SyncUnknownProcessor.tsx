@@ -6,14 +6,20 @@ import {getSettings} from "src/context/sharedSettingsContext";
 import {InsightProcessor, InsightQueItem, PropsRenderGroup, RunType} from "src/insights/insight.d";
 import {insightQueueStore} from "src/insights/insightsQueStore";
 import {sync} from "src/sync";
-import {defaultActiveSource, isSyncAvailable} from "src/sync/adapters";
+import {activeSources, isSyncAvailable} from "src/sync/adapters";
 
 
 const ImportUnknownVcardToVault = async (queItem: InsightQueItem) => {
-  const rawCard = await sync.pullFromRemote(queItem.data.href);
+  const source = activeSources().find((candidate) => candidate.id === queItem.data.sourceId);
+  if (!source) {
+    // The address book was removed or disabled since the insight was queued.
+    await insightQueueStore.remove(queItem);
+    return;
+  }
+  const rawCard = await sync.pullFromRemote(source, queItem.data.href);
   if (rawCard) {
     // #90 for now made the same as in the rootView skipping the record without notifying the user.
-    if (!(await importRemoteCard(getApp(), rawCard, queItem.data, defaultActiveSource()?.id))) {
+    if (!(await importRemoteCard(getApp(), rawCard, queItem.data, source))) {
       console.warn("Skipping contact without name", rawCard.raw);
     }
     await insightQueueStore.remove(queItem);

@@ -16,6 +16,8 @@ import { contactNotes, convertContactNotes, obsidianMirrorEnv } from "./contacts
 import { RelationMirror } from "./contacts/relationMirror";
 import { isContactFrontmatter } from "./contacts/friendlyNotes";
 import { isFileInFolder } from "src/file/file";
+import { openImportContactModal } from "src/ui/modals/importContactModal";
+import { isSyncAvailable } from "src/sync/adapters";
 import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
@@ -103,6 +105,18 @@ export default class ContactsPlugin extends Plugin {
           return;
         }
         new MoveContactsModal(this.app, () => contactNotes(this.app, folder).length, () => folder).open();
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-import",
+      name: "Import contact from server…",
+      callback: async () => {
+        if (!isSyncAvailable()) {
+          new Notice("No address book is set up.");
+          return;
+        }
+        await openImportContactModal(this.app);
       },
     });
 

@@ -7,7 +7,7 @@ import {contactSyncState, noteIO, relationContextFor} from "src/contacts/obsidia
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { Source } from "src/settings/settings";
-import { activeSources, adapterFor, defaultActiveSource, isSyncAvailable } from "src/sync/adapters";
+import { activeSources, adapterFor, isSyncAvailable } from "src/sync/adapters";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
 import {moveCard} from "src/sync/moveCard";
@@ -19,12 +19,6 @@ import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
 
 export const enabled = computed(() => isSyncAvailable());
-
-/** Until listing and importing are source-aware (Tasks 5-6), they talk to the default source when it is active. */
-function currentAdapter(): AdapterInterface | undefined {
-  const source = defaultActiveSource();
-  return source ? adapterFor(source) : undefined;
-}
 
 /** The note's `source:` name; undefined when the property is missing or empty. */
 function sourceProperty(frontmatter: Record<string, unknown>): string | undefined {
@@ -93,28 +87,25 @@ function hasFnMatch(remoteContact: VCardMeta, currentContacts: Contact[]) {
   return currentContacts.some(contact => contact.data['FN'] === fn);
 }
 
-export async function getUnknownFromRemote(currentContacts: Contact[]): Promise<VCardMeta[]> {
-  const fullContactList = await getList();
-  if (fullContactList && "errorMessage" in fullContactList) {
-    new Notice(fullContactList.errorMessage);
-    return [];
-  }
+/** A card on a server that has no note yet, with the source it was found in. */
+export type UnknownRemote = VCardMeta & { sourceId: string };
 
-  if (!fullContactList) {
-    return [];
+/** Cards on the servers of every active address book that match no note by UID or name. */
+export async function getUnknownFromRemote(currentContacts: Contact[]): Promise<UnknownRemote[]> {
+  const unknown: UnknownRemote[] = [];
+  for (const source of activeSources()) {
+    const list = await adapterFor(source).getMetaList();
+    if ('errorMessage' in list) {
+      new Notice(`${source.name}: ${list.errorMessage}`);
+      continue;
+    }
+    for (const meta of list) {
+      if (!hasUidMatch(meta, currentContacts) && !hasFnMatch(meta, currentContacts)) {
+        unknown.push({ ...meta, sourceId: source.id });
+      }
+    }
   }
-
-  return fullContactList.filter((remoteContact) => {
-    return !hasUidMatch(remoteContact, currentContacts) && !hasFnMatch(remoteContact, currentContacts);
-  });
-}
-
-export async function getRawVcardFromRemote(href: string) {
-  const adapter = currentAdapter();
-  if(adapter) {
-    return adapter.pull(href);
-  }
-  return undefined;
+  return unknown;
 }
 
 /** Deletes the contact's card on the server and forgets its sync state; true when deleted. */
@@ -305,8 +296,9 @@ async function moveNote(app: App, path: string, note: NoteIO, name: string, uid:
   return outcome;
 }
 
-export async function pullFromRemote(href: string): Promise<VCardRaw | undefined> {
-  const remoteRaw = await getRawVcardFromRemote(href);
+/** Pulls one card from the server of the given address book. */
+export async function pullFromRemote(source: Source, href: string): Promise<VCardRaw | undefined> {
+  const remoteRaw = await adapterFor(source).pull(href);
 
   if (remoteRaw && "errorMessage" in remoteRaw) {
     new Notice(remoteRaw.errorMessage);
@@ -315,13 +307,6 @@ export async function pullFromRemote(href: string): Promise<VCardRaw | undefined
   return remoteRaw;
 }
 
-
-async function getList() {
-  const adapter = currentAdapter()
-  if (adapter) {
-    return adapter.getMetaList();
-  }
-}
 
 async function getMetaByUID(adapter: AdapterInterface, uid: string): Promise<VCardMeta | undefined> {
   const res: VCardMeta | AppHttpResponse | undefined = await adapter.getMetaByUid(uid);
