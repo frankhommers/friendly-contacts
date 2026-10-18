@@ -9,7 +9,14 @@
 
 import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
 import { isMappedProperty, MappingRow, rowForProperty } from 'src/contacts/friendly/mapping';
-import { Conflict, coerceNoteProps, mergeFriendly, renderConflictCallout, sameValue } from 'src/contacts/friendly/merge';
+import {
+  alignNoteDates,
+  Conflict,
+  coerceNoteProps,
+  mergeFriendly,
+  renderConflictCallout,
+  sameValue,
+} from 'src/contacts/friendly/merge';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
 import { FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -91,13 +98,18 @@ async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string,
   const server = await pullCard(deps.adapter, meta.href, uid);
   const serverLines = parseCard(server.raw);
   const serverFriendly = toFriendly(serverLines, deps.rows, deps.ctx);
-  const baseProps = base ? toFriendly(parseCard(base.raw), deps.rows, deps.ctx).props : undefined;
+  const baseLines = base ? parseCard(base.raw) : undefined;
+  const baseCard = baseLines && { lines: baseLines, friendly: toFriendly(baseLines, deps.rows, deps.ctx) };
+  const baseProps = baseCard?.friendly.props;
 
   // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
   const mine: Props = { ...local };
   if (serverFriendly.props.uid !== undefined) mine.uid = serverFriendly.props.uid;
 
-  const { merged, conflicts } = mergeFriendly(baseProps, serverFriendly.props, canonicalRelations(mine, deps));
+  // A legacy Apple `1604-03-12` in the note is the cards' `--03-12`: no edit for the merge. `mine` keeps the
+  // note's own value, so writeNote still moves the note to `--03-12`.
+  const aligned = alignNoteDates(mine, deps.rows, [baseCard, { lines: serverLines, friendly: serverFriendly }]);
+  const { merged, conflicts } = mergeFriendly(baseProps, serverFriendly.props, canonicalRelations(aligned, deps));
   const patched = patch(serverLines, serverFriendly, merged, deps.rows, deps.ctx);
   const raw = serializeCard(patched.lines);
   const etag = server.etag || meta.etag;

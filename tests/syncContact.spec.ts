@@ -630,4 +630,23 @@ describe('syncContact', () => {
     expect(t.note.frontmatter['street-2']).toBe('Elders 2');
     expect(t.note.frontmatter['children-2']).toEqual(['[[X]]']);
   });
+
+  it('a legacy note with the apple placeholder year pushes nothing and settles to --MM-DD', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12' } });
+    expect(await t.run()).toBe('pulled');
+    expect(t.pushes).toEqual([]);
+    expect(t.note.appended).toEqual([]);
+    expect(t.note.frontmatter.birthday).toBe('--03-12');
+    expect(await t.run()).toBe('unchanged');
+  });
+
+  it('a legacy apple placeholder date in the note takes a server change as a clean pull', async () => {
+    const v2 = edit(V1, 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12', 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-01');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12' } });
+    expect(await t.run()).toBe('pulled');
+    expect(t.pushes).toEqual([]);
+    expect(t.note.appended).toEqual([]);
+    expect(t.notices).toEqual([]);
+    expect(t.note.frontmatter.birthday).toBe('--04-01');
+  });
 });

@@ -1,5 +1,5 @@
 import { VCardLine } from 'src/contacts/friendly/lines';
-import { normalizeNoteDate, readDate, writeDate } from 'src/contacts/friendly/dates';
+import { noteDateFor, normalizeNoteDate, readDate, writeDate } from 'src/contacts/friendly/dates';
 import { describe, expect, it } from 'vitest';
 
 const line = (value: string, ...params: [string, string][]): VCardLine => ({ name: 'BDAY', params, value });
@@ -43,6 +43,20 @@ describe('normalizeNoteDate', () => {
   });
 });
 
+describe('noteDateFor', () => {
+  it('reads a full date in the apple year of the line as year-less', () => {
+    expect(noteDateFor('1604-03-15', line('1604-03-15', APPLE))).toBe('--03-15');
+    expect(noteDateFor(' 16040401 ', line('1604-03-15', APPLE))).toBe('--04-01');
+  });
+
+  it('leaves other values normalised', () => {
+    expect(noteDateFor('1604-03-15', line('1604-03-15'))).toBe('1604-03-15');
+    expect(noteDateFor('1980-03-15', line('1604-03-15', APPLE))).toBe('1980-03-15');
+    expect(noteDateFor('--0315', undefined)).toBe('--03-15');
+    expect(noteDateFor('spring', line('1604-03-15', APPLE))).toBe('spring');
+  });
+});
+
 describe('writeDate', () => {
   it('writes year-less on 3.0 with the apple trick', () => {
     expect(writeDate('--03-15', undefined, '3.0')).toEqual({ value: '1604-03-15', params: [APPLE] });
@@ -68,7 +82,9 @@ describe('writeDate', () => {
   it('keeps the style of the existing value', () => {
     expect(writeDate('1980-03-15', line('19700101'), '3.0').value).toBe('19800315');
     expect(writeDate('19800315', line('1970-01-01'), '3.0').value).toBe('1980-03-15');
-    expect(writeDate('19800315', line('--0101'), '4.0').value).toBe('1980-03-15');
+    expect(writeDate('19800315', line('--0101'), '4.0').value).toBe('19800315');
+    expect(writeDate('1980-03-15', line('--0101'), '4.0').value).toBe('19800315');
+    expect(writeDate('19800315', line('--01-01'), '4.0').value).toBe('1980-03-15');
   });
 
   it('styles a new full date by version', () => {
@@ -85,7 +101,43 @@ describe('writeDate', () => {
   it('non-dates on 4.0 get VALUE=text', () => {
     expect(writeDate('spring, 1980', undefined, '4.0')).toEqual({ value: 'spring\\, 1980', params: [['VALUE', 'text']] });
     const text = line('x', ['VALUE', 'text']);
-    expect(writeDate('1985', text, '4.0').params).toEqual([['VALUE', 'text']]);
+    expect(writeDate('spring', text, '4.0').params).toEqual([['VALUE', 'text']]);
+  });
+
+  it('non-dates on 4.0 replace any VALUE param with a single VALUE=text', () => {
+    const dateTime = line('19890612T143000Z', ['TYPE', 'child'], ['VALUE', 'DATE-TIME']);
+    expect(writeDate('spring', dateTime, '4.0').params).toEqual([['TYPE', 'child'], ['VALUE', 'text']]);
+    const both = line('x', ['VALUE', 'date'], ['VALUE', 'TEXT']);
+    expect(writeDate('spring', both, '4.0').params).toEqual([['VALUE', 'text']]);
+  });
+
+  it('writing a date removes every VALUE param', () => {
+    const dateTime = line('19890612T143000Z', ['TYPE', 'child'], ['VALUE', 'DATE-TIME']);
+    expect(writeDate('1990-01-02', dateTime, '3.0')).toEqual({ value: '1990-01-02', params: [['TYPE', 'child']] });
+    expect(writeDate('--01-02', dateTime, '4.0')).toEqual({ value: '--0102', params: [['TYPE', 'child']] });
+    expect(writeDate('--01-02', dateTime, '3.0').params).toEqual([['TYPE', 'child'], APPLE]);
+    expect(writeDate('1985', dateTime, '4.0')).toEqual({ value: '1985', params: [['TYPE', 'child']] });
+  });
+
+  it('4.0 reduced-precision dates and date-times are written verbatim without VALUE=text', () => {
+    const text = line('x', ['VALUE', 'text']);
+    for (const value of ['1985', '1985-04', '198504', '---15', '--04', '19850412T120000Z', '--0412T1200', '1985-04-12T12:00:00Z']) {
+      expect(writeDate(value, text, '4.0')).toEqual({ value, params: [] });
+      expect(writeDate(value, undefined, '4.0')).toEqual({ value, params: [] });
+    }
+  });
+
+  it('non-dates drop the apple param', () => {
+    expect(writeDate('spring', line('1604-03-15', APPLE), '3.0')).toEqual({ value: 'spring', params: [] });
+    expect(writeDate('spring', line('1604-03-15', APPLE), '4.0')).toEqual({ value: 'spring', params: [['VALUE', 'text']] });
+    expect(writeDate('1985', line('1604-03-15', APPLE), '4.0')).toEqual({ value: '1985', params: [] });
+  });
+
+  it('a full date in the apple year of the line is that line\'s year-less date', () => {
+    expect(writeDate('1604-03-15', line('1604-03-15', APPLE), '3.0')).toEqual({ value: '1604-03-15', params: [APPLE] });
+    expect(writeDate('16040401', line('1604-03-15', APPLE), '3.0')).toEqual({ value: '1604-04-01', params: [APPLE] });
+    expect(writeDate('1604-03-15', line('16040315', APPLE), '3.0')).toEqual({ value: '16040315', params: [APPLE] });
+    expect(writeDate('1605-03-15', line('1604-03-15', APPLE), '3.0')).toEqual({ value: '1605-03-15', params: [] });
   });
 
   it('non-dates on 3.0 are plain escaped text', () => {

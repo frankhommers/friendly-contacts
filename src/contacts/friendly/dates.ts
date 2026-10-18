@@ -39,38 +39,65 @@ export function normalizeNoteDate(value: string): string {
   return yearLess ? `--${yearLess[1]}-${yearLess[2]}` : text;
 }
 
+/**
+ * The note value as `line` reads it: a full date in the year of the line's X-APPLE-OMIT-YEAR is that line's
+ * year-less date (`1604-03-12` -> `--03-12`, as notes showed Apple birthdays before year-less dates were read).
+ */
+export function noteDateFor(note: string, line: VCardLine | undefined): string {
+  const text = normalizeNoteDate(note);
+  const full = parseFull(text);
+  if (!full || !line || getParam(line, APPLE_PARAM) !== full[0]) return text;
+  return `--${full[1]}-${full[2]}`;
+}
+
+/** vCard 4.0 reduced-precision dates (`1985`, `1985-04`, `---15`, `--04`) and date-times with a date part. */
+const PARTIAL_4 = /^(?:\d{4}(?:-?\d{2})?|---\d{2}|--\d{2})$/;
+const DATE_TIME = /^(?:\d{4}(?:-?\d{2}(?:-?\d{2})?)?|--\d{2}(?:-?\d{2})?|---\d{2})T\d{2}[\d:.,]*(?:Z|[+-]\d{2}(?::?\d{2})?)?$/;
+
+const without = (params: [string, string][], ...names: string[]): [string, string][] =>
+  params.filter(([k]) => !names.includes(k));
+
 /** Value and params for an edited line (`line` given) or a new line (params are then only what the form adds). */
 export function writeDate(
   note: string,
   line: VCardLine | undefined,
   version: string,
 ): { value: string; params: [string, string][] } {
-  const text = normalizeNoteDate(note);
+  const text = noteDateFor(note, line);
   const is4 = version.trim() === '4.0';
-  const withoutValueText = (line?.params ?? []).filter(([k, v]) => !(k === 'VALUE' && v.toLowerCase() === 'text'));
+  const own = line?.params ?? [];
+  // A date is never VALUE=text, and VALUE=date-time on a line that now holds a date would be wrong.
+  const dateParams = without(own, 'VALUE');
 
   const yearLess = YEAR_LESS.exec(text);
   if (yearLess) {
     const [, month, day] = yearLess;
     const apple = line ? getParam(line, APPLE_PARAM) : undefined;
-    if (apple === undefined && is4) return { value: `--${month}${day}`, params: withoutValueText };
+    if (apple === undefined && is4) return { value: `--${month}${day}`, params: dateParams };
     const year = apple !== undefined && /^\d{4}$/.test(apple) ? apple : DEFAULT_APPLE_YEAR;
-    const params = withoutValueText.filter(([k]) => k !== APPLE_PARAM);
-    params.push([APPLE_PARAM, year]);
-    return { value: `${year}-${month}-${day}`, params };
+    const basic = line !== undefined && apple !== undefined && /^\d{8}$/.test(line.value.trim());
+    return {
+      value: basic ? `${year}${month}${day}` : `${year}-${month}-${day}`,
+      params: [...without(dateParams, APPLE_PARAM), [APPLE_PARAM, year]],
+    };
   }
 
   const full = parseFull(text);
   if (full) {
     const [year, month, day] = full;
-    const basic = line ? /^\d{8}$/.test(line.value.trim()) : is4;
+    // `--0315` is basic style too, so adding a year to it gives `19800315`.
+    const basic = line ? /^(?:\d{8}|--\d{4})$/.test(line.value.trim()) : is4;
     return {
       value: basic ? `${year}${month}${day}` : `${year}-${month}-${day}`,
-      params: withoutValueText.filter(([k]) => k !== APPLE_PARAM),
+      params: without(dateParams, APPLE_PARAM),
     };
   }
 
-  const params = (line?.params ?? []).slice();
-  if (is4 && !params.some(([k, v]) => k === 'VALUE' && v.toLowerCase() === 'text')) params.push(['VALUE', 'text']);
-  return { value: escapeText(text), params };
+  if (is4 && (PARTIAL_4.test(text) || DATE_TIME.test(text))) {
+    return { value: text, params: without(dateParams, APPLE_PARAM) };
+  }
+
+  const params = without(own, APPLE_PARAM);
+  if (!is4) return { value: escapeText(text), params };
+  return { value: escapeText(text), params: [...without(params, 'VALUE'), ['VALUE', 'text']] };
 }

@@ -1,10 +1,11 @@
 /** Three-way merge of friendly properties and coercion of raw note values. No obsidian / src/context imports. */
 
-import { normalizeNoteDate } from './dates';
+import { normalizeNoteDate, noteDateFor } from './dates';
+import { VCardLine } from './lines';
 import { isMappedProperty, MappingRow, rowForProperty } from './mapping';
 import { photoKey } from './photo';
 import { linkTarget } from './relations';
-import { FriendlyValue } from './translate';
+import { Friendly, FriendlyValue } from './translate';
 
 export interface Conflict {
   property: string;
@@ -79,6 +80,37 @@ export function mergeFriendly(
   return { merged, conflicts };
 }
 
+const isDateProperty = (property: string, rows: MappingRow[]): boolean => {
+  const row = rowForProperty(property, rows)?.row;
+  return row?.kind === 'field' && row.format === 'date';
+};
+
+/**
+ * Note dates as the cards' own lines read them, for the merge only: a legacy `1604-03-12` on an Apple year-less
+ * line (X-APPLE-OMIT-YEAR=1604) is `--03-12`, so it is no local edit. The first card (e.g. base, then server)
+ * whose line reads the value differently wins. Returns a copy.
+ */
+export function alignNoteDates(
+  local: Props,
+  rows: MappingRow[],
+  cards: ({ lines: VCardLine[]; friendly: Friendly } | undefined)[],
+): Props {
+  const result: Props = { ...local };
+  for (const [property, value] of Object.entries(local)) {
+    if (typeof value !== 'string' || !isDateProperty(property, rows)) continue;
+    for (const card of cards) {
+      const prov = card?.friendly.source[property];
+      if (!card || prov === undefined || Array.isArray(prov)) continue;
+      const aligned = noteDateFor(value, card.lines[prov.line]);
+      if (aligned !== normalizeNoteDate(value)) {
+        result[property] = aligned;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 function isListProperty(property: string, rows: MappingRow[]): boolean {
   const row = rowForProperty(property, rows)?.row;
   if (!row) return false;
@@ -119,9 +151,7 @@ export function coerceNoteProps(
       if (Array.isArray(raw) && whole === undefined) {
         warnings.push(`Property "${property}" is a list but holds one value; using the first item "${items[0]}".`);
       }
-      const row = rowForProperty(property, rows)?.row;
-      const isDate = row?.kind === 'field' && row.format === 'date';
-      props[property] = isDate ? normalizeNoteDate(items[0]) : items[0];
+      props[property] = isDateProperty(property, rows) ? normalizeNoteDate(items[0]) : items[0];
     }
   }
   return { props, warnings };

@@ -1,5 +1,7 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { coerceNoteProps, mergeFriendly, renderConflictCallout } from 'src/contacts/friendly/merge';
+import { parseCard } from 'src/contacts/friendly/lines';
+import { alignNoteDates, coerceNoteProps, mergeFriendly, renderConflictCallout } from 'src/contacts/friendly/merge';
+import { toFriendly } from 'src/contacts/friendly/translate';
 import { describe, expect, it } from 'vitest';
 
 describe('mergeFriendly', () => {
@@ -146,5 +148,30 @@ describe('renderConflictCallout', () => {
         '> - photo: (image)',
       ].join('\n'),
     );
+  });
+});
+
+describe('alignNoteDates', () => {
+  const ctx = { uidToName: () => undefined, resolveLink: (name: string) => ({ text: name }) };
+  const cardOf = (...body: string[]) => {
+    const lines = parseCard(['BEGIN:VCARD', 'VERSION:3.0', ...body, 'END:VCARD'].join('\r\n'));
+    return { lines, friendly: toFriendly(lines, DEFAULT_MAPPING, ctx) };
+  };
+
+  it('reads a legacy apple placeholder date as the year-less date of the first card that has it', () => {
+    const apple = cardOf('BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12', 'ANNIVERSARY:2001-09-22');
+    const local = { birthday: '1604-03-12', anniversary: '2001-09-22', title: '1604-03-12' };
+    expect(alignNoteDates(local, DEFAULT_MAPPING, [undefined, apple])).toEqual({
+      birthday: '--03-12',
+      anniversary: '2001-09-22',
+      title: '1604-03-12',
+    });
+    expect(local.birthday).toBe('1604-03-12');
+  });
+
+  it('leaves dates alone when no card line has the apple year', () => {
+    const plain = cardOf('BDAY:1604-03-12');
+    expect(alignNoteDates({ birthday: '1604-03-12' }, DEFAULT_MAPPING, [plain])).toEqual({ birthday: '1604-03-12' });
+    expect(alignNoteDates({ birthday: '1604-03-12' }, DEFAULT_MAPPING, [cardOf('NOTE:x')])).toEqual({ birthday: '1604-03-12' });
   });
 });
