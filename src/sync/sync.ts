@@ -11,7 +11,7 @@ import { activeSources, adapterFor, isSyncAvailable } from "src/sync/adapters";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
 import {moveCard} from "src/sync/moveCard";
-import {CardLocation, noteSourceId, planSync, SyncPlan} from "src/sync/sources";
+import {BaseHolder, CardLocation, noteSourceId, planSync, SyncPlan} from "src/sync/sources";
 import {locateCard, NoteIO, syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
 import {SyncStateEntry} from "src/sync/syncState";
 import {ConfirmModal} from "src/ui/modals/confirmModal";
@@ -34,7 +34,7 @@ function noteUid(frontmatter: Record<string, unknown>): string {
   return typeof uid === 'string' ? uid.trim() : '';
 }
 
-type NoteSource = { source: Source; explicit: boolean; active: Source[] };
+type NoteSource = { source: Source; explicit: boolean; active: Source[]; baseIn: BaseHolder[] };
 
 /**
  * The active source a note syncs with: its `source:` (never a fallback when that is unknown or disabled), else the
@@ -57,7 +57,8 @@ async function resolveNoteSource(app: App, frontmatter: Record<string, unknown>,
   if ('error' in resolved) return resolved;
   const source = active.find((s) => s.id === resolved.id);
   if (!source) return { error: 'Sync is not set up' };
-  return { source, explicit: named !== undefined, active };
+  const holders = baseIn.map((id) => ({ id, active: active.some((a) => a.id === id) }));
+  return { source, explicit: named !== undefined, active, baseIn: holders };
 }
 
 /** Writes `source: <name>` into the note when it does not hold exactly that name. */
@@ -199,9 +200,10 @@ async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
     new Notice(`Not syncing ${name}: ${resolved.error}.`);
     return undefined;
   }
-  const { source, explicit, active } = resolved;
+  const { source, explicit, active, baseIn } = resolved;
   const byId = (id: string) => active.find((s) => s.id === id);
-  const sourceName = (id: string) => byId(id)?.name ?? id;
+  // A disabled book can be named too (a base may be held there).
+  const sourceName = (id: string) => getSettings().sources.find((s) => s.id === id)?.name ?? id;
 
   let plan: SyncPlan = { kind: 'sync', sourceId: source.id };
   if (uid !== '') {
@@ -212,7 +214,7 @@ async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
       new Notice(`Not syncing ${name}: could not search ${which}, and the card could be there.`);
       return 'failed';
     }
-    plan = planSync({ id: source.id, explicit }, found, sourceName);
+    plan = planSync({ id: source.id, explicit }, found, sourceName, baseIn);
   }
 
   switch (plan.kind) {

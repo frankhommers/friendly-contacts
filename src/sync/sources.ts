@@ -46,11 +46,14 @@ export function findSourceByName(sources: Source[], name: string): Source | unde
   return sources.find((s) => sameName(s.name, name));
 }
 
+/** Fixed id of the book made from the old CardDAV block, so devices upgrading independently agree on it. */
+export const MIGRATED_SOURCE_ID = 'carddav';
+
 /**
  * Settings written before address book sources hold one CardDAV block plus syncEnabled/syncSelected.
  * Stored `sources` win; otherwise a CardDAV block with a URL becomes the one (default) source.
  */
-export function migrateSources(loaded: Record<string, unknown>, newId: () => string): MigratedSources {
+export function migrateSources(loaded: Record<string, unknown>): MigratedSources {
   if (Array.isArray(loaded.sources)) {
     const sources = loaded.sources as Source[];
     const defaultSource = typeof loaded.defaultSource === 'string' ? loaded.defaultSource : (sources[0]?.id ?? '');
@@ -59,7 +62,7 @@ export function migrateSources(loaded: Record<string, unknown>, newId: () => str
   const carddav = (loaded.CardDAV ?? {}) as Record<string, unknown>;
   const addressBookUrl = typeof carddav.addressBookUrl === 'string' ? carddav.addressBookUrl : '';
   if (addressBookUrl.trim() === '') return { sources: [], defaultSource: '' };
-  const id = newId();
+  const id = MIGRATED_SOURCE_ID;
   const source: Source = {
     id,
     name: sourceNameFromUrl(addressBookUrl),
@@ -109,12 +112,34 @@ export function noteSourceId(
 const listNames = (names: string[]): string =>
   names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 
-/** What Sync does, given the note's source and the sources where a card with the note's exact UID was found. */
+/** A source holding a sync base for the note's UID, and whether it is enabled. */
+export type BaseHolder = { id: string; active: boolean };
+
+/**
+ * What Sync does, given the note's source, the sources where a card with the note's exact UID was found, and
+ * (`baseIn`) the sources holding a sync base for that UID. An explicit source with the card found nowhere does not
+ * create a second card when another book holds a base: that book is disabled or the card is gone from it.
+ */
 export function planSync(
   noteSource: { id: string; explicit: boolean },
   found: CardLocation[],
   sourceName: (id: string) => string,
+  baseIn: BaseHolder[] = [],
 ): SyncPlan {
+  if (found.length === 0 && noteSource.explicit) {
+    const other = baseIn.find((holder) => holder.id !== noteSource.id);
+    if (other) {
+      const name = sourceName(other.id);
+      const why = other.active ? 'where the card is gone' : 'which is disabled';
+      return {
+        kind: 'refuse',
+        message:
+          `The card was last synced with ${name}, ${why}; ` +
+          `${other.active ? `restore it there or delete its sync state, ` : `enable ${name} to move it, `}` +
+          'or remove the UID from the note to create a new card.',
+      };
+    }
+  }
   if (found.length === 0 || found.some((f) => f.sourceId === noteSource.id)) {
     return { kind: 'sync', sourceId: noteSource.id };
   }

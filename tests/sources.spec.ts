@@ -13,7 +13,7 @@ import {
   withSource,
 } from 'src/sync/sources';
 import type { Source } from 'src/settings/settings.d';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 const legacy = (syncEnabled: boolean) => ({
   syncEnabled,
@@ -27,35 +27,33 @@ const source = (id: string, name: string): Source => ({
 
 describe('migrateSources', () => {
   it('migrates the single CardDAV block', () => {
-    expect(migrateSources(legacy(true), () => 'id1')).toEqual({
+    expect(migrateSources(legacy(true))).toEqual({
       sources: [{
-        id: 'id1', name: 'contacts', addressBookUrl: 'https://pim.example/frank/contacts/',
+        id: 'carddav', name: 'contacts', addressBookUrl: 'https://pim.example/frank/contacts/',
         authType: 'basic', authKey: 'k', enabled: true,
       }],
-      defaultSource: 'id1',
-      migratedFrom: 'id1',
+      defaultSource: 'carddav',
+      migratedFrom: 'carddav',
     });
   });
 
   it('migration keeps sync off when it was off', () => {
-    expect(migrateSources(legacy(false), () => 'id1').sources[0].enabled).toBe(false);
+    expect(migrateSources(legacy(false)).sources[0].enabled).toBe(false);
   });
 
   it('migration is idempotent', () => {
-    const newId = vi.fn(() => 'other');
     const input = { sources: [source('a', 'A'), source('b', 'B')], defaultSource: 'b', ...legacy(true) };
-    const result = migrateSources(input, newId);
+    const result = migrateSources(input);
     expect(result).toEqual({ sources: input.sources, defaultSource: 'b' });
     expect('migratedFrom' in result).toBe(false);
-    expect(newId).not.toHaveBeenCalled();
   });
 
   it('falls back to the first source as default', () => {
-    expect(migrateSources({ sources: [source('a', 'A')] }, () => 'x').defaultSource).toBe('a');
+    expect(migrateSources({ sources: [source('a', 'A')] }).defaultSource).toBe('a');
   });
 
   it('no CardDAV url gives no sources', () => {
-    expect(migrateSources({ CardDAV: { addressBookUrl: '' } }, () => 'id1')).toEqual({ sources: [], defaultSource: '' });
+    expect(migrateSources({ CardDAV: { addressBookUrl: '' } })).toEqual({ sources: [], defaultSource: '' });
   });
 });
 
@@ -133,6 +131,27 @@ describe('planSync', () => {
 
   it('card only elsewhere is moved with explicit source', () => {
     expect(planSync({ id: 'p', explicit: true }, [at('f')], name)).toEqual({ kind: 'move', from: at('f'), to: 'p' });
+  });
+
+  it('explicit source with the card nowhere refuses when another book holds a base', () => {
+    const disabled = planSync({ id: 'p', explicit: true }, [], name, [{ id: 'f', active: false }]);
+    expect(disabled).toEqual({
+      kind: 'refuse',
+      message: expect.stringMatching(/^The card was last synced with Family, which is disabled; /),
+    });
+    const gone = planSync({ id: 'p', explicit: true }, [], name, [{ id: 'f', active: true }]);
+    expect(gone).toEqual({
+      kind: 'refuse',
+      message: expect.stringMatching(/^The card was last synced with Family, where the card is gone; /),
+    });
+  });
+
+  it('a base in the target itself, or no explicit source, still syncs when the card is nowhere', () => {
+    expect(planSync({ id: 'p', explicit: true }, [], name, [{ id: 'p', active: true }])).toEqual({ kind: 'sync', sourceId: 'p' });
+    expect(planSync({ id: 'p', explicit: false }, [], name, [{ id: 'f', active: true }])).toEqual({ kind: 'sync', sourceId: 'p' });
+    // The card was found elsewhere: that is a move, whatever bases exist.
+    expect(planSync({ id: 'p', explicit: true }, [at('w')], name, [{ id: 'f', active: false }]))
+      .toEqual({ kind: 'move', from: at('w'), to: 'p' });
   });
 
   it('card in two other sources refuses and names them', () => {

@@ -4,7 +4,6 @@ import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/settin
 import { ContactsPluginSettings } from "src/settings/settings.d";
 import { migrateSources } from "src/sync/sources";
 import { deepCloneObject } from "src/util/deepCloneObject";
-import { generateUUID } from "src/util/vcard";
 
 export const settings = signal<ContactsPluginSettings | undefined>(undefined);
 let saveData: (data: any) => Promise<void>;
@@ -30,7 +29,7 @@ export async function initSettings(
   saveData = mySaveData;
   const loaded = await loadData() ?? {};
   const { CardDAV: _cardDAV, syncSelected: _syncSelected, syncEnabled: _syncEnabled, ...rest } = loaded;
-  const { sources, defaultSource, migratedFrom } = migrateSources(loaded, generateUUID);
+  const { sources, defaultSource, migratedFrom } = migrateSources(loaded);
   const initializedSettings = {
       ...DEFAULT_SETTINGS,
       ...rest,
