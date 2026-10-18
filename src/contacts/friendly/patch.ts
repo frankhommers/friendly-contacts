@@ -127,7 +127,28 @@ function patchDate(s: State, row: FieldRow, prov: Provenance | undefined, before
     return;
   }
   const next = withValue(line, written.value, written.params);
-  if (serializeLine(next) !== serializeLine(line)) setLine(s, prov!.line, next);
+  if (!sameLine(next, line)) setLine(s, prov!.line, next);
+}
+
+/** Params as comparable text: names upper-case, values unquoted and lower-case, in a fixed order. */
+function paramKeys(line: VCardLine): string[] {
+  return line.params.map(([k, v]) => `${k.toUpperCase()}=${v.replace(/^"(.*)"$/, '$1').toLowerCase()}`).sort();
+}
+
+/**
+ * Same group, name, params and value. Compared structurally, not by serializing: an untouched line serializes
+ * as its raw text, which may spell names and params in lower case or quoted.
+ */
+function sameLine(a: VCardLine, b: VCardLine): boolean {
+  const pa = paramKeys(a);
+  const pb = paramKeys(b);
+  return (
+    (a.group ?? '').toLowerCase() === (b.group ?? '').toLowerCase() &&
+    a.name.toUpperCase() === b.name.toUpperCase() &&
+    a.value === b.value &&
+    pa.length === pb.length &&
+    pa.every((k, i) => k === pb[i])
+  );
 }
 
 function patchField(

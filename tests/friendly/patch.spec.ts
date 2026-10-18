@@ -16,6 +16,7 @@ const ctx: RelationContext = {
 const base = parseCard(readVcfFixture('appleV3.vcf'));
 const before = toFriendly(base, DEFAULT_MAPPING, ctx);
 const card = (...body: string[]) => parseCard(['BEGIN:VCARD', 'VERSION:3.0', ...body, 'END:VCARD'].join('\r\n'));
+const card4 = (...body: string[]) => parseCard(['BEGIN:VCARD', 'VERSION:4.0', ...body, 'END:VCARD'].join('\r\n'));
 
 const run = (after: Record<string, FriendlyValue>, lines: VCardLine[] = base) =>
   patch(lines, toFriendly(lines, DEFAULT_MAPPING, ctx), after, DEFAULT_MAPPING, ctx);
@@ -67,6 +68,48 @@ describe('patch', () => {
   it('adding a year drops the apple param', () => {
     const { lines } = run({ ...before.props, birthday: '1984-03-12' });
     expect(texts(lines)).toContain('BDAY:1984-03-12');
+  });
+
+  it('clearing a date removes the line', () => {
+    const { lines } = run({ ...before.props, birthday: '' });
+    expect(lines.some((l) => l.name === 'BDAY')).toBe(false);
+    expect(run(without('birthday')).lines.some((l) => l.name === 'BDAY')).toBe(false);
+  });
+
+  it('a legacy apple placeholder date leaves the apple line identical', () => {
+    const { lines } = run({ ...before.props, birthday: '1604-03-12' });
+    expect(lines.find((l) => l.name === 'BDAY')).toBe(base.find((l) => l.name === 'BDAY'));
+  });
+
+  it('a same-date edit on a raw line with lowercase or quoted params keeps the identical line', () => {
+    const lines = card('bday;x-foo="a b";x-apple-omit-year=1604:1604-03-12', 'item1.anniversary;x-bar=y:19800315');
+    const friendly = toFriendly(lines, DEFAULT_MAPPING, ctx);
+    expect(friendly.props).toEqual({ birthday: '--03-12', anniversary: '1980-03-15' });
+    const result = run({ birthday: '1604-03-12', anniversary: '19800315' }, lines);
+    expect(result.lines).toEqual(lines);
+    expect(result.lines[1]).toBe(lines[1]);
+    expect(result.lines[2]).toBe(lines[2]);
+  });
+
+  it('a 4.0 card edits an existing year-less line as --MMDD', () => {
+    const lines = card4('BDAY:--0315');
+    const { lines: out } = run({ birthday: '--04-01' }, lines);
+    expect(texts(out)).toContain('BDAY:--0401');
+  });
+
+  it('a non-date on a 4.0 card gets a single VALUE=text', () => {
+    const lines = card4('BDAY;VALUE=DATE-TIME:19890612T143000Z', 'ANNIVERSARY;VALUE=TEXT:once');
+    const { lines: out } = run({ birthday: 'spring', anniversary: 'twice' }, lines);
+    expect(texts(out)).toContain('BDAY;VALUE=text:spring');
+    expect(texts(out)).toContain('ANNIVERSARY;VALUE=text:twice');
+  });
+
+  it('a date written over VALUE=DATE-TIME drops the VALUE param', () => {
+    // As the date-time line of tests/fixtures/hasDifferentDates.vcf (a TYPE would keep it from the birthday row).
+    const lines = card('BDAY;X-FOO=bar;VALUE=DATE-TIME:19890612T143000Z');
+    expect(toFriendly(lines, DEFAULT_MAPPING, ctx).props.birthday).toBe('19890612T143000Z');
+    const { lines: out } = run({ birthday: '1989-06-12' }, lines);
+    expect(texts(out)).toContain('BDAY;X-FOO=bar:1989-06-12');
   });
 
   it('new card writes year-less as --MMDD', () => {
