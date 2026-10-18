@@ -178,6 +178,24 @@ export function uidAlreadyImported(uid: string | undefined, noteUids: Iterable<s
   return false;
 }
 
+/** The address book URL with the parts that do not tell books apart removed: host case, default port, trailing slash. */
+export function normalizeBookUrl(url: string): string {
+  const text = url.trim();
+  try {
+    const parsed = new URL(text);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`;
+  } catch {
+    return text.replace(/\/+$/, '');
+  }
+}
+
+/** Another source (not `selfId`) with the same address book URL, if there is one. */
+export function sourceWithSameUrl(sources: Source[], url: string, selfId: string): Source | undefined {
+  const wanted = normalizeBookUrl(url);
+  if (wanted === '') return undefined;
+  return sources.find((s) => s.id !== selfId && normalizeBookUrl(s.addressBookUrl) === wanted);
+}
+
 /** "Address book", or "Address book 2", "Address book 3", ... when that name is taken. */
 export function uniqueSourceName(sources: Source[], base = 'Address book'): string {
   let name = base;

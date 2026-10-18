@@ -11,7 +11,7 @@ import {
 } from "src/settings/carddavCredentials";
 import { ContactsPluginSettings, Source } from "src/settings/settings";
 import { connectionProblem } from "src/sync/adapters";
-import { SourcePatch, uniqueSourceName, validateSourceName, withSource } from "src/sync/sources";
+import { SourcePatch, sourceWithSameUrl, uniqueSourceName, validateSourceName, withSource } from "src/sync/sources";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import CarddavSettings, { CarddavSettingsInterface } from "src/ui/settings/components/carddavSettings";
 import { generateUUID } from "src/util/vcard";
@@ -101,6 +101,11 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
     const resolved = resolveCredentials(form, saved);
     if (!resolved.ok) {
       setWarning(resolved.error);
+      return;
+    }
+    const twin = sourceWithSameUrl(getSettings().sources, form.addressBookUrl, source.id);
+    if (twin) {
+      new Notice(`Not enabled: ${twin.name} already uses this address book URL.`);
       return;
     }
     const connection = { addressBookUrl: form.addressBookUrl, authType: resolved.authType, authKey: resolved.authKey };

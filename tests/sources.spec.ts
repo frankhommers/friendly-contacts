@@ -4,9 +4,11 @@ import {
   migrateSources,
   noteSourceId,
   patchSource,
+  normalizeBookUrl,
   planSync,
   removalBlocker,
   sourceNameFromUrl,
+  sourceWithSameUrl,
   uidAlreadyImported,
   uniqueSourceName,
   validateSourceName,
@@ -218,5 +220,27 @@ describe('uidAlreadyImported', () => {
   it('a card without a UID is never known', () => {
     expect(uidAlreadyImported(undefined, [undefined, ''], new Set(['']))).toBe(false);
     expect(uidAlreadyImported('', [''], new Set(['']))).toBe(false);
+  });
+});
+
+describe('sourceWithSameUrl', () => {
+  const a = { ...source('a', 'A'), addressBookUrl: 'https://Pim.Example/frank/contacts/' };
+  const b = { ...source('b', 'B'), addressBookUrl: 'https://pim.example/frank/family/' };
+
+  it('normalises trailing slash, host case and default port', () => {
+    expect(normalizeBookUrl(' https://PIM.example:443/x/y// ')).toBe('https://pim.example/x/y');
+    expect(normalizeBookUrl('https://pim.example/x/y')).toBe('https://pim.example/x/y');
+    expect(normalizeBookUrl('not a url/')).toBe('not a url');
+  });
+
+  it('finds another book with the same address', () => {
+    expect(sourceWithSameUrl([a, b], 'https://pim.example/frank/contacts', 'b')).toBe(a);
+    expect(sourceWithSameUrl([a, b], 'HTTPS://PIM.EXAMPLE/frank/contacts/', 'b')).toBe(a);
+  });
+
+  it('ignores the book itself, other paths and an empty address', () => {
+    expect(sourceWithSameUrl([a, b], 'https://pim.example/frank/contacts/', 'a')).toBeUndefined();
+    expect(sourceWithSameUrl([a, b], 'https://pim.example/frank/Contacts/', 'b')).toBeUndefined();
+    expect(sourceWithSameUrl([a, b], '  ', 'b')).toBeUndefined();
   });
 });
