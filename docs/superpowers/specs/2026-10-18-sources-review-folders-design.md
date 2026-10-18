@@ -1,6 +1,6 @@
-# Address book sources, Sync with a review screen, and a folder per contact
+# Address book sources, Sync with a review screen, a folder per contact, dates and the people graph
 
-Status: draft, 2026-10-18. Builds on `2026-10-17-friendly-properties-design.md` (branch `feature/friendly-properties`).
+Status: approved 2026-10-18 (Parts 1-3); Parts 0, 4 and 5 added on the owner's request the same day. Builds on `2026-10-17-friendly-properties-design.md` (branch `feature/friendly-properties`).
 Decisions marked *(builder's call)* were made while writing this, not by the owner; they can be challenged.
 
 ## Why
@@ -15,6 +15,10 @@ Friendly Contacts syncs one note with one card in one Radicale address book. Thr
 3. **A place for everything about a person.** Sinterklaas poems, speeches, photos of a dinner: the owner wants these next to
    the contact, in a folder per person, with the contact note as that folder's folder note. The owner already uses the
    Folder Notes plugin (LostPaul), but this must be configurable for anyone, with or without that plugin.
+4. **Birthdays without a year** look broken: `--0315` shows as `--0315`, and an iPhone card (`1604-03-15` with
+   `X-APPLE-OMIT-YEAR=1604`) shows a person of 422 years. The sidebar's birthday sort fails on the first form.
+5. **Seeing relationships.** They live in properties only; the sidebar does not show them, and Obsidian's graph shows that
+   two people are linked but not how. The owner wants a people graph inspired by Nametag (nametag.one).
 
 Relationships (`RELATED` <-> `[[links]]`, two-way mirroring) must keep working through all of this.
 
@@ -28,7 +32,8 @@ Relationships (`RELATED` <-> `[[links]]`, two-way mirroring) must keep working t
 - Optional **folder per contact** layout, whose folder note naming and placement cover the common folder note conventions,
   with a one-click copy of the Folder Notes plugin's settings.
 - Relationships stay first-class: shown as names in the review screen, mirrored between notes as today, resolved across
-  sources.
+  sources, visible and editable in the sidebar, and drawn in a people graph.
+- Dates without a year (and partial dates) shown in one readable form and written back in the form the card used.
 
 ## Non-goals
 
@@ -46,6 +51,39 @@ Relationships (`RELATED` <-> `[[links]]`, two-way mirroring) must keep working t
 - A folder, or any file in it other than the contact note, being deleted, renamed away from its person, or synced.
 - Losing relationships: a relation that silently disappears, points at the wrong person, or stops mirroring.
 - The review screen as a wall of noise: unchanged properties, technical vCard fields or image data shown as text.
+
+## Part 0: Dates without a year
+
+Applies to every mapping row with `format: 'date'` (by default `birthday` and `anniversary`).
+
+### Reading (card -> note)
+
+| Card value | Note |
+|---|---|
+| `19800315`, `1980-03-15` | `1980-03-15` (as today) |
+| `--0315`, `--03-15` | `--03-15` |
+| `1604-03-15` with param `X-APPLE-OMIT-YEAR=1604` (the param's year equals the value's year) | `--03-15` |
+| `1985`, `1985-04`, `---15`, date-times, `VALUE=text` values (`circa 1950`) | verbatim, as today |
+
+### Writing (note -> card)
+
+Only when the friendly value changed (unchanged lines stay byte-identical, as today).
+
+- `--03-15` (also accept `--0315` typed by hand):
+  - line has `X-APPLE-OMIT-YEAR`, or the card is version 3.0 -> `1604-03-15` with `X-APPLE-OMIT-YEAR=1604` (keep an
+    existing param year);
+  - version 4.0 -> `--0315`.
+- A full date on a line that had `X-APPLE-OMIT-YEAR` drops that param.
+- A full date keeps the line's existing style (basic `19800315` or extended `1980-03-15`) *(builder's call)*; a new line
+  uses extended for 3.0 and basic for 4.0.
+- Anything else is written verbatim; on a 4.0 card a value that is not a date gets `VALUE=text` *(builder's call)*.
+
+### Elsewhere
+
+- Three-way merge and the review screen compare the note form, so `--0315` and the Apple form are equal.
+- The sidebar's birthday sort handles `--MM-DD`; values without a month and day (year only, text) sort last.
+- The legacy (non-friendly) parser normalises the same way if it is still on an import path.
+- Obsidian's "Date" property type rejects `--03-15`; the README says to keep date properties as Text.
 
 ## Part 1: Sources
 
@@ -209,6 +247,8 @@ Order 3 then 4 keeps today's rule that the note takes the card's canonical form 
 - When Folder Notes is enabled and its settings differ from ours, the settings screen shows a warning line next to the
   button. Checked when the settings screen opens, never at runtime *(owner's choice to keep Friendly Contacts
   independent of Folder Notes internals)*.
+- A fixed folder note name shows a hint: Obsidian's graph and tabs will show every contact by that name; the people graph
+  (Part 5) is not affected.
 
 ### Behaviour
 
@@ -243,6 +283,56 @@ Order 3 then 4 keeps today's rule that the note takes the card's canonical form 
   UID are rewritten to the new note's link; mirroring then runs as for any change *(builder's call)*. Only
   relationship properties of contact notes are touched. With `{{name}}` the link resolves by itself.
 
+## Part 4: Relationships in the sidebar
+
+- The contact view in the sidebar gets a **Relationships** section: one line per relation property that has entries
+  (property name as label, e.g. "children"), the people as names.
+  - A name with a note: click opens it.
+  - A name without a note: grey; if the server has that person (any source), an **Import** button imports them.
+  - A **×** per name removes that relationship (after a confirm *(builder's call)*); mirroring removes the other side.
+- **+ Relationship** (in the section, and command "Add relationship…" for the active contact note): pick a person (fuzzy
+  list of contact notes), then the kind (the relation properties of the mapping table). The link is added through
+  `processFrontMatter` with Obsidian's link text; the existing mirroring adds the other side.
+- Adding a relationship that already exists is a no-op with a Notice. Nothing reaches Radicale until that contact is
+  synced (unchanged rule).
+
+## Part 5: People graph
+
+A view of people and how they relate, inspired by Nametag's network graph (idea only: Nametag is AGPL, this plugin is
+MIT; no code is taken).
+
+### Opening
+
+- Command "Open people graph" and a ribbon icon: centred on **me**; setting "This is me" picks a contact note (stored as
+  its UID). Not set: centred on the active contact, else the whole graph.
+- Command "Open people graph for this contact" and a button in the sidebar contact view: centred on that contact.
+- A normal Obsidian view (tab or sidebar), works on mobile too (no network access needed).
+
+### What it shows
+
+- **Nodes**: contact notes, with photo or initials and the name. People only linked to (no note yet) are dashed, with
+  the link's name; clicking one offers Import if the server has them.
+- **Edges**: from relation properties. A mirrored pair (`children` / `parents`, `spouse` / `spouse`) is one edge. An
+  edge is coloured by kind and labelled with it (from the viewing person's side, e.g. "child"):
+  - partner (`spouse` vCard type), family (`child`, `parent`, `sibling`, `kin`), friends (`friend`), work
+    (`colleague`, `co-worker`), other (all remaining relation types).
+  - The kind comes from the mapping row's vCard type, so a renamed property keeps its colour.
+- **Depth**: steps away from the centre, default 2, adjustable (1-4, or everyone). Max 500 nodes; beyond that a
+  message asks to lower the depth.
+- **Filter pills** per kind (show / hide).
+- **Level of detail** like Nametag: dots when zoomed out, names at mid zoom, photos when close.
+
+### Interaction
+
+- Click a node: it becomes the centre; double-click or a modifier-click opens the note.
+- Drag nodes, scroll to zoom, drag the background to pan, a recenter button.
+- The graph updates when contact notes change (debounced).
+
+### Building
+
+- d3-force simulation rendered on a canvas (d3 is ISC/BSD-licensed).
+- Pure, unit-tested graph building: snapshots -> nodes and edges (mirror dedupe, kinds, depth limit, dangling links).
+
 ## Fixes carried over from the previous branch
 
 - **Property rename with a note that already holds the new name**: refuse the whole rename and list those notes,
@@ -251,9 +341,12 @@ Order 3 then 4 keeps today's rule that the note takes the card's canonical form 
 
 ## Order of work
 
+0. Dates without a year.
 1. Sources (settings, migration, `source:`, per-source sync state, import list, moving between sources).
 2. Review screen (replaces the conflict callout and "server wins"), Import contact, Sync this contact.
 3. Folder per contact.
+4. Relationships in the sidebar.
+5. People graph.
 
 Each part is shippable on its own and keeps all existing tests passing.
 
@@ -267,7 +360,10 @@ Each part is shippable on its own and keeps all existing tests passing.
   - the Apply staleness checks (note changed, 412);
   - moving between sources (create, delete, delete fails, target exists);
   - folder layout path planning (inside / next to / fixed name), idempotent rename with and without a pre-renamed folder;
-  - the layout commands, including folders with other files.
+  - the layout commands, including folders with other files;
+  - date reading and writing per row of the Part 0 tables, both card versions;
+  - adding and removing a relationship from the sidebar (mirroring follows);
+  - graph building (mirror dedupe, kinds from vCard types, depth, dangling links, node cap).
 - e2e against Radicale 3.8.3 (`npm run test:e2e`): two address books on one server; import from both; Sync with a
   conflict resolved each way; moving a card between books; untouched lines byte-identical as today.
 - Owner's manual checklist in `tests/scripts/radicale-e2e.md` extended with the review screen, Import, layout
@@ -279,3 +375,4 @@ Each part is shippable on its own and keeps all existing tests passing.
 - How the sidebar shows a contact's source.
 - The settings widgets for the source list.
 - Whether "Sync this contact" also appears in the file menu.
+- People graph colours (from the theme where possible), node sizes, force parameters, exact zoom thresholds.
