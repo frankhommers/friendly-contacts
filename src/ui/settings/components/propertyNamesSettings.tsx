@@ -28,6 +28,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const [rows, setRows] = React.useState<MappingRow[]>(() => getSettings().friendly.mapping);
   const saved = React.useRef<MappingRow[]>(rows);
   const [errors, setErrors] = React.useState<string[]>([]);
+  /** Bumped by `revert`: the inputs are remounted so they show the saved values even when `rows` did not change. */
+  const [revision, setRevision] = React.useState(0);
   const [mirror, setMirror] = React.useState(() => mirrorRelationsOnThisDevice(app));
 
   const save = async (mapping: MappingRow[]) => {
@@ -40,6 +42,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const revert = () => {
     setRows(saved.current);
     setErrors([]);
+    setRevision((r) => r + 1);
   };
 
   /**
@@ -55,7 +58,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     if (blockers.length > 0) {
       const targets = [...new Set(blockers.flatMap((b) => b.targets))];
       console.log(`Friendly Contacts: not renamed, ${targets.join(", ")} already has a value in:\n${blockers.map((b) => b.path).join("\n")}`);
-      new Notice(`Not renamed: ${blockers.length} notes already have ${targets.join(", ")}. See console.`);
+      const n = blockers.length;
+      new Notice(`Not renamed: ${n} ${n === 1 ? "note already has" : "notes already have"} ${targets.join(", ")}. See console.`);
       revert();
       return;
     }
@@ -160,7 +164,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i}>
+            <tr key={`${revision}-${i}`}>
               <td>
                 {isFixedProperty(row.property) ? (
                   <span className="vcf-mapping-readonly" title="This name cannot be changed">{row.property}</span>
