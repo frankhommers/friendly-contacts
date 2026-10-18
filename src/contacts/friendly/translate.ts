@@ -3,6 +3,7 @@
  * component) each property came from so a later patch can touch only that line.
  */
 
+import { readDate } from './dates';
 import { getParam, splitStructured, unescapeText, VCardLine } from './lines';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine } from './mapping';
 import { RelationContext, toLink } from './relations';
@@ -17,11 +18,6 @@ export interface Friendly {
 }
 
 const UUID_URN = /^urn:uuid:/i;
-
-function formatDate(value: string): string {
-  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : value;
-}
 
 /** Splits on unescaped commas and unescapes each item; empty items are dropped. */
 function splitList(value: string): string[] {
@@ -45,9 +41,8 @@ function fieldValue(row: FieldRow, line: VCardLine): FriendlyValue | undefined {
     const items = splitList(line.value);
     return items.length > 0 ? items : undefined;
   }
-  const text = unescapeText(line.value);
-  if (text === '') return undefined;
-  return row.format === 'date' ? formatDate(text) : text;
+  const text = row.format === 'date' ? readDate(line) : unescapeText(line.value);
+  return text === '' ? undefined : text;
 }
 
 function componentValue(row: ComponentRow, line: VCardLine): string | undefined {

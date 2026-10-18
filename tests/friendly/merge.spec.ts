@@ -92,6 +92,11 @@ describe('mergeFriendly photo', () => {
 });
 
 describe('coerceNoteProps', () => {
+  it('coerces dates from the note', () => {
+    const r = coerceNoteProps({ birthday: '--0315', anniversary: new Date('1975-03-12') }, DEFAULT_MAPPING);
+    expect(r.props).toEqual({ birthday: '--03-15', anniversary: '1975-03-12' });
+  });
+
   it('coerces yaml values from the note', () => {
     const r = coerceNoteProps(
       { mobile: 612345678, birthday: new Date('1975-03-12'), email: ['a', 'b'], spouse: null, 'met-via': 'x' },

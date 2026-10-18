@@ -36,15 +36,15 @@ describe('toFriendly', () => {
       'work-city': 'Utrecht',
       'work-postcode': '3542 AA',
       note: 'Met at the market\nlikes rye',
-      birthday: '1604-03-12',
+      birthday: '--03-12',
       uid: '1234ABCD-0000-4000-8000-000000000001',
       photo,
     });
   });
 
-  it('keeps apple year-less birthday', () => {
-    expect(translate(card('BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12')).props.birthday).toBe('1604-03-12');
-    expect(translate(card('BDAY:--0312')).props.birthday).toBe('--0312');
+  it('reads year-less birthdays as --MM-DD', () => {
+    expect(translate(card('BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12')).props.birthday).toBe('--03-12');
+    expect(translate(card('BDAY:--0312')).props.birthday).toBe('--03-12');
     expect(translate(card('BDAY:19840312')).props.birthday).toBe('1984-03-12');
   });
 

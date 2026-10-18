@@ -54,6 +54,26 @@ describe('patch', () => {
     expect(lines.filter((l) => l.raw === undefined).map((l) => l.name).sort()).toEqual(['REV', 'TEL']);
   });
 
+  it('hand-typed basic form on an apple line is unchanged', () => {
+    const { lines } = run({ ...before.props, birthday: '--0312' });
+    expect(lines.find((l) => l.name === 'BDAY')).toBe(base.find((l) => l.name === 'BDAY'));
+  });
+
+  it('changing a year-less apple birthday keeps the apple form', () => {
+    const { lines } = run({ ...before.props, birthday: '--04-01' });
+    expect(texts(lines)).toContain('BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-01');
+  });
+
+  it('adding a year drops the apple param', () => {
+    const { lines } = run({ ...before.props, birthday: '1984-03-12' });
+    expect(texts(lines)).toContain('BDAY:1984-03-12');
+  });
+
+  it('new card writes year-less as --MMDD', () => {
+    const { lines } = newCard({ name: 'X', birthday: '--03-15' }, DEFAULT_MAPPING, ctx);
+    expect(texts(lines)).toContain('BDAY:--0315');
+  });
+
   it('edit keeps group and params', () => {
     const { lines } = run({ ...before.props, mobile: '06-99999999' });
     const tel = lines.find((l) => l.group === 'item1' && l.name === 'TEL')!;

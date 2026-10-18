@@ -5,6 +5,7 @@
  */
 
 import { generateUUID } from '../../util/vcard';
+import { normalizeNoteDate, writeDate } from './dates';
 import { escapeText, joinStructured, serializeLine, splitStructured, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty } from './mapping';
@@ -112,6 +113,23 @@ function derivedName(props: Record<string, FriendlyValue>): string {
     .join(' ');
 }
 
+/** A date in the form the card's version and the line's own style expect; a same-date edit leaves the line alone. */
+function patchDate(s: State, row: FieldRow, prov: Provenance | undefined, before: string, after: string): void {
+  if (normalizeNoteDate(before) === normalizeNoteDate(after)) return;
+  if (normalizeNoteDate(after) === '') {
+    if (prov) removeLine(s, prov.line);
+    return;
+  }
+  const line = prov ? s.base[prov.line] : undefined;
+  const written = writeDate(after, line, cardVersion(s));
+  if (!line) {
+    addLine(s, row.write, written.value, written.params);
+    return;
+  }
+  const next = withValue(line, written.value, written.params);
+  if (serializeLine(next) !== serializeLine(line)) setLine(s, prov!.line, next);
+}
+
 function patchField(
   s: State,
   row: FieldRow,
@@ -120,6 +138,7 @@ function patchField(
   after: unknown,
   props: Record<string, FriendlyValue>,
 ): void {
+  if (row.format === 'date') return patchDate(s, row, prov, text(before), text(after));
   const isList = row.format === 'list';
   if (isList ? sameSet(list(before), list(after)) : text(before) === text(after)) return;
   if (row.property === 'photo') return patchPhoto(s, row, prov, text(before), text(after));

@@ -1,5 +1,6 @@
 /** Three-way merge of friendly properties and coercion of raw note values. No obsidian / src/context imports. */
 
+import { normalizeNoteDate } from './dates';
 import { isMappedProperty, MappingRow, rowForProperty } from './mapping';
 import { photoKey } from './photo';
 import { linkTarget } from './relations';
@@ -118,7 +119,9 @@ export function coerceNoteProps(
       if (Array.isArray(raw) && whole === undefined) {
         warnings.push(`Property "${property}" is a list but holds one value; using the first item "${items[0]}".`);
       }
-      props[property] = items[0];
+      const row = rowForProperty(property, rows)?.row;
+      const isDate = row?.kind === 'field' && row.format === 'date';
+      props[property] = isDate ? normalizeNoteDate(items[0]) : items[0];
     }
   }
   return { props, warnings };
