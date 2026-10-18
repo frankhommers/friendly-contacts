@@ -358,15 +358,18 @@ export async function importCard(
   return { uid: cleanUid(value("UID")), written };
 }
 
+/** 'skipped': a note with that name exists and was kept (the user chose Skip or closed the dialog); 'unnamed': the card has no name. */
+export type ImportOutcome = "imported" | "skipped" | "unnamed";
+
 /** Imports a card pulled from `source`: the note gets `source: <name>` and the card is that source's base for the next Sync. */
 export async function importRemoteCard(
   app: App,
   pulled: VCardRaw,
   meta: { href: string; etag?: string },
   source: Source,
-): Promise<boolean> {
+): Promise<ImportOutcome> {
   const imported = await importCard(app, pulled.raw, { source: source.name });
-  if (!imported) return false;
+  if (!imported) return "unnamed";
   // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
   if (imported.uid !== "" && imported.written) {
     await contactSyncState(source.id, app).set(imported.uid, {
@@ -375,7 +378,7 @@ export async function importRemoteCard(
       href: pulled.href || meta.href,
     });
   }
-  return true;
+  return imported.written ? "imported" : "skipped";
 }
 
 /** Moves every contact note in the contacts folder to `toFolder`, then points the setting at it. */

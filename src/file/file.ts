@@ -28,25 +28,32 @@ async function openCreatedFile(app: App, filePath: string) {
   }
 }
 
-async function handleFileCreation(app: App, filePath: string, content: string) {
+/** Writes the file; when it exists, waits for the user to pick Replace or Skip, so callers see the real outcome. */
+async function handleFileCreation(app: App, filePath: string, content: string): Promise<void> {
   const fileExists = await app.vault.adapter.exists(filePath);
 
-  if (fileExists) {
+  if (!fileExists) {
+    await app.vault.adapter.write(filePath, content);
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
     new FileExistsModal(app, filePath, async (action: "replace" | "skip") => {
-      if (action === "skip") {
-        new Notice("File creation skipped.");
-        return;
-      }
-
-      if (action === "replace") {
+      try {
+        if (action === "skip") {
+          new Notice("File creation skipped.");
+          return;
+        }
         await app.vault.adapter.write(filePath, content);
         await openCreatedFile(app, filePath);
         new Notice(`File overwritten.`);
+      } catch (error) {
+        reject(error);
+        return;
+      } finally {
+        resolve();
       }
     }).open();
-  } else {
-    await app.vault.adapter.write(filePath, content);
-  }
+  });
 }
 
 export async function createContactFile(

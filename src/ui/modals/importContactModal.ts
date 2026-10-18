@@ -52,11 +52,10 @@ async function importFromServer(app: App, item: RemoteContact): Promise<void> {
       new Notice(`Could not read ${item.fileName} from ${source.name}.`);
       return;
     }
-    if (await importRemoteCard(app, pulled, item, source)) {
-      new Notice(`Imported ${item.fileName} from ${source.name}.`);
-    } else {
-      new Notice(`Skipped ${item.fileName}: the card has no name.`);
-    }
+    const outcome = await importRemoteCard(app, pulled, item, source);
+    if (outcome === "imported") new Notice(`Imported ${item.fileName} from ${source.name}.`);
+    else if (outcome === "skipped") new Notice(`${item.fileName} was not imported: a note with that name already exists.`);
+    else new Notice(`Skipped ${item.fileName}: the card has no name.`);
   } catch (error) {
     console.error("Friendly Contacts: importing from the server failed", error);
     new Notice(`Importing ${item.fileName} failed, see console`);

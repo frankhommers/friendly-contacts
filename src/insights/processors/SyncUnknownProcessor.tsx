@@ -19,10 +19,10 @@ const ImportUnknownVcardToVault = async (queItem: InsightQueItem) => {
   const rawCard = await sync.pullFromRemote(source, queItem.data.href);
   if (rawCard) {
     // #90 for now made the same as in the rootView skipping the record without notifying the user.
-    if (!(await importRemoteCard(getApp(), rawCard, queItem.data, source))) {
-      console.warn("Skipping contact without name", rawCard.raw);
-    }
-    await insightQueueStore.remove(queItem);
+    const outcome = await importRemoteCard(getApp(), rawCard, queItem.data, source);
+    if (outcome === "unnamed") console.warn("Skipping contact without name", rawCard.raw);
+    // A card that was skipped because its note exists stays in the list.
+    if (outcome !== "skipped") await insightQueueStore.remove(queItem);
   }
 }
 

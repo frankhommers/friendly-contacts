@@ -39,6 +39,7 @@ export class FileExistsModal extends Modal {
 	filePath: string;
 	callback?: (action: "replace" | "skip") => void;
 	private reactRoot: Root | null = null;
+	private answered = false;
 
 	constructor(app: App, filePath:string, callback?: (action: "replace" | "skip") => void) {
 		super(app);
@@ -54,7 +55,10 @@ export class FileExistsModal extends Modal {
 		this.reactRoot.render(
 			<FileExistsModalContent
 				filePath={this.filePath}
-				onAction={(action) => this.callback?.(action)}
+				onAction={(action) => {
+					this.answered = true;
+					this.callback?.(action);
+				}}
 				onClose={() => this.close()}
 			/>
 		);
@@ -62,5 +66,10 @@ export class FileExistsModal extends Modal {
 
 	onClose() {
 		this.reactRoot?.unmount();
+		// Closing the dialog without choosing counts as Skip, so whoever waits for the answer is released.
+		if (!this.answered) {
+			this.answered = true;
+			this.callback?.("skip");
+		}
 	}
 }
