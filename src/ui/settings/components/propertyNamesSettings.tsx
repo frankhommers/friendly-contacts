@@ -1,7 +1,7 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
 import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
-import { notesToRename, renamePropertyInNotes } from "src/contacts/obsidianNotes";
+import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
@@ -45,10 +45,20 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   /**
    * Saves `next`. Property renames are always carried into the contact notes: a renamed property that is
    * left behind in the notes would no longer be synced, and Sync would delete its value on the server.
-   * When notes are affected the owner confirms first; cancel keeps the saved mapping.
+   * A rename that would overwrite a value in any note is refused as a whole: nothing is saved or renamed and the
+   * draft goes back to the saved mapping. Otherwise, when notes are affected the owner confirms first; cancel keeps
+   * the saved mapping.
    */
   const saveWithRenames = async (next: MappingRow[]) => {
     const renames = mappingRenames(saved.current, next);
+    const blockers = renames.length > 0 ? renameBlockers(app, renames) : [];
+    if (blockers.length > 0) {
+      const targets = [...new Set(blockers.flatMap((b) => b.targets))];
+      console.log(`Friendly Contacts: not renamed, ${targets.join(", ")} already has a value in:\n${blockers.map((b) => b.path).join("\n")}`);
+      new Notice(`Not renamed: ${blockers.length} notes already have ${targets.join(", ")}. See console.`);
+      revert();
+      return;
+    }
     const count = renames.length > 0 ? notesToRename(app, renames).length : 0;
     if (count === 0) {
       await save(next);
@@ -61,9 +71,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
       "Rename",
       async () => {
         await save(next);
-        const { renamed, skipped } = await renamePropertyInNotes(app, renames);
-        if (skipped.length > 0) console.log(`Friendly Contacts: not renamed, a new name already has a value:\n${skipped.join("\n")}`);
-        new Notice(`Renamed ${list} in ${renamed} contact notes` + (skipped.length > 0 ? `; ${skipped.length} skipped, see console` : ""));
+        const { renamed, failed } = await renamePropertyInNotes(app, renames);
+        if (failed.length > 0) console.log(`Friendly Contacts: could not rename in:\n${failed.join("\n")}`);
+        new Notice(`Renamed ${list} in ${renamed} contact notes` + (failed.length > 0 ? `; ${failed.length} failed, see console` : ""));
       },
       "Cancel",
       revert,

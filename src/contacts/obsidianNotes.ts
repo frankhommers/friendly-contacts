@@ -5,7 +5,7 @@
 
 import { App, normalizePath, Notice, parseYaml, TFile, TFolder } from "obsidian";
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
-import { convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
+import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
@@ -138,7 +138,7 @@ export async function convertContactNotes(app: App): Promise<{ converted: number
   return { converted, moved, failed };
 }
 
-/** Contact notes where the renames would move a value (and none that would be skipped). */
+/** Contact notes where the renames would move a value. */
 export function notesToRename(app: App, renames: Rename[]): TFile[] {
   return contactNotes(app).flatMap(({ file }) => {
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
@@ -147,16 +147,28 @@ export function notesToRename(app: App, renames: Rename[]): TFile[] {
   });
 }
 
-/** Applies the renames in all contact notes at once; notes where a target name already has a value are skipped. */
-export async function renamePropertyInNotes(app: App, renames: Rename[]): Promise<{ renamed: number; skipped: string[] }> {
+/** Contact notes where a rename would land on a name that already holds a value, with those names (from the cache). */
+export function renameBlockers(app: App, renames: Rename[]): { path: string; targets: string[] }[] {
+  const notes = contactNotes(app).flatMap(({ file }) => {
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+    return fm ? [{ path: file.path, fm }] : [];
+  });
+  return blockedNotes(notes, renames);
+}
+
+/**
+ * Applies the renames in all contact notes at once. Callers check `renameBlockers` first; a note that turns out
+ * blocked at write time anyway is left unchanged and reported as failed.
+ */
+export async function renamePropertyInNotes(app: App, renames: Rename[]): Promise<{ renamed: number; failed: string[] }> {
   let renamed = 0;
-  const skipped: string[] = [];
+  const failed: string[] = [];
   for (const { file } of contactNotes(app)) {
     try {
-      const outcome = { value: "none" as "renamed" | "skipped" | "none" };
+      const outcome = { value: "none" as "renamed" | "blocked" | "none" };
       await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         const result = renameAllInFrontmatter(fm, renames);
-        if ("skipped" in result) outcome.value = "skipped";
+        if ("blocked" in result) outcome.value = "blocked";
         else if (Object.keys(result.set).length > 0) {
           for (const key of result.remove) delete fm[key];
           for (const [key, value] of Object.entries(result.set)) fm[key] = value;
@@ -164,13 +176,13 @@ export async function renamePropertyInNotes(app: App, renames: Rename[]): Promis
         }
       });
       if (outcome.value === "renamed") renamed++;
-      else if (outcome.value === "skipped") skipped.push(file.path);
+      else if (outcome.value === "blocked") failed.push(file.path);
     } catch (error) {
-      skipped.push(file.path);
+      failed.push(file.path);
       console.error(`Friendly Contacts: could not rename properties in ${file.path}`, error);
     }
   }
-  return { renamed, skipped };
+  return { renamed, failed };
 }
 
 const REMOTE_TTL_MS = 5 * 60 * 1000;

@@ -1,5 +1,5 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { convertFrontmatter, renameAllInFrontmatter, renameInFrontmatter } from 'src/contacts/convertNotes';
+import { blockedNotes, convertFrontmatter, renameAllInFrontmatter, renameInFrontmatter } from 'src/contacts/convertNotes';
 import { hasVCardValues } from 'src/contacts/friendlyNotes';
 import { describe, expect, it } from 'vitest';
 
@@ -128,8 +128,8 @@ describe('renameInFrontmatter', () => {
     });
   });
 
-  it('skips a note where the new name already has a value', () => {
-    expect(renameInFrontmatter({ mobile: '06', cell: '07' }, 'mobile', 'cell')).toEqual({ skipped: true });
+  it('blocks a note where the new name already has a value', () => {
+    expect(renameInFrontmatter({ mobile: '06', cell: '07' }, 'mobile', 'cell')).toEqual({ blocked: ['cell'] });
   });
 
   it('does nothing for a note without the property', () => {
@@ -146,7 +146,28 @@ describe('renameAllInFrontmatter', () => {
     });
   });
 
-  it('skips a note where a target name holds a value that stays', () => {
-    expect(renameAllInFrontmatter({ mobile: '06', cell: '07' }, [{ from: 'mobile', to: 'cell' }])).toEqual({ skipped: true });
+  it('reports the target names that hold a value that stays', () => {
+    expect(renameAllInFrontmatter({ mobile: '06', cell: '07' }, [{ from: 'mobile', to: 'cell' }])).toEqual({ blocked: ['cell'] });
+  });
+});
+
+describe('blockedNotes', () => {
+  const notes = [
+    { path: 'a.md', fm: { mobile: '06' } },
+    { path: 'b.md', fm: { mobile: '07', cell: '08' } },
+    { path: 'c.md', fm: { mobile: '09', cell: '' } },
+    { path: 'd.md', fm: { cell: '01', mobile: '02' } },
+  ];
+
+  it('rename with an existing target is refused for all notes', () => {
+    expect(blockedNotes(notes, [{ from: 'mobile', to: 'cell' }])).toEqual([
+      { path: 'b.md', targets: ['cell'] },
+      { path: 'd.md', targets: ['cell'] },
+    ]);
+  });
+
+  it('refuses nothing when every target is free or moves away too', () => {
+    expect(blockedNotes(notes, [{ from: 'mobile', to: 'phone' }])).toEqual([]);
+    expect(blockedNotes(notes, [{ from: 'mobile', to: 'cell' }, { from: 'cell', to: 'phone' }])).toEqual([]);
   });
 });

@@ -96,23 +96,23 @@ export interface Rename {
   to: string;
 }
 
-/** Moves `from` (and `from-2`, `from-3`, ...) to `to`; skipped when the note already has a value under a target name. */
+/** Moves `from` (and `from-2`, `from-3`, ...) to `to`; blocked when the note already has a value under a target name. */
 export function renameInFrontmatter(
   fm: Frontmatter,
   from: string,
   to: string,
-): { set: Record<string, FriendlyValue>; remove: string[] } | { skipped: true } {
+): { set: Record<string, FriendlyValue>; remove: string[] } | { blocked: string[] } {
   return renameAllInFrontmatter(fm, [{ from, to }]);
 }
 
 /**
  * Applies several renames at once (so `cell -> mobile` plus `mobile -> phone` works): every `from` (and its
- * numbered extras) moves to its `to`. Skipped when a target name holds a value that is not itself moved away.
+ * numbered extras) moves to its `to`. Blocked (naming those targets) when a target name holds a value that is not itself moved away.
  */
 export function renameAllInFrontmatter(
   fm: Frontmatter,
   renames: Rename[],
-): { set: Record<string, FriendlyValue>; remove: string[] } | { skipped: true } {
+): { set: Record<string, FriendlyValue>; remove: string[] } | { blocked: string[] } {
   const set: Record<string, FriendlyValue> = {};
   const moved: string[] = [];
   const renameOf = (key: string): string | undefined => {
@@ -128,8 +128,18 @@ export function renameAllInFrontmatter(
     set[target] = value as FriendlyValue;
     moved.push(key);
   }
-  for (const target of Object.keys(set)) {
-    if (hasValue(fm[target]) && !moved.includes(target)) return { skipped: true };
-  }
+  const blocked = Object.keys(set).filter((target) => hasValue(fm[target]) && !moved.includes(target));
+  if (blocked.length > 0) return { blocked };
   return { set, remove: moved.filter((key) => !(key in set)) };
+}
+
+/** The notes where a rename would land on a name that already holds a value, with those names. Empty means all can go. */
+export function blockedNotes(
+  notes: { path: string; fm: Frontmatter }[],
+  renames: Rename[],
+): { path: string; targets: string[] }[] {
+  return notes.flatMap(({ path, fm }) => {
+    const result = renameAllInFrontmatter(fm, renames);
+    return "blocked" in result ? [{ path, targets: result.blocked }] : [];
+  });
 }
