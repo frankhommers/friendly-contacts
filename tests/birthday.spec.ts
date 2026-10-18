@@ -26,9 +26,22 @@ describe('nextBirthday', () => {
       expect(nextBirthday(value, today)).toBeUndefined();
     }
   });
+
+  it('accepts a non-string value, such as an unquoted YAML number', () => {
+    expect(nextBirthday(19801020, today)).toEqual(new Date(2026, 9, 20));
+    expect(nextBirthday(1985, today)).toBeUndefined();
+    expect(nextBirthday(null, today)).toBeUndefined();
+    expect(nextBirthday({}, today)).toBeUndefined();
+  });
 });
 
 describe('compareBirthdays', () => {
+  it('sorts non-string values without throwing', () => {
+    const values: unknown[] = [null, 1985, 19701019, '--10-20'];
+    const sorted = [...values].sort((a, b) => compareBirthdays(a, b, today));
+    expect(sorted).toEqual([19701019, '--10-20', 1985, null]);
+  });
+
   it('sorts unparseable birthdays last', () => {
     const values = ['circa 1950', '--10-20', undefined, '1985', '1970-10-19'];
     const sorted = [...values].sort((a, b) => compareBirthdays(a, b, today));

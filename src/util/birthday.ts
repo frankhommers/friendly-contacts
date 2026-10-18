@@ -18,12 +18,17 @@ function occurrenceIn(year: number, month: number, day: number): Date {
 	return new Date(year, month - 1, day);
 }
 
+/** Frontmatter may hold an unquoted YAML number (`BDAY: 19800315`) or null instead of text. */
+function asText(value: unknown): string {
+	return value === undefined || value === null ? '' : String(value).trim();
+}
+
 /**
  * The next occurrence (today included) of a birthday given as YYYY-MM-DD, YYYYMMDD, --MM-DD or --MMDD.
  * Anything else, or an invalid month/day, gives undefined.
  */
-export function nextBirthday(value: string, today: Date): Date | undefined {
-	const trimmed = value.trim();
+export function nextBirthday(value: unknown, today: Date): Date | undefined {
+	const trimmed = asText(value);
 	const match = BIRTHDAY_PATTERNS.map((pattern) => pattern.exec(trimmed)).find(Boolean);
 	if (!match) return undefined;
 
@@ -39,10 +44,10 @@ export function nextBirthday(value: string, today: Date): Date | undefined {
 /**
  * Sort comparator: soonest upcoming birthday first, then unparseable values, then missing ones. Ties compare equal.
  */
-export function compareBirthdays(a: string | undefined, b: string | undefined, today: Date): number {
-	const rank = (value: string | undefined, date: Date | undefined) => (date ? 0 : value ? 1 : 2);
-	const nextA = a ? nextBirthday(a, today) : undefined;
-	const nextB = b ? nextBirthday(b, today) : undefined;
+export function compareBirthdays(a: unknown, b: unknown, today: Date): number {
+	const rank = (value: unknown, date: Date | undefined) => (date ? 0 : asText(value) ? 1 : 2);
+	const nextA = nextBirthday(a, today);
+	const nextB = nextBirthday(b, today);
 	const rankA = rank(a, nextA);
 	const rankB = rank(b, nextB);
 
