@@ -3,6 +3,7 @@ import {
   findSourceByName,
   migrateSources,
   noteSourceId,
+  patchSource,
   planSync,
   removalBlocker,
   sourceNameFromUrl,
@@ -168,5 +169,15 @@ describe('address book list helpers', () => {
     expect(removalBlocker(a, 'a', 0)).toBe('Make another address book the default first.');
     expect(removalBlocker(a, 'b', 3)).toBe('3 contacts use A.');
     expect(removalBlocker(a, 'b', 0)).toBeUndefined();
+  });
+});
+
+describe('patchSource', () => {
+  it('a stale patch does not revert a newer rename', () => {
+    const current = { sources: [{ ...source('a', 'New'), enabled: false }], defaultSource: 'a' };
+    const next = patchSource(current, 'a', { enabled: true });
+    expect(next?.sources[0]).toMatchObject({ id: 'a', name: 'New', enabled: true });
+    expect(patchSource(current, 'gone', { enabled: true })).toBeUndefined();
+    expect(patchSource(current, 'a', { id: 'x', authKey: 'z' } as never)?.sources[0].id).toBe('a');
   });
 });

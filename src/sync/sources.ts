@@ -172,3 +172,17 @@ export function removalBlocker(source: Source, defaultSource: string, noteCount:
   if (noteCount > 0) return `${noteCount} contacts use ${source.name}.`;
   return undefined;
 }
+
+/** What a caller may change in a saved source: everything but its id. */
+export type SourcePatch = Partial<Omit<Source, 'id'>>;
+
+/**
+ * The settings with `patch` applied to the CURRENT entry of that id, so a change made from an older view of the
+ * source cannot revert fields it did not touch. undefined when the source no longer exists.
+ */
+export function patchSource<T extends SourceList>(settings: T, id: string, patch: SourcePatch): T | undefined {
+  const current = settings.sources.find((s) => s.id === id);
+  if (!current) return undefined;
+  const { id: _ignored, ...fields } = patch as SourcePatch & { id?: string };
+  return { ...settings, sources: settings.sources.map((s) => (s.id === id ? { ...current, ...fields } : s)) };
+}

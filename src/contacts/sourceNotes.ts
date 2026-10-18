@@ -2,8 +2,11 @@
 
 import type { App, TFile } from "obsidian";
 import { contactNotes, contactSyncState } from "src/contacts/obsidianNotes";
+import { getPluginDir } from "src/context/sharedAppContext";
+import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import type { Source } from "src/settings/settings";
-import { sameName } from "src/sync/sources";
+import { forgetAdapter } from "src/sync/adapters";
+import { patchSource, removalBlocker, sameName, SourcePatch, validateSourceName, withoutSource } from "src/sync/sources";
 
 /** The note's `source:` name; undefined when it is missing or empty. */
 function namedSource(app: App, file: TFile): string | undefined {
@@ -75,4 +78,55 @@ export async function renameSourceInNotes(
 export async function removeSourceState(app: App, sourceId: string, pluginDir: string): Promise<void> {
   const dir = `${pluginDir}/sync-state/${sourceId}`;
   if (await app.vault.adapter.exists(dir)) await app.vault.adapter.rmdir(dir, true);
+}
+
+/** Saves `patch` into the current entry of that source. Returns false when the source no longer exists. */
+export async function saveSourcePatch(id: string, patch: SourcePatch): Promise<boolean> {
+  const next = patchSource(getSettings(), id, patch);
+  if (!next) return false;
+  await setSettings(next);
+  return true;
+}
+
+/** Renames a source: the notes first, then the setting. Throws when the name is not valid or the source is gone. */
+export async function renameSource(
+  app: App,
+  id: string,
+  newName: string,
+): Promise<{ renamed: number; failed: string[] }> {
+  const { sources } = getSettings();
+  const source = sources.find((s) => s.id === id);
+  if (!source) throw new Error("This address book no longer exists.");
+  const name = newName.trim();
+  const problem = validateSourceName(name, sources, id);
+  if (problem) throw new Error(problem);
+  const result = await renameSourceInNotes(app, source.name, name);
+  if (!(await saveSourcePatch(id, { name }))) throw new Error("This address book no longer exists.");
+  return result;
+}
+
+/** Why a source cannot be removed right now (default, or notes use it); undefined when it can go. */
+export async function removalRefusal(app: App, id: string): Promise<string | undefined> {
+  const { sources, defaultSource } = getSettings();
+  const source = sources.find((s) => s.id === id);
+  if (!source) return "This address book no longer exists.";
+  const using = await notesUsingSource(app, source, sources, defaultSource);
+  return removalBlocker(source, defaultSource, using.length);
+}
+
+/**
+ * Removes a source: refused (with the reason) for the default and for a source in use; else the setting goes,
+ * then its cached adapter and its sync-state directory.
+ */
+export async function removeSource(app: App, id: string): Promise<{ removed: true } | { refused: string }> {
+  const refused = await removalRefusal(app, id);
+  if (refused) return { refused };
+  await setSettings(withoutSource(getSettings(), id));
+  forgetAdapter(id);
+  try {
+    await removeSourceState(app, id, getPluginDir());
+  } catch (error) {
+    console.error(`Friendly Contacts: could not delete the sync state of address book ${id}`, error);
+  }
+  return { removed: true };
 }

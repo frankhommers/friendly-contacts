@@ -1,7 +1,6 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
-import { notesNamingSource, notesUsingSource, removeSourceState, renameSourceInNotes } from "src/contacts/sourceNotes";
-import { getPluginDir } from "src/context/sharedAppContext";
+import { notesNamingSource, removalRefusal, removeSource, renameSource, saveSourcePatch } from "src/contacts/sourceNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import {
   connectionLabel,
@@ -11,8 +10,8 @@ import {
   usernameFromAuthKey,
 } from "src/settings/carddavCredentials";
 import { ContactsPluginSettings, Source } from "src/settings/settings";
-import { connectionProblem, forgetAdapter } from "src/sync/adapters";
-import { removalBlocker, uniqueSourceName, validateSourceName, withoutSource, withSource } from "src/sync/sources";
+import { connectionProblem } from "src/sync/adapters";
+import { SourcePatch, uniqueSourceName, validateSourceName, withSource } from "src/sync/sources";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import CarddavSettings, { CarddavSettingsInterface } from "src/ui/settings/components/carddavSettings";
 import { generateUUID } from "src/util/vcard";
@@ -31,13 +30,22 @@ interface SourceBlockProps {
   app: App;
   source: Source;
   isDefault: boolean;
-  /** Persists a changed source. */
-  onSave: (source: Source) => Promise<void>;
+  /** Saves only the fields that changed, into the current entry of this source. */
+  onSave: (patch: SourcePatch) => Promise<void>;
   onMakeDefault: () => Promise<void>;
-  onRemoved: () => void;
+  onChanged: () => void;
 }
 
-function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onRemoved }: SourceBlockProps) {
+/** Runs an action; an error becomes a Notice instead of an unhandled rejection. */
+async function attempt(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    new Notice(`Address book: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged }: SourceBlockProps) {
   const [name, setName] = React.useState(source.name);
   const [nameError, setNameError] = React.useState('');
   const [warning, setWarning] = React.useState('');
@@ -46,7 +54,7 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onRemoved 
 
   React.useEffect(() => { setName(source.name); }, [source.name]);
 
-  const commitName = async () => {
+  const commitName = () => attempt(async () => {
     const wanted = name.trim();
     if (wanted === source.name) {
       setName(wanted);
@@ -59,64 +67,57 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onRemoved 
       return;
     }
     setNameError('');
-    const count = notesNamingSource(app, source.name).length;
-    // Notes first, then the setting: a note that keeps the old name would point at an unknown address book.
-    const rename = async () => {
-      const { renamed, failed } = await renameSourceInNotes(app, source.name, wanted);
-      await onSave({ ...source, name: wanted });
+    const from = source.name;
+    const count = notesNamingSource(app, from).length;
+    const rename = () => attempt(async () => {
+      const { renamed, failed } = await renameSource(app, source.id, wanted);
+      onChanged();
       if (failed.length > 0) console.log(`Friendly Contacts: not renamed in:\n${failed.join('\n')}`);
       if (count > 0) {
-        new Notice(`Renamed ${source.name} to ${wanted} in ${renamed} contact notes`
+        new Notice(`Renamed ${from} to ${wanted} in ${renamed} contact notes`
           + (failed.length > 0 ? `; ${failed.length} failed, see console` : ''));
       }
-    };
+    });
     if (count === 0) {
       await rename();
       return;
     }
-    new ConfirmModal(app, `Rename ${source.name} to ${wanted} in ${count} contact notes?`, 'Rename', rename, 'Cancel', () => setName(source.name)).open();
-  };
+    new ConfirmModal(app, `Rename ${from} to ${wanted} in ${count} contact notes?`, 'Rename', rename, 'Cancel', () => setName(source.name)).open();
+  });
 
-  const enable = async () => {
+  const enable = () => attempt(async () => {
     const resolved = resolveCredentials(form, saved);
     if (!resolved.ok) {
       setWarning(resolved.error);
       return;
     }
-    const next: Source = { ...source, addressBookUrl: form.addressBookUrl, authType: resolved.authType, authKey: resolved.authKey, enabled: true };
-    const problem = await connectionProblem(next);
+    const connection = { addressBookUrl: form.addressBookUrl, authType: resolved.authType, authKey: resolved.authKey };
+    const problem = await connectionProblem(connection);
     if (problem) {
       setWarning(problem);
       return;
     }
     setWarning('');
-    setForm(formFromSource(next));
-    await onSave(next);
-  };
+    setForm(formFromSource({ ...source, ...connection }));
+    await onSave({ ...connection, enabled: true });
+  });
 
-  const disable = () => onSave({ ...source, enabled: false });
+  const disable = () => attempt(() => onSave({ enabled: false }));
 
-  const forgetSaved = () => onSave({ ...source, authKey: '' });
+  const forgetSaved = () => attempt(() => onSave({ authKey: '' }));
 
-  const remove = async () => {
-    const { sources, defaultSource } = getSettings();
-    const using = await notesUsingSource(app, source, sources, defaultSource);
-    const blocker = removalBlocker(source, defaultSource, using.length);
-    if (blocker) {
-      new Notice(blocker);
+  const remove = () => attempt(async () => {
+    const refused = await removalRefusal(app, source.id);
+    if (refused) {
+      new Notice(refused);
       return;
     }
-    new ConfirmModal(app, `Remove ${source.name}? Its synchronization state is deleted too.`, 'Remove', async () => {
-      await setSettings(withoutSource(getSettings(), source.id));
-      forgetAdapter(source.id);
-      try {
-        await removeSourceState(app, source.id, getPluginDir());
-      } catch (error) {
-        console.error(`Friendly Contacts: could not delete the sync state of ${source.name}`, error);
-      }
-      onRemoved();
-    }).open();
-  };
+    new ConfirmModal(app, `Remove ${source.name}? Its synchronization state is deleted too.`, 'Remove', () => attempt(async () => {
+      const outcome = await removeSource(app, source.id);
+      if ('refused' in outcome) new Notice(outcome.refused);
+      onChanged();
+    })).open();
+  });
 
   return (
     <div className="vcf-source">
@@ -138,11 +139,11 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onRemoved 
             aria-label="Address book name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onBlur={commitName}
+            onBlur={() => { void commitName(); }}
           />
           {source.enabled
-            ? <button className="mod-destructive" onClick={disable}>Disable</button>
-            : <button className="mod-cta" onClick={enable}>Enable</button>}
+            ? <button className="mod-destructive" onClick={() => { void disable(); }}>Disable</button>
+            : <button className="mod-cta" onClick={() => { void enable(); }}>Enable</button>}
         </div>
       </div>
 
@@ -151,7 +152,7 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onRemoved 
         setCarddavSettings={setForm}
         savedAuthType={hasStoredCredentials(saved) ? saved.authType : undefined}
         locked={source.enabled}
-        onForgetSaved={forgetSaved}
+        onForgetSaved={() => { void forgetSaved(); }}
       />
 
       <div className="setting-item">
@@ -164,9 +165,9 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onRemoved 
             name="vcf-default-source"
             aria-label={`Make ${source.name} the default address book`}
             checked={isDefault}
-            onChange={onMakeDefault}
+            onChange={() => { void attempt(onMakeDefault); }}
           />
-          <button className="mod-warning" onClick={remove}>Remove</button>
+          <button className="mod-warning" onClick={() => { void remove(); }}>Remove</button>
         </div>
       </div>
     </div>
@@ -210,9 +211,12 @@ export function SourcesSettings({ app }: { app: App }) {
           app={app}
           source={source}
           isDefault={source.id === state.defaultSource}
-          onSave={(next) => save(withSource(getSettings(), next))}
+          onSave={async (patch) => {
+            if (!(await saveSourcePatch(source.id, patch))) new Notice('This address book no longer exists.');
+            refresh();
+          }}
           onMakeDefault={() => save({ ...getSettings(), defaultSource: source.id })}
-          onRemoved={refresh}
+          onChanged={refresh}
         />
       ))}
       <div className="setting-item js-keep">
@@ -221,7 +225,7 @@ export function SourcesSettings({ app }: { app: App }) {
           <div className="setting-item-description">Each address book is a CardDAV server. New contacts go to the default one.</div>
         </div>
         <div className="setting-item-control">
-          <button className="mod-cta" onClick={add}>Add address book</button>
+          <button className="mod-cta" onClick={() => { void attempt(add); }}>Add address book</button>
         </div>
       </div>
     </>
