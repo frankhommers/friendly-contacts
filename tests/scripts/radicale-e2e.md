@@ -89,13 +89,13 @@ Install the build:
 1. Run `npm run build`.
 2. Copy `main.js`, `manifest.json` and `styles.css` to `<vault>/.obsidian/plugins/friendly-contacts/`.
 3. Enable the plugin.
-4. In its settings, set the CardDAV address book URL to `http://127.0.0.1:5299/frank/contacts/`, the user to `frank`
-   and the password to `secret`. Turn sync on.
+4. In its settings, click **Add address book** (or use the one already there). In its block enter the URL
+   `http://127.0.0.1:5299/frank/contacts/`, user `frank` and password `secret`, then click **Enable**.
 
 Then check:
 
 - [ ] **Import:** Insights panel → import the unknown remote contact. The note shows `name`, `mobile`, `email`,
-      `work-email`, `city`, … and no `X-CREATED`. `.obsidian/plugins/friendly-contacts/sync-state/` holds the card.
+      `work-email`, `city`, … and no `X-CREATED`. `.obsidian/plugins/friendly-contacts/sync-state/<book id>/` holds the card.
 - [ ] **Sync menu item:** edit `mobile` → sidebar → the contact's sync icon → **Sync**. With `curl`, only the TEL
       value (and REV) changed, and there is still one card.
 - [ ] **Server edit:** change the email with `curl -T`, then **Sync**. The note shows the new email.
@@ -114,11 +114,19 @@ Then check:
       "Contacts folder location" setting follows, and links still resolve.
 - [ ] **Property names settings:** Settings → **Property names**. Rename `mobile` to `gsm`. Accept the offer to
       rename it in the contact notes. **Sync** still writes the TEL line. *Reset to defaults* brings `mobile` back.
-- [ ] **Second address book:** create `/frank/family/` the same way as `contacts` (MKCOL) and put a card in it:
-      `curl -u frank:secret -T tests/fixtures/appleV3.vcf http://127.0.0.1:5299/frank/family/anna.vcf`, after
-      changing its `UID:` line to a new value. In settings add an address book, name it `Family`, URL
-      `http://127.0.0.1:5299/frank/family/`, user `frank`, password `secret`, and enable it. The default book stays
-      the first one.
+- [ ] **Second address book:** make a distinct card (new UID, name Anna) from the fixture without editing it, and
+      put it in a second book:
+
+      ```sh
+      curl -u frank:secret -X MKCOL http://127.0.0.1:5299/frank/family/ -H 'Content-Type: application/xml' --data \
+        '<?xml version="1.0"?><D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:set><D:prop><D:resourcetype><D:collection/><C:addressbook/></D:resourcetype></D:prop></D:set></D:mkcol>'
+      sed 's/1234ABCD-0000-4000-8000-000000000001/5E4A0000-0000-4000-8000-0000000000AA/; s/Jan/Anna/g' \
+        tests/fixtures/appleV3.vcf | curl -u frank:secret -T - http://127.0.0.1:5299/frank/family/anna.vcf
+      ```
+
+      In settings click **Add address book**. In the new block set the name `Family`, URL
+      `http://127.0.0.1:5299/frank/family/`, user `frank` and password `secret`, then click **Enable**. The default
+      book stays the first one.
 - [ ] **Import from the second book:** run the command *Import contact from server…*. The list shows both books'
       cards, each with its book name (`<name> · Family`). Import the Family card: the note has `source: Family`,
       and `sync-state/<Family's id>/` holds its card (not the first book's folder). Import another card from the
@@ -132,7 +140,7 @@ Then check:
 - [ ] **Rename a book:** Settings → rename `Family` to `Relatives`. The notes with `source: Family` now say
       `source: Relatives`, and **Sync** still works for them.
 - [ ] **Remove a book:** try to remove the default book: refused ("Make another address book the default first").
-      Try to remove a book that notes use: refused with the number of contacts. Remove a book no note uses: it goes,
-      and its `sync-state/<id>/` folder is no longer used.
+      Try to remove a book that notes use: refused with the number of contacts. Remove a book no note uses: it goes
+      and its `sync-state/<id>/` folder is deleted.
 - [ ] **Mirror relationships on this device:** turn it off, then reload the plugin. Adding a child no longer
       touches the other note.

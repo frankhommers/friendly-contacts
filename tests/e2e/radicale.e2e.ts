@@ -733,13 +733,20 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     await putCard(`${BOOK}twin.vcf`, card);
     await putCard(`${FAMILY}twin.vcf`, card);
     const note = await importFrom(bookList[0], `${BOOK}twin.vcf`);
+    const radicaleCopy = await serverCard(`${BOOK}twin.vcf`);
+    const radicaleEtag = await serverEtag(`${BOOK}twin.vcf`);
+    const radicaleBase = await state.get(uid);
     note.frontmatter.source = 'Family';
 
     const result = await syncAcrossBooks(note);
     expect(result.plan).toEqual({ kind: 'sync', sourceId: 'family' });
     expect(result.move).toBeUndefined();
     expect(result.outcome).not.toBe('failed');
-    expect(await serverCard(`${BOOK}twin.vcf`)).toContain(`UID:${uid}`);
+    // The other copy and its base are untouched; the named book now has a base too.
+    expect(await serverCard(`${BOOK}twin.vcf`)).toBe(radicaleCopy);
+    expect(await serverEtag(`${BOOK}twin.vcf`)).toBe(radicaleEtag);
+    expect(await state.get(uid)).toEqual(radicaleBase);
     expect(await serverCard(`${FAMILY}twin.vcf`)).toContain(`UID:${uid}`);
+    expect((await family.state.get(uid))?.href).toBe(`${FAMILY}twin.vcf`);
   });
 });
