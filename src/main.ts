@@ -1,7 +1,8 @@
 import "src/insights/insightLoading";
 
 import {Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
-import { setPluginDir } from "src/context/sharedAppContext";
+import { getPluginDir, setPluginDir } from "src/context/sharedAppContext";
+import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
 import { getSettings, initSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
@@ -25,7 +26,15 @@ export default class ContactsPlugin extends Plugin {
 	async onload() {
 
 		setPluginDir(this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`);
-		await initSettings(this.loadData.bind(this), this.saveData.bind(this));
+		const { migratedFrom } = await initSettings(this.loadData.bind(this), this.saveData.bind(this));
+		if (migratedFrom) {
+			// The sync bases of the single server move into the folder of the source made from it.
+			try {
+				await migrateSyncStateDir(obsidianFileStore(this.app), `${getPluginDir()}/sync-state`, migratedFrom);
+			} catch (error) {
+				console.error('Friendly Contacts: moving the sync state failed', error);
+			}
+		}
 		this.registerView(
 			CONTACTS_VIEW_CONFIG.type,
 			(leaf) => new ContactsView(leaf, this)

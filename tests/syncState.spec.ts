@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSyncState, FileStore } from "src/sync/syncState";
+import { createSyncState, FileStore, migrateSyncStateDir } from "src/sync/syncState";
 
 function memoryStore() {
   const files = new Map<string, string>();
@@ -7,6 +7,8 @@ function memoryStore() {
     read: async path => files.get(path),
     write: async (path, data) => { files.set(path, data); },
     remove: async path => { files.delete(path); },
+    list: async dir => [...files.keys()].filter(path => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/')),
+    rename: async (from, to) => { files.set(to, files.get(from)!); files.delete(from); },
   };
   return { files, store };
 }
@@ -19,6 +21,8 @@ function asyncMemoryStore() {
     read: async path => { await tick(); return files.get(path); },
     write: async (path, data) => { await tick(); files.set(path, data); },
     remove: async path => { await tick(); files.delete(path); },
+    list: async () => [],
+    rename: async () => {},
   };
   return { files, store };
 }
@@ -104,5 +108,75 @@ describe('SyncState', () => {
     await expect(state.set('a', entry)).rejects.toThrow('disk full');
     await state.set('b', entry);
     expect(Object.keys(JSON.parse(files.get('sync/index.json')!))).toEqual(['b']);
+  });
+});
+
+describe('sync state per source', () => {
+  it('sources do not share bases', async () => {
+    const { store } = memoryStore();
+    const a = createSyncState(store, 's/A');
+    const b = createSyncState(store, 's/B');
+    await a.set('abc', entry);
+    await b.set('abc', { ...entry, raw: 'other', etag: 'e2' });
+    expect((await a.get('abc'))?.raw).toBe(entry.raw);
+    expect((await b.get('abc'))?.etag).toBe('e2');
+    await a.remove('abc');
+    expect(await a.get('abc')).toBeUndefined();
+    expect(await b.get('abc')).toBeDefined();
+  });
+
+  it('moves old sync state once', async () => {
+    const { store, files } = memoryStore();
+    files.set('s/index.json', '{}');
+    files.set('s/a.vcf', 'A');
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(2);
+    expect([...files.keys()].sort()).toEqual(['s/id1/a.vcf', 's/id1/index.json']);
+    expect(files.get('s/id1/a.vcf')).toBe('A');
+    const before = new Map(files);
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(0);
+    expect(files).toEqual(before);
+  });
+
+  it('migrated bases are readable through the source state', async () => {
+    const { store } = memoryStore();
+    await createSyncState(store, 's').set('abc', entry);
+    await migrateSyncStateDir(store, 's', 'id1');
+    expect(await createSyncState(store, 's/id1').get('abc')).toEqual(entry);
+  });
+
+  it('does not touch another source folder or overwrite existing state', async () => {
+    const { store, files } = memoryStore();
+    files.set('s/id1/index.json', '{"x":1}');
+    files.set('s/id1/x.vcf', 'X');
+    files.set('s/index.json', 'old');
+    files.set('s/a.vcf', 'A');
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(0);
+    expect(files.get('s/id1/index.json')).toBe('{"x":1}');
+    expect(files.get('s/index.json')).toBe('old');
+  });
+
+  it('does nothing without old state', async () => {
+    const { store, files } = memoryStore();
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(0);
+    expect(files.size).toBe(0);
+  });
+
+  it('finishes an interrupted move: index.json moves last', async () => {
+    const { store, files } = memoryStore();
+    files.set('s/index.json', '{}');
+    files.set('s/a.vcf', 'A');
+    files.set('s/b.vcf', 'B');
+    let renames = 0;
+    const flaky: FileStore = {
+      ...store,
+      rename: async (from, to) => {
+        if (++renames === 2) throw new Error('crash');
+        await store.rename(from, to);
+      },
+    };
+    await expect(migrateSyncStateDir(flaky, 's', 'id1')).rejects.toThrow('crash');
+    expect(files.has('s/index.json')).toBe(true);
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(2);
+    expect([...files.keys()].sort()).toEqual(['s/id1/a.vcf', 's/id1/b.vcf', 's/id1/index.json']);
   });
 });

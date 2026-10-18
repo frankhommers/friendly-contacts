@@ -20,6 +20,7 @@ import { insightQueueStore } from "src/insights/insightsQueStore";
 import { adapterFor, defaultActiveSource } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
 import type { NoteIO } from "src/sync/syncContact";
+import { defaultSourceOf } from "src/sync/sources";
 import { createSyncState, obsidianFileStore, SyncState } from "src/sync/syncState";
 import { cleanUid, generateUUID } from "src/util/vcard";
 
@@ -249,13 +250,17 @@ export async function contactLookups(app: App): Promise<ContactLookups> {
   return { contacts: contactNotes(app), remote: await remoteContacts() };
 }
 
-let sharedState: { dir: string; state: SyncState } | undefined;
+const sharedStates = new Map<string, SyncState>();
 
-/** The one sync-state store (its writes are queued, so every caller must share it). */
-export function contactSyncState(app: App = getApp()): SyncState {
-  const dir = `${getPluginDir()}/sync-state`;
-  if (sharedState?.dir !== dir) sharedState = { dir, state: createSyncState(obsidianFileStore(app), dir) };
-  return sharedState.state;
+/** The sync-state store of one source (its writes are queued, so every caller must share it). */
+export function contactSyncState(sourceId: string, app: App = getApp()): SyncState {
+  const dir = `${getPluginDir()}/sync-state/${sourceId}`;
+  let state = sharedStates.get(dir);
+  if (!state) {
+    state = createSyncState(obsidianFileStore(app), dir);
+    sharedStates.set(dir, state);
+  }
+  return state;
 }
 
 /**
@@ -271,7 +276,9 @@ export async function friendlyNoteCard(
 ): Promise<string> {
   const ctx = new ObsidianRelationContext(app, file.path, lookups.contacts, lookups.remote, true);
   const uid = typeof props.uid === "string" ? props.uid.trim() : "";
-  const base = uid !== "" ? await contactSyncState(app).get(uid) : undefined;
+  // Export works without sync enabled: the default source's base is used even when that source is not active.
+  const source = defaultSourceOf(getSettings());
+  const base = uid !== "" && source ? await contactSyncState(source.id, app).get(uid) : undefined;
   let lines;
   if (base) {
     const baseLines = parseCard(base.raw);
@@ -301,17 +308,18 @@ export async function importCard(app: App, card: string): Promise<{ uid: string;
   return { uid: cleanUid(value("UID")), written };
 }
 
-/** Imports a card pulled from the server and stores it as the base for the next Sync. */
+/** Imports a card pulled from the server of `sourceId` and stores it as that source's base for the next Sync. */
 export async function importRemoteCard(
   app: App,
   pulled: VCardRaw,
   meta: { href: string; etag?: string },
+  sourceId: string | undefined,
 ): Promise<boolean> {
   const imported = await importCard(app, pulled.raw);
   if (!imported) return false;
   // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
-  if (imported.uid !== "" && imported.written) {
-    await contactSyncState(app).set(imported.uid, {
+  if (imported.uid !== "" && imported.written && sourceId !== undefined) {
+    await contactSyncState(sourceId, app).set(imported.uid, {
       raw: pulled.raw,
       etag: pulled.etag || meta.etag || "",
       href: pulled.href || meta.href,

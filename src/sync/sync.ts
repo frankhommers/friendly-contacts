@@ -20,6 +20,11 @@ function currentAdapter(): AdapterInterface | undefined {
   return source ? adapterFor(source) : undefined;
 }
 
+/** The id of the source whose sync state the operations here use (the default source, when it is active). */
+function currentSourceId(): string | undefined {
+  return defaultActiveSource()?.id;
+}
+
 function hasUidMatch(remoteContact:VCardMeta, currentContacts: Contact[]) {
   const uid = remoteContact.uid;
   if(uid === undefined) {
@@ -63,7 +68,8 @@ export async function getRawVcardFromRemote(href: string) {
 /** Deletes the contact's card on the server and forgets its sync state; true when deleted. */
 export async function deleteOnRemote(contact: Contact): Promise<boolean> {
   const adapter = currentAdapter();
-  if (!adapter) {
+  const sourceId = currentSourceId();
+  if (!adapter || sourceId === undefined) {
     return false;
   }
   const uid = cleanUid(contact.data['UID']);
@@ -94,7 +100,7 @@ export async function deleteOnRemote(contact: Contact): Promise<boolean> {
     new Notice(res.errorMessage || res.data || `Delete failed: HTTP ${res.status}`);
     return false;
   }
-  await contactSyncState().remove(uid);
+  await contactSyncState(sourceId).remove(uid);
   new Notice(`Deleted ${contact.file.basename} from the server; the note stays.`);
   return true;
 }
@@ -130,7 +136,8 @@ export async function syncContact(contact: Contact): Promise<SyncOutcome | undef
 
 async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
   const adapter = currentAdapter();
-  if (!adapter) {
+  const sourceId = currentSourceId();
+  if (!adapter || sourceId === undefined) {
     new Notice('Sync is not set up.');
     return undefined;
   }
@@ -146,7 +153,7 @@ async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
   const ctx = await relationContextFor(app, contact.file.path);
   const outcome = await syncNote(note, {
     adapter,
-    state: contactSyncState(app),
+    state: contactSyncState(sourceId, app),
     rows,
     ctx,
     notify: (message) => new Notice(message),

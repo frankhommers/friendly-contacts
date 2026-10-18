@@ -30,6 +30,8 @@ describe('sync state of legacy macOS UIDs', () => {
       read: async (path) => files.get(path),
       write: async (path, data) => void files.set(path, data),
       remove: async (path) => void files.delete(path),
+      list: async () => [],
+      rename: async () => {},
     };
     const state = createSyncState(store, 'sync');
     const entry = (raw: string) => ({ raw, etag: 'e', href: '/x.vcf' });

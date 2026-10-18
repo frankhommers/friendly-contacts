@@ -5,6 +5,9 @@ export interface FileStore {
   read(path: string): Promise<string | undefined>;
   write(path: string, data: string): Promise<void>;
   remove(path: string): Promise<void>;
+  /** Paths of the files directly in `dir`; empty when `dir` does not exist. */
+  list(dir: string): Promise<string[]>;
+  rename(from: string, to: string): Promise<void>;
 }
 
 export interface SyncStateEntry {
@@ -83,6 +86,27 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
   };
 }
 
+/**
+ * Moves the sync state of the single-server days (files directly in `root`) into `root/<sourceId>/`.
+ * Returns the number of files moved. Does nothing once `root/<sourceId>/index.json` exists.
+ * `index.json` moves last, so a move that was cut short is finished by the next run.
+ */
+export async function migrateSyncStateDir(store: FileStore, root: string, sourceId: string): Promise<number> {
+  const target = `${root}/${sourceId}`;
+  if ((await store.read(`${target}/index.json`)) !== undefined) {
+    return 0;
+  }
+  const files = await store.list(root);
+  const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+  const moving = files
+    .filter((path) => nameOf(path) === 'index.json' || nameOf(path).endsWith('.vcf'))
+    .sort((a, b) => Number(nameOf(a) === 'index.json') - Number(nameOf(b) === 'index.json'));
+  for (const path of moving) {
+    await store.rename(path, `${target}/${nameOf(path)}`);
+  }
+  return moving.length;
+}
+
 /** Thin wrapper over the vault adapter (hidden folders such as .obsidian are reachable). */
 export function obsidianFileStore(app: App): FileStore {
   const adapter = app.vault.adapter;
@@ -110,6 +134,13 @@ export function obsidianFileStore(app: App): FileStore {
       if (await adapter.exists(path)) {
         await adapter.remove(path);
       }
+    },
+    async list(dir) {
+      return (await adapter.exists(dir)) ? (await adapter.list(dir)).files : [];
+    },
+    async rename(from, to) {
+      await ensureParent(to);
+      await adapter.rename(from, to);
     },
   };
 }

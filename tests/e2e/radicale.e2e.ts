@@ -215,6 +215,8 @@ function memoryFileStore(): FileStore {
     read: async (path) => files.get(path),
     write: async (path, data) => void files.set(path, data),
     remove: async (path) => void files.delete(path),
+    list: async () => [],
+    rename: async () => {},
   };
 }
 
