@@ -121,13 +121,19 @@ export function findOneSided(
   return result;
 }
 
-/** Resolves a relation name from the server to a contact by its file name; exact match only. */
+/**
+ * Resolves a relation name from the server to a contact by its file name; exact match only.
+ * Entries are deduped by UID first (one contact in several address books counts once); a UID that
+ * has different file names across sources is ambiguous for each of those names.
+ */
 export function resolveRemoteName(
   name: string,
   remote: { uid: string; fileName: string }[],
 ): { uid: string } | { text: string } | { ambiguous: true } {
-  const matches = remote.filter((r) => r.fileName === name);
-  if (matches.length === 1) return { uid: matches[0].uid };
-  if (matches.length > 1) return { ambiguous: true };
-  return { text: name };
+  const namesOf = new Map<string, Set<string>>();
+  for (const r of remote) namesOf.set(r.uid, (namesOf.get(r.uid) ?? new Set()).add(r.fileName));
+  const uids = [...namesOf].filter(([, names]) => names.has(name));
+  if (uids.length === 0) return { text: name };
+  if (uids.length > 1 || uids[0][1].size > 1) return { ambiguous: true };
+  return { uid: uids[0][0] };
 }

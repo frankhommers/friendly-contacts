@@ -15,9 +15,10 @@ import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNo
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
 import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
+import type { Source } from "src/settings/settings";
 import { createContactFile, findContactFiles, isFileInFolder } from "src/file/file";
 import { insightQueueStore } from "src/insights/insightsQueStore";
-import { adapterFor, defaultActiveSource } from "src/sync/adapters";
+import { activeSources, adapterFor } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
 import type { NoteIO } from "src/sync/syncContact";
 import { defaultSourceOf } from "src/sync/sources";
@@ -32,6 +33,10 @@ export interface ContactNote {
 export interface RemoteContact {
   uid: string;
   fileName: string;
+  sourceId: string;
+  href: string;
+  etag: string;
+  org?: string;
 }
 
 const FRONTMATTER = /^---\r?\n((?:[\s\S]*?\r?\n)?)---[ \t]*(?:\r?\n|$)/;
@@ -169,25 +174,53 @@ export async function renamePropertyInNotes(app: App, renames: Rename[]): Promis
 }
 
 const REMOTE_TTL_MS = 5 * 60 * 1000;
-let remoteCache: { at: number; list: RemoteContact[] } | undefined;
+let remoteCache: { key: string; at: number; list: RemoteContact[] } | undefined;
 
-/** Contacts on the server with the file name they would get on import; cached for 5 minutes. */
-export async function remoteContacts(): Promise<RemoteContact[]> {
-  const source = defaultActiveSource();
-  if (!source) return [];
-  if (remoteCache && Date.now() - remoteCache.at < REMOTE_TTL_MS) return remoteCache.list;
-  try {
-    const metas = await adapterFor(source).getMetaList();
-    if (!Array.isArray(metas)) return [];
-    const list = metas.flatMap((meta) => {
-      const fileName = contactFileName(meta.n, meta.fn);
-      return meta.uid && fileName ? [{ uid: cleanUid(meta.uid), fileName }] : [];
-    });
-    remoteCache = { at: Date.now(), list };
-    return list;
-  } catch {
-    return [];
+export function clearRemoteContactsCache(): void {
+  remoteCache = undefined;
+}
+
+/** A failure text for the user: never the address book URL or its credentials. */
+function failureText(reason: unknown, source: Source): string {
+  let text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "unknown error";
+  for (const secret of [source.addressBookUrl, source.authKey]) {
+    if (secret) text = text.split(secret).join("…");
   }
+  return text;
+}
+
+/**
+ * Contacts on the servers of every active address book, with the file name they would get on import.
+ * Cached for 5 minutes per set of active sources; a source that cannot be read is skipped with a Notice.
+ */
+export async function remoteContacts(): Promise<RemoteContact[]> {
+  const sources = activeSources();
+  if (sources.length === 0) return [];
+  const key = JSON.stringify(sources.map((s) => [s.id, s.addressBookUrl, s.authType, s.authKey]));
+  if (remoteCache?.key === key && Date.now() - remoteCache.at < REMOTE_TTL_MS) return remoteCache.list;
+  const lists = await Promise.all(
+    sources.map(async (source): Promise<RemoteContact[]> => {
+      try {
+        const metas = await adapterFor(source).getMetaList();
+        if (!Array.isArray(metas)) {
+          const status = metas.errorMessage || (metas.status ? `HTTP ${metas.status}` : "unknown error");
+          throw new Error(status);
+        }
+        return metas.flatMap((meta) => {
+          const fileName = contactFileName(meta.n, meta.fn);
+          return meta.uid && fileName
+            ? [{ uid: cleanUid(meta.uid), fileName, sourceId: source.id, href: meta.href, etag: meta.etag, org: meta.org }]
+            : [];
+        });
+      } catch (error) {
+        new Notice(`Could not read ${source.name}: ${failureText(error, source)}`);
+        return [];
+      }
+    }),
+  );
+  const list = lists.flat();
+  remoteCache = { key, at: Date.now(), list };
+  return list;
 }
 
 /**
@@ -210,7 +243,9 @@ export class ObsidianRelationContext implements RelationContext {
     const id = cleanUid(uid);
     const note = this.contacts.find((c) => c.uid !== undefined && cleanUid(c.uid) === id);
     if (note) return this.app.metadataCache.fileToLinktext(note.file, this.sourcePath, true);
-    return this.remote.find((r) => r.uid === id)?.fileName;
+    // A contact in several address books under different names has no one name to show.
+    const names = new Set(this.remote.filter((r) => r.uid === id).map((r) => r.fileName));
+    return names.size === 1 ? [...names][0] : undefined;
   }
 
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true } {

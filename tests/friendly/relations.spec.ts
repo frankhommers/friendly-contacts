@@ -114,6 +114,21 @@ describe('resolveRemoteName', () => {
     { uid: '2', fileName: 'Jan de Vries' },
     { uid: '3', fileName: 'Anna' },
   ];
+  it('same uid same name in two sources is not ambiguous', () => {
+    const twice = [
+      { uid: '3', fileName: 'Anna' },
+      { uid: '3', fileName: 'Anna' },
+    ];
+    expect(resolveRemoteName('Anna', twice)).toEqual({ uid: '3' });
+  });
+  it('same uid different names is ambiguous', () => {
+    const differing = [
+      { uid: '3', fileName: 'Anna' },
+      { uid: '3', fileName: 'Anna Jansen' },
+    ];
+    expect(resolveRemoteName('Anna', differing)).toEqual({ ambiguous: true });
+    expect(resolveRemoteName('Anna Jansen', differing)).toEqual({ ambiguous: true });
+  });
   it('ambiguous remote name resolves to ambiguous', () => {
     expect(resolveRemoteName('Jan de Vries', remote)).toEqual({ ambiguous: true });
   });

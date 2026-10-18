@@ -3,7 +3,7 @@ import { Source } from "src/settings/settings";
 import { PushOptions, VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import { AppHttpResponse, PlatformHttpClient } from "src/util/platformHttpClient";
-import { cleanUid, fnOutOfString, nOutOfString, uidOutOfString } from "src/util/vcard";
+import { cleanUid, fnOutOfString, nOutOfString, orgOutOfString, uidOutOfString } from "src/util/vcard";
 
 
 const escapeXml = (text: string): string =>
@@ -60,7 +60,8 @@ export function carddavAdapter(source: AdapterSource): AdapterInterface {
       lastModified: lastModified ? new Date(lastModified) : new Date(),
       uid: uidOutOfString(adressData),
       fn: fnOutOfString(adressData),
-      n: nOutOfString(adressData)
+      n: nOutOfString(adressData),
+      org: orgOutOfString(adressData)
     };
   };
 
@@ -120,6 +121,7 @@ export function carddavAdapter(source: AdapterSource): AdapterInterface {
       <C:prop name="UID"/>
       <C:prop name="FN"/>
       <C:prop name="N"/>
+      <C:prop name="ORG"/>
     </C:address-data>
   </D:prop>
 </C:addressbook-query>`;
