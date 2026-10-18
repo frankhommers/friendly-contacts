@@ -5,7 +5,8 @@ import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
-import { locateCard, NoteIO, SyncDeps, syncContact } from 'src/sync/syncContact';
+import { canApply, Choice, resultProps } from 'src/sync/review';
+import { applySync, locateCard, NoteIO, prepareSync, PreparedSync, SyncDeps } from 'src/sync/syncContact';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -31,11 +32,12 @@ const lineTexts = (raw: string) => parseCard(raw).map(serializeLine);
 type Push = { vcard: VCardRaw; opts?: PushOptions; status: number };
 
 /** In-memory CardDAV server: cards keyed by href, etags e1, e2, ... */
-function fakeAdapter() {
+function fakeAdapter(book = '/frank/contacts/') {
   const cards = new Map<string, { raw: string; etag: string }>();
   const pushes: Push[] = [];
+  const deletes: { href: string; etag: string; status: number }[] = [];
   let counter = 0;
-  const nextEtag = () => `e${++counter}`;
+  const nextEtag = () => `${book.length}e${++counter}`;
   const ok = (status: number, headers: Record<string, string> = {}): AppHttpResponse => ({ status, data: '', headers, errorMessage: '' });
   const options = {
     /** Called before each PUT is applied; may change the server card (another client) or return a response. */
@@ -79,7 +81,7 @@ function fakeAdapter() {
       return { uid: uidOf(card.raw), raw: card.raw, etag: options.noEtags ? undefined : card.etag, href };
     },
     async push(vcard: VCardRaw, opts?: PushOptions): Promise<AppHttpResponse> {
-      const href = opts?.href ?? `/frank/contacts/${vcard.uid}.vcf`;
+      const href = opts?.href ?? `${book}${vcard.uid}.vcf`;
       const record: Push = { vcard, opts, status: 0 };
       pushes.push(record);
       const forced = options.beforePut?.(pushes.length);
@@ -96,33 +98,43 @@ function fakeAdapter() {
       record.status = current ? 204 : 201;
       return ok(record.status, options.etagOnPut ? { etag: `"${etag}"` } : {});
     },
-    delete: async () => ok(204),
+    async delete(href: string, etag: string) {
+      const current = cards.get(href);
+      const status = !current ? 404 : current.etag !== etag ? 412 : 204;
+      deletes.push({ href, etag, status });
+      if (status === 204) cards.delete(href);
+      return ok(status);
+    },
     getMetaList: async () => [],
     checkConnectivity: async () => ok(200),
   };
-  return { adapter, cards, pushes, options, put };
+  return { adapter, cards, pushes, deletes, options, put };
 }
 
 function memoryState(initial: Record<string, SyncStateEntry> = {}) {
   const entries = new Map(Object.entries(initial).map(([k, v]) => [cleanUid(k), v]));
+  const sets: string[] = [];
   const state: SyncState = {
     get: async (uid) => entries.get(cleanUid(uid)),
     set: async (uid, entry) => {
+      sets.push(uid);
       entries.set(cleanUid(uid), entry);
     },
     remove: async (uid) => {
       entries.delete(cleanUid(uid));
     },
   };
-  return { state, entries };
+  return { state, entries, sets };
 }
 
-function memoryNote(frontmatter: Record<string, unknown>, body = 'Private notes about Jan. SECRET-BODY-TEXT') {
+function memoryNote(frontmatter: Record<string, unknown>) {
   const note = {
     frontmatter: { ...frontmatter },
-    body,
+    basename: 'Jan de Vries',
     writes: [] as { set: Record<string, FriendlyValue>; remove: string[] }[],
-    appended: [] as string[],
+    renames: [] as string[],
+    /** Basenames that already exist next to the note. */
+    taken: new Set<string>(),
   };
   const io: NoteIO = {
     readFrontmatter: async () => ({ ...note.frontmatter }),
@@ -131,20 +143,24 @@ function memoryNote(frontmatter: Record<string, unknown>, body = 'Private notes 
       for (const key of remove) delete note.frontmatter[key];
       Object.assign(note.frontmatter, set);
     },
-    appendToBody: async (markdown) => {
-      note.appended.push(markdown);
-      note.body += `\n\n${markdown}`;
+    rename: async (newBasename) => {
+      if (note.taken.has(newBasename)) return 'exists';
+      note.renames.push(newBasename);
+      note.basename = newBasename;
+      return 'renamed';
     },
   };
   return { note, io };
 }
+
+const OPTS = { sourceName: 'Radicale' };
 
 function setup(
   opts: { server?: string; href?: string; base?: string; local?: Record<string, unknown>; ctx?: RelationContext } = {},
 ) {
   const fake = fakeAdapter();
   const serverEtag = opts.server !== undefined ? fake.put(opts.href ?? HREF, opts.server) : undefined;
-  const { state, entries } = memoryState(
+  const { state, entries, sets } = memoryState(
     opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF } } : {},
   );
   const { note, io } = memoryNote(opts.local ?? friendlyOf(V1));
@@ -155,44 +171,216 @@ function setup(
     rows: DEFAULT_MAPPING,
     ctx: opts.ctx ?? ctx,
     notify: (msg) => notices.push(msg),
-    now: () => new Date(2026, 9, 17, 9, 30),
   };
-  return { ...fake, entries, note, io, notices, deps, serverEtag, run: () => syncContact(io, deps) };
+  const prepare = () => prepareSync(io, deps, { sourceId: 'radicale' });
+  /** Prepare, then (when there is a review) apply with the preselections plus the given choices. */
+  async function sync(choices: Record<string, Choice> = {}, applyOpts: { rename?: string; sourceName: string } = OPTS) {
+    const prepared = await prepare();
+    if (prepared.kind !== 'review') return prepared;
+    return apply(prepared.prepared, choices, applyOpts);
+  }
+  function apply(prepared: PreparedSync, choices: Record<string, Choice> = {}, applyOpts: { rename?: string; sourceName: string } = OPTS) {
+    const map = new Map(Object.entries(choices));
+    expect(canApply(prepared.rows, map)).toBe(true);
+    const R = resultProps(prepared.rows, map, prepared.server?.friendly.props ?? {});
+    return applySync(prepared, R, io, deps, applyOpts);
+  }
+  return { ...fake, entries, sets, note, io, notices, deps, serverEtag, prepare, apply, sync };
 }
 
-describe('syncContact', () => {
-  it('unchanged on both sides writes nothing and stores the base', async () => {
+async function reviewOf(t: ReturnType<typeof setup>): Promise<PreparedSync> {
+  const result = await t.prepare();
+  if (result.kind !== 'review') throw new Error(`expected a review, got ${JSON.stringify(result)}`);
+  return result.prepared;
+}
+
+const changedRows = (prepared: PreparedSync) =>
+  prepared.rows.filter((r) => r.changed).map((r) => [r.property, r.preselect]);
+
+describe('prepareSync', () => {
+  it('unchanged on both sides is up to date and writes nothing', async () => {
     const t = setup({ server: V1, base: V1 });
-    expect(await t.run()).toBe('unchanged');
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     expect(t.pushes).toEqual([]);
     expect(t.note.writes).toEqual([]);
-    expect(t.note.appended).toEqual([]);
     expect(t.notices).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF });
+    expect(t.sets).toEqual([]);
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF });
   });
 
-  it('server-only change is pulled', async () => {
+  it('no base and equal stores the base only', async () => {
+    const t = setup({ server: V1 });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(V1);
+  });
+
+  it('no base and different makes conflicts', async () => {
+    const t = setup({ server: V1, local: { ...friendlyOf(V1), title: 'Chef', role: 'Owner' } });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([
+      ['title', undefined],
+      ['role', undefined],
+    ]);
+    expect(canApply(prepared.rows, new Map())).toBe(false);
+    // Nothing is written before Apply, not even a base.
+    expect(t.entries.size).toBe(0);
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+
+    // Without a base the user decides, and a PUT is allowed (with If-Match).
+    const result = await t.apply(prepared, { title: 'local', role: 'server' });
+    expect(result).toEqual({ kind: 'done', outcome: 'both' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.pushes[0].opts).toEqual({ href: HREF, ifMatch: t.serverEtag });
+    expect(friendlyOf(t.cards.get(HREF)!.raw)).toMatchObject({ title: 'Chef' });
+    expect(friendlyOf(t.cards.get(HREF)!.raw).role).toBeUndefined();
+    expect(t.note.frontmatter.role).toBeUndefined();
+    expect(t.note.frontmatter.title).toBe('Chef');
+  });
+
+  it('cancel path writes nothing', async () => {
+    const v2 = edit(V1, 'TITLE:Baker', 'TITLE:Master baker');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([
+      ['email', 'local'],
+      ['title', 'server'],
+    ]);
+    // Cancel = prepare without apply.
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.sets).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(v2);
+  });
+
+  it('both sides changed is a conflict row', async () => {
+    const v2 = edit(V1, 'type=pref:06-12345678', 'type=pref:06-11111111');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), mobile: '06-22222222' } });
+    const prepared = await reviewOf(t);
+    expect(prepared.rows.filter((r) => r.changed)).toEqual([
+      { property: 'mobile', server: '06-11111111', local: '06-22222222', preselect: undefined, kind: 'text', changed: true },
+    ]);
+    expect(prepared.uid).toBe(UID);
+    expect(prepared.target).toEqual({ sourceId: 'radicale' });
+    expect(prepared.server?.href).toBe(HREF);
+    expect(prepared.server?.etag).toBe(t.serverEtag);
+  });
+
+  it('a new note without uid gets no uid written before Apply', async () => {
+    const t = setup({ local: { name: 'Sem Jansen' } });
+    const prepared = await reviewOf(t);
+    expect(prepared.uid).toMatch(/^urn:uuid:[0-9a-f-]{36}$/);
+    expect(prepared.server).toBeUndefined();
+    expect(prepared.rows.filter((r) => r.changed).every((r) => r.preselect === 'local')).toBe(true);
+    expect(t.note.writes).toEqual([]);
+    expect(t.pushes).toEqual([]);
+    expect(t.entries.size).toBe(0);
+  });
+
+  it('a urn:uuid uid in the note matches a plain server UID', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), uid: `urn:uuid:${UID}` } });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+  });
+
+  it('numbered component and list-relation keys are no difference', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), 'street-2': 'Elders 2', 'children-2': ['[[X]]'] } });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('a legacy note with the apple placeholder year is up to date', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12' } });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('a relation written as a path is no difference', async () => {
+    const sem: RelationContext = {
+      uidToName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+      resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
+    };
+    const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
+    const t = setup({ server, base: server, local: { ...friendlyOf(server), spouse: '[[06 People/Sem de Vries|Sem]]' }, ctx: sem });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('note coercion warnings are notified', async () => {
+    // The note's list is read as its first item, which equals the server value.
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: ['Baker', 'Chef'] } });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.notices).toEqual([expect.stringContaining('title')]);
+  });
+
+  it('does not create when a base exists but the card is gone', async () => {
+    const t = setup({ base: V1 });
+    expect(await t.prepare()).toEqual({ kind: 'failed', message: expect.stringContaining('Jan de Vries was not found on the server') });
+    const nameless = setup({ base: V1, local: { uid: UID, mobile: '06-1' } });
+    expect(await nameless.prepare()).toEqual({ kind: 'failed', message: expect.stringContaining(`${UID} was not found on the server`) });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('lookup, pull and unexpected errors fail without writing', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
+    t.options.metaError = { status: 401, data: '', headers: {}, errorMessage: '401 Unauthorized' };
+    expect(await t.prepare()).toEqual({ kind: 'failed', message: expect.stringContaining('401 Unauthorized') });
+
+    const p = setup({ server: V1, base: V1 });
+    p.options.pullError = { status: 500, data: '', headers: {}, errorMessage: '500 Internal Server Error' };
+    expect(await p.prepare()).toEqual({ kind: 'failed', message: expect.stringContaining('500 Internal Server Error') });
+
+    const u = setup({ server: V1, base: V1 });
+    u.options.metaThrows = new Error('boom');
+    expect(await u.prepare()).toEqual({ kind: 'failed', message: expect.stringContaining('boom') });
+
+    const w = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
+    w.options.pullResult = { uid: undefined, raw: '', etag: 'x', href: HREF };
+    expect(await w.prepare()).toEqual({ kind: 'failed', message: expect.stringContaining('not the card with UID') });
+
+    for (const x of [t, p, u, w]) {
+      expect(x.pushes).toEqual([]);
+      expect(x.note.writes).toEqual([]);
+      expect(x.entries.get(UID)?.etag).toBe('old');
+    }
+  });
+
+  it('a card found under a different UID is a new card', async () => {
+    const other = edit(V1, `UID:${UID}`, `UID:${UID}-other`);
+    const t = setup({ server: other, href: '/frank/contacts/other.vcf' });
+    const prepared = await reviewOf(t);
+    expect(prepared.server).toBeUndefined();
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'created' });
+    expect(t.cards.get('/frank/contacts/other.vcf')!.raw).toBe(other);
+    expect(t.pushes[0].opts).toEqual({ ifNoneMatch: true });
+  });
+});
+
+describe('applySync', () => {
+  it('server-only change is pulled with the source written', async () => {
     const v2 = edit(V1, 'item1.TEL;type=CELL;type=VOICE;type=pref:06-12345678', 'item1.TEL;type=CELL;type=VOICE;type=pref:06-99999999');
     const t = setup({ server: v2, base: V1 });
-    expect(await t.run()).toBe('pulled');
-    expect(t.note.frontmatter.mobile).toBe('06-99999999');
-    expect(t.note.writes).toEqual([{ set: { mobile: '06-99999999' }, remove: [] }]);
+    expect(changedRows(await reviewOf(t))).toEqual([['mobile', 'server']]);
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+    expect(t.note.writes).toEqual([{ set: { mobile: '06-99999999', source: 'Radicale' }, remove: [] }]);
     expect(t.pushes).toEqual([]);
     expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
   it('server-side removal removes the note property', async () => {
     const v2 = edit(V1, 'TITLE:Baker\r\n', '');
-    const t = setup({ server: v2, base: V1 });
-    expect(await t.run()).toBe('pulled');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
     expect(t.note.writes).toEqual([{ set: {}, remove: ['title'] }]);
-    expect(t.note.frontmatter.title).toBeUndefined();
     expect(t.pushes).toEqual([]);
   });
 
-  it('local-only change is pushed with If-Match', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
-    expect(await t.run()).toBe('pushed');
+  it('local-only change is pushed with If-Match and untouched lines stay byte-identical', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl', source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
     expect(t.pushes).toHaveLength(1);
     const [put] = t.pushes;
     expect(put.opts).toEqual({ href: HREF, ifMatch: t.serverEtag });
@@ -203,7 +391,7 @@ describe('syncContact', () => {
     const changed = pushed.filter((l) => !lineTexts(V1).includes(l));
     expect(changed.map((l) => l.split(/[;:]/)[0]).sort()).toEqual(['EMAIL', 'REV']);
     expect(changed.find((l) => l.startsWith('EMAIL'))).toMatch(/:jan@new\.nl$/);
-    expect(friendlyOf(put.vcard.raw).email).toBe('jan@new.nl');
+    expect(put.vcard.raw).toBe(serializeCard(parseCard(put.vcard.raw)));
     expect(t.note.writes).toEqual([]);
     const stored = t.cards.get(HREF)!;
     expect(stored.raw).toBe(put.vcard.raw);
@@ -212,8 +400,8 @@ describe('syncContact', () => {
 
   it('local and server changes on different properties give both', async () => {
     const v2 = edit(V1, 'TITLE:Baker', 'TITLE:Master baker');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
-    expect(await t.run()).toBe('both');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl', source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'both' });
     expect(t.note.writes).toEqual([{ set: { title: 'Master baker' }, remove: [] }]);
     const server = friendlyOf(t.cards.get(HREF)!.raw);
     expect(server.title).toBe('Master baker');
@@ -223,72 +411,244 @@ describe('syncContact', () => {
   it('puts to the existing href, not uid.vcf', async () => {
     const href = '/frank/contacts/ABC-DEF.vcf';
     const t = setup({ server: V1, base: V1, href, local: { ...friendlyOf(V1), title: 'Chef' } });
-    expect(await t.run()).toBe('pushed');
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
     expect(t.pushes).toHaveLength(1);
     expect(t.pushes[0].opts?.href).toBe(href);
     expect(t.cards.has(HREF)).toBe(false);
     expect(t.entries.get(UID)?.href).toBe(href);
   });
 
-  it('conflict keeps server and appends callout', async () => {
+  it('a conflict goes the way the user chose', async () => {
     const v2 = edit(V1, 'type=pref:06-12345678', 'type=pref:06-11111111');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), mobile: '06-22222222' } });
-    expect(['both', 'pulled']).toContain(await t.run());
-    expect(t.note.frontmatter.mobile).toBe('06-11111111');
-    expect(t.note.appended).toHaveLength(1);
-    expect(t.note.appended[0]).toContain('mobile');
-    expect(t.note.appended[0]).toContain('06-22222222');
-    expect(t.note.appended[0]).toContain('2026-10-17 09:30');
-    expect(t.notices).toHaveLength(1);
-    expect(t.notices[0]).toContain('mobile');
-    expect(friendlyOf(t.cards.get(HREF)!.raw).mobile).toBe('06-11111111');
+    const local = { ...friendlyOf(V1), mobile: '06-22222222', source: 'Radicale' };
+
+    const server = setup({ server: v2, base: V1, local });
+    expect(await server.sync({ mobile: 'server' })).toEqual({ kind: 'done', outcome: 'pulled' });
+    expect(server.note.frontmatter.mobile).toBe('06-11111111');
+    expect(server.pushes).toEqual([]);
+
+    const mine = setup({ server: v2, base: V1, local });
+    expect(await mine.sync({ mobile: 'local' })).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(friendlyOf(mine.cards.get(HREF)!.raw).mobile).toBe('06-22222222');
+    expect(mine.note.writes).toEqual([]);
+
+    const custom = setup({ server: v2, base: V1, local });
+    expect(await custom.sync({ mobile: { custom: '06-33333333' } })).toEqual({ kind: 'done', outcome: 'both' });
+    expect(friendlyOf(custom.cards.get(HREF)!.raw).mobile).toBe('06-33333333');
+    expect(custom.note.frontmatter.mobile).toBe('06-33333333');
   });
 
-  it('412 retries once from a fresh server card', async () => {
+  it('apply aborts when the note changed', async () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
-    let otherEtag = '';
-    t.options.beforePut = (attempt) => {
-      // Another client edits the card between our GET and PUT; our If-Match then fails.
-      if (attempt === 1) otherEtag = t.put(HREF, edit(V1, 'TITLE:Baker', 'TITLE:Master baker'));
-    };
-    expect(await t.run()).toBe('both');
-    expect(t.pushes.map((p) => p.status)).toEqual([412, 204]);
-    expect(t.pushes[0].opts?.ifMatch).toBe(t.serverEtag);
-    expect(t.pushes[1].opts?.ifMatch).toBe(otherEtag);
-    const server = friendlyOf(t.cards.get(HREF)!.raw);
-    expect(server.title).toBe('Master baker');
-    expect(server.email).toBe('jan@new.nl');
-    expect(t.note.writes).toEqual([{ set: { title: 'Master baker' }, remove: [] }]);
-    expect(t.entries.get(UID)).toEqual({ raw: t.cards.get(HREF)!.raw, etag: t.cards.get(HREF)!.etag, href: HREF });
-  });
-
-  it('two 412s fail without writing anything', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
-    t.options.beforePut = () => ({ status: 412, data: '', headers: {}, errorMessage: '' });
-    expect(await t.run()).toBe('failed');
-    expect(t.pushes).toHaveLength(2);
-    expect(t.notices).toHaveLength(1);
-    expect(t.note.writes).toEqual([]);
-    expect(t.note.appended).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF });
-    expect(t.cards.get(HREF)!.raw).toBe(V1);
-  });
-
-  it('no base: the server wins, local-only values go to the callout and nothing is pushed', async () => {
-    const local = { name: 'Jan de Vries', uid: UID, mobile: '06-12345678', role: 'Owner', 'met-via': 'x' };
-    const t = setup({ server: V1, local });
-    expect(await t.run()).toBe('pulled');
+    const prepared = await reviewOf(t);
+    t.note.frontmatter.title = 'Typed meanwhile';
+    expect(await t.apply(prepared)).toEqual({ kind: 'stale', reason: 'note' });
     expect(t.pushes).toEqual([]);
-    expect(t.cards.get(HREF)!.raw).toBe(V1);
-    expect(t.note.frontmatter.email).toBe('jan@example.nl');
-    expect(t.note.frontmatter.role).toBeUndefined();
-    expect(t.note.frontmatter['met-via']).toBe('x');
-    expect(t.note.appended).toHaveLength(1);
-    expect(t.note.appended[0]).toContain('> - role: Owner');
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF });
+    expect(t.note.writes).toEqual([]);
+    expect(t.entries.get(UID)?.etag).toBe('old');
+
+    // A changed source counts too.
+    const s = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
+    const again = await reviewOf(s);
+    s.note.frontmatter.source = 'Family';
+    expect(await s.apply(again)).toEqual({ kind: 'stale', reason: 'note' });
+    expect(s.pushes).toEqual([]);
   });
 
-  it('first Sync of a converted upstream note keeps the server card and saves the stray values', async () => {
+  it('apply reopens on 412 and writes nothing', async () => {
+    const v2 = edit(V1, 'TITLE:Baker', 'TITLE:Master baker');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
+    const prepared = await reviewOf(t);
+    // Another client edits the card while the screen is open.
+    const other = edit(V1, 'TITLE:Baker', 'TITLE:Head baker');
+    t.put(HREF, other);
+    expect(await t.apply(prepared)).toEqual({ kind: 'stale', reason: 'server' });
+    expect(t.pushes.map((p) => p.status)).toEqual([412]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF });
+    expect(t.cards.get(HREF)!.raw).toBe(other);
+  });
+
+  it('a 412 on create is stale', async () => {
+    const t = setup({ local: { ...friendlyOf(V1), title: 'Chef' } });
+    const prepared = await reviewOf(t);
+    t.put(HREF, V1); // another client creates the card meanwhile
+    expect(await t.apply(prepared)).toEqual({ kind: 'stale', reason: 'server' });
+    expect(t.pushes[0].opts).toEqual({ ifNoneMatch: true });
+    expect(t.note.writes).toEqual([]);
+    expect(t.entries.size).toBe(0);
+    expect(t.cards.get(HREF)!.raw).toBe(V1);
+  });
+
+  it('never PUTs without If-Match when no etag is known', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
+    t.options.noEtags = true;
+    expect(await t.sync()).toEqual({ kind: 'failed', message: expect.stringContaining('ETag') });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.entries.get(UID)?.etag).toBe('old');
+  });
+
+  it('a PUT without etag stores the sent card with an empty etag', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
+    t.options.etagOnPut = false;
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF });
+  });
+
+  it('a failed PUT fails without writing the note or the base', async () => {
+    for (const forced of [
+      { status: 403, data: '', headers: {}, errorMessage: '403 Forbidden' },
+      { status: 409, data: '', headers: {}, errorMessage: '' },
+    ]) {
+      const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
+      t.options.beforePut = () => forced;
+      expect(await t.sync()).toEqual({ kind: 'failed', message: expect.stringContaining(String(forced.status)) });
+      expect(t.note.writes).toEqual([]);
+      expect(t.entries.get(UID)?.etag).toBe('old');
+    }
+  });
+
+  it('new contact is created with If-None-Match', async () => {
+    const t = setup({ local: { name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'created' });
+    expect(t.pushes).toHaveLength(1);
+    const [put] = t.pushes;
+    expect(put.opts).toEqual({ ifNoneMatch: true });
+    expect(put.vcard.uid).toBe('sem-0001');
+    const href = '/frank/contacts/sem-0001.vcf';
+    const card = t.cards.get(href)!;
+    expect(friendlyOf(card.raw)).toMatchObject({ name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' });
+    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href });
+    expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
+  });
+
+  it('new contact without uid gets it written at Apply', async () => {
+    const t = setup({ local: { name: 'Sem Jansen' } });
+    const prepared = await reviewOf(t);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'created' });
+    expect(t.note.writes).toHaveLength(1);
+    expect(t.note.writes[0]).toEqual({ set: { uid: prepared.uid, source: 'Radicale' }, remove: [] });
+    expect(friendlyOf(t.pushes[0].vcard.raw).uid).toBe(prepared.uid);
+    expect(t.entries.get(cleanUid(prepared.uid))?.href).toBe(`/frank/contacts/${cleanUid(prepared.uid)}.vcf`);
+  });
+
+  it('created card falls back to <uid>.vcf when the lookup after create fails', async () => {
+    const t = setup({ local: { name: 'Sem Jansen', uid: 'sem-0001' } });
+    t.options.metaAfterCreate = false;
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'created' });
+    expect(t.entries.get('sem-0001')?.href).toBe('sem-0001.vcf');
+  });
+
+  it('a created card settles the note too', async () => {
+    const t = setup({ local: { name: 'Sem Jansen', uid: 'sem-0001', 'mobile-2': '06-55555555' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'created' });
+    expect(t.note.frontmatter.mobile).toBe('06-55555555');
+    expect(t.note.frontmatter).not.toHaveProperty('mobile-2');
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+  });
+
+  it('local-only properties and the body never reach the server', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl', 'met-via': 'Conference' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(t.pushes[0].vcard.raw).not.toMatch(/MET-VIA/i);
+    expect(t.pushes[0].vcard.raw).not.toContain('Conference');
+    expect(t.note.frontmatter['met-via']).toBe('Conference');
+
+    const created = setup({ local: { name: 'Sem', uid: 'sem-0001', 'met-via': 'Conference' } });
+    expect(await created.sync()).toEqual({ kind: 'done', outcome: 'created' });
+    expect(created.pushes[0].vcard.raw).not.toMatch(/MET-VIA/i);
+    expect(created.note.frontmatter['met-via']).toBe('Conference');
+  });
+
+  it('patch and newCard warnings are notified', async () => {
+    const ambiguous: RelationContext = { ...ctx, resolveLink: () => ({ ambiguous: true }) };
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), friends: ['[[Piet]]'] }, ctx: ambiguous });
+    expect(await t.sync()).toMatchObject({ kind: 'done' });
+    expect(t.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
+    expect(lineTexts(t.pushes[0].vcard.raw)).toContain('RELATED;TYPE=friend;VALUE=text:Piet');
+
+    const n = setup({ local: { name: 'Sem', uid: 'sem-0001', spouse: '[[Piet]]' }, ctx: ambiguous });
+    expect(await n.sync()).toEqual({ kind: 'done', outcome: 'created' });
+    expect(n.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
+  });
+
+  it('a urn:uuid uid in the note is not rewritten and the card keeps its UID spelling', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), uid: `urn:uuid:${UID}`, title: 'Chef', source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain(`UID:${UID}`);
+    expect(t.note.writes).toEqual([]);
+    expect(t.note.frontmatter.uid).toBe(`urn:uuid:${UID}`);
+  });
+
+  it('numbered component and list-relation keys are left alone in the note', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef', 'street-2': 'Elders 2', 'children-2': ['[[X]]'] } });
+    expect(await t.sync()).toMatchObject({ kind: 'done' });
+    expect(t.note.frontmatter['street-2']).toBe('Elders 2');
+    expect(t.note.frontmatter['children-2']).toEqual(['[[X]]']);
+    expect(t.pushes[0].vcard.raw).not.toContain('Elders 2');
+  });
+
+  it('a legacy apple placeholder date takes a server change and settles to --MM-DD', async () => {
+    const v2 = edit(V1, 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12', 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-01');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12' } });
+    expect(changedRows(await reviewOf(t))).toEqual([['birthday', 'server']]);
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+    expect(t.pushes).toEqual([]);
+    expect(t.notices).toEqual([]);
+    expect(t.note.frontmatter.birthday).toBe('--04-01');
+  });
+
+  it('a legacy apple placeholder date with another change pushes only that change', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12', title: 'Chef' } });
+    expect(changedRows(await reviewOf(t))).toEqual([['title', 'local']]);
+    expect(await t.sync()).toMatchObject({ kind: 'done' });
+    expect(lineTexts(t.pushes[0].vcard.raw)).toContain('BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12');
+    expect(t.note.frontmatter.birthday).toBe('--03-12');
+  });
+
+  it('a category added on the server reaches the note as a list', async () => {
+    const v2 = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nCATEGORIES:family,bakers\r\n');
+    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+    expect(t.note.writes).toEqual([{ set: { categories: ['family', 'bakers'] }, remove: [] }]);
+  });
+
+  it('deleting mobile but keeping mobile-2 settles: the note is renumbered and the Apple label stays', async () => {
+    const v1 = edit(V1, 'TEL;type=WORK;type=VOICE', 'item3.TEL;type=CELL:06-22222222\r\nitem3.X-ABLabel:Werk mobiel\r\nTEL;type=WORK;type=VOICE');
+    const local: Record<string, unknown> = { ...friendlyOf(v1), source: 'Radicale' };
+    expect(local).toMatchObject({ mobile: '06-12345678', 'mobile-2': '06-22222222' });
+    delete local.mobile;
+    const t = setup({ server: v1, base: v1, local });
+
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'both' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter.mobile).toBe('06-22222222');
+    expect(t.note.frontmatter).not.toHaveProperty('mobile-2');
+    const card = lineTexts(t.cards.get(HREF)!.raw);
+    expect(card).toContain('item3.TEL;type=CELL:06-22222222');
+    expect(card).toContain('item3.X-ABLabel:Werk mobiel');
+    expect(card.join('\n')).not.toContain('06-12345678');
+
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+  });
+
+  it('a relation written as a path settles to the canonical link text', async () => {
+    const sem: RelationContext = {
+      uidToName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+      resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
+    };
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), children: ['[[06 People/Sem de Vries]]'], source: 'Radicale' }, ctx: sem });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'both' });
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
+    expect(t.note.frontmatter.children).toEqual(['[[Sem de Vries]]']);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+  });
+
+  it('first Sync of a converted upstream note: the user decides every difference', async () => {
     // Shaped like upstream output: it kept only the last TYPE (TEL[pref], TEL[VOICE], EMAIL[pref], ADR[pref]).
     const upstream: Record<string, unknown> = {
       'N.FN': 'de Vries',
@@ -309,363 +669,114 @@ describe('syncContact', () => {
     const fm: Record<string, unknown> = { ...upstream };
     for (const key of converted.remove) delete fm[key];
     Object.assign(fm, converted.set);
-    expect(fm).toMatchObject({ phone: '06-12345678', 'phone-2': '030-1234567', email: 'jan@example.nl', street: 'Dorpsstraat 1' });
 
     const t = setup({ server: V1, local: fm });
-    expect(await t.run()).toBe('pulled');
+    const prepared = await reviewOf(t);
+    expect(prepared.rows.filter((r) => r.changed).every((r) => r.preselect === undefined)).toBe(true);
+    expect(prepared.rows.find((r) => r.property === 'phone')).toMatchObject({ local: '06-12345678', server: undefined, changed: true });
+
+    const all = Object.fromEntries(prepared.rows.filter((r) => r.changed).map((r) => [r.property, 'server' as Choice]));
+    expect(await t.apply(prepared, all)).toEqual({ kind: 'done', outcome: 'pulled' });
     expect(t.pushes).toEqual([]);
     expect(t.cards.get(HREF)!.raw).toBe(V1);
-
     const mapped = Object.fromEntries(Object.entries(t.note.frontmatter).filter(([k]) => isMappedProperty(k, DEFAULT_MAPPING)));
     expect(mapped).toEqual(friendlyOf(V1));
     expect(t.note.frontmatter['met-via']).toBe('[[Piet]]');
-    expect(t.note.appended).toHaveLength(1);
-    const callout = t.note.appended[0];
-    expect(callout).toContain('> - phone: 06-12345678');
-    expect(callout).toContain('> - phone-2: 030-1234567');
-    expect(callout).not.toContain('jan@example.nl');
-    expect(callout).not.toContain('Dorpsstraat');
-
-    // The base is stored now: the next Sync is quiet.
-    expect(await t.run()).toBe('unchanged');
-    expect(t.pushes).toEqual([]);
-    expect(t.note.appended).toHaveLength(1);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
-  it('no base with a differing value keeps the server value as a conflict', async () => {
-    const t = setup({ server: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    expect(await t.run()).toBe('pulled');
-    expect(t.note.frontmatter.title).toBe('Baker');
-    expect(t.note.appended).toHaveLength(1);
-    expect(t.pushes).toEqual([]);
-  });
-
-  it('new contact is created', async () => {
-    const t = setup({ local: { name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' } });
-    expect(await t.run()).toBe('created');
-    expect(t.pushes).toHaveLength(1);
-    const [put] = t.pushes;
-    expect(put.opts).toEqual({ ifNoneMatch: true });
-    expect(put.vcard.uid).toBe('sem-0001');
-    const href = '/frank/contacts/sem-0001.vcf';
-    const card = t.cards.get(href)!;
-    expect(friendlyOf(card.raw)).toMatchObject({ name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' });
-    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href });
-    expect(t.note.writes).toEqual([]);
-  });
-
-  it('new contact without uid gets one written to the note first', async () => {
-    const t = setup({ local: { name: 'Sem Jansen' } });
-    expect(await t.run()).toBe('created');
-    expect(t.note.writes).toHaveLength(1);
-    const uid = t.note.writes[0].set.uid as string;
-    expect(uid).toMatch(/^urn:uuid:[0-9a-f-]{36}$/);
-    expect(t.note.writes[0]).toEqual({ set: { uid }, remove: [] });
-    expect(friendlyOf(t.pushes[0].vcard.raw).uid).toBe(uid);
-    expect(t.entries.get(cleanUid(uid))?.href).toBe(`/frank/contacts/${cleanUid(uid)}.vcf`);
-  });
-
-  it('created card falls back to <uid>.vcf when the lookup after create fails', async () => {
-    const t = setup({ local: { name: 'Sem Jansen', uid: 'sem-0001' } });
-    t.options.metaAfterCreate = false;
-    expect(await t.run()).toBe('created');
-    expect(t.entries.get('sem-0001')?.href).toBe('sem-0001.vcf');
-  });
-
-  it('local-only properties never reach the server', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl', 'met-via': 'Conference' } });
-    expect(await t.run()).toBe('pushed');
-    expect(t.pushes[0].vcard.raw).not.toMatch(/MET-VIA/i);
-    expect(t.pushes[0].vcard.raw).not.toContain('Conference');
-
-    const created = setup({ local: { name: 'Sem', uid: 'sem-0001', 'met-via': 'Conference' } });
-    expect(await created.run()).toBe('created');
-    expect(created.pushes[0].vcard.raw).not.toMatch(/MET-VIA/i);
-    expect(created.note.writes).toEqual([]);
-  });
-
-  it('body is never sent', async () => {
-    const v2 = edit(V1, 'type=pref:06-12345678', 'type=pref:06-11111111');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), mobile: '06-22222222', email: 'jan@new.nl' } });
-    await t.run();
-    const created = setup({ local: { name: 'Sem', uid: 'sem-0001' } });
-    await created.run();
-    const pushes = [...t.pushes, ...created.pushes];
-    expect(pushes.length).toBeGreaterThan(1);
-    for (const p of pushes) {
-      expect(p.vcard.raw).not.toContain('SECRET-BODY-TEXT');
-      expect(p.vcard.raw).not.toContain('Sync conflict');
-    }
-  });
-
-  it('a PUT without etag stores the sent card with an empty etag', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    t.options.etagOnPut = false;
-    expect(await t.run()).toBe('pushed');
-    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF });
-  });
-
-  it('never PUTs without If-Match when no etag is known', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    t.options.noEtags = true;
-    expect(await t.run()).toBe('failed');
-    expect(t.pushes).toEqual([]);
-    expect(t.notices).toEqual([expect.stringContaining('ETag')]);
-    expect(t.note.writes).toEqual([]);
-    expect(t.entries.get(UID)?.etag).toBe('old');
-  });
-
-  it('does not create when a base exists but the card is gone', async () => {
-    const t = setup({ base: V1 });
-    expect(await t.run()).toBe('failed');
-    expect(t.pushes).toEqual([]);
-    expect(t.notices).toEqual([expect.stringContaining('Jan de Vries was not found on the server')]);
-    expect(t.note.writes).toEqual([]);
-    expect(t.entries.get(UID)?.etag).toBe('old');
-
-    const nameless = setup({ base: V1, local: { uid: UID, mobile: '06-1' } });
-    expect(await nameless.run()).toBe('failed');
-    expect(nameless.notices).toEqual([expect.stringContaining(`${UID} was not found on the server`)]);
-  });
-
-  it('a failing callout append keeps the local value in the note', async () => {
-    const v2 = edit(V1, 'type=pref:06-12345678', 'type=pref:06-11111111');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), mobile: '06-22222222' } });
-    t.io.appendToBody = async () => {
-      throw new Error('note is read-only');
-    };
-    expect(await t.run()).toBe('failed');
-    expect(t.note.writes).toEqual([]);
-    expect(t.note.frontmatter.mobile).toBe('06-22222222');
-    expect(t.notices.at(-1)).toContain('note is read-only');
-    expect(t.entries.get(UID)?.etag).toBe('old');
-  });
-
-  it('patch warnings are notified', async () => {
-    const ambiguous: RelationContext = { ...ctx, resolveLink: () => ({ ambiguous: true }) };
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), friends: ['[[Piet]]'] }, ctx: ambiguous });
-    expect(await t.run()).toBe('pushed');
-    expect(t.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
-    expect(lineTexts(t.pushes[0].vcard.raw)).toContain('RELATED;TYPE=friend;VALUE=text:Piet');
-  });
-
-  it('newCard warnings are notified', async () => {
-    const ambiguous: RelationContext = { ...ctx, resolveLink: () => ({ ambiguous: true }) };
-    const t = setup({ local: { name: 'Sem', uid: 'sem-0001', spouse: '[[Piet]]' }, ctx: ambiguous });
-    expect(await t.run()).toBe('created');
-    expect(t.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
-  });
-
-  it('lookup errors fail without writing', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    t.options.metaError = { status: 401, data: '', headers: {}, errorMessage: '401 Unauthorized' };
-    expect(await t.run()).toBe('failed');
-    expect(t.notices).toEqual([expect.stringContaining('401 Unauthorized')]);
-    expect(t.pushes).toEqual([]);
-    expect(t.note.writes).toEqual([]);
-    expect(t.entries.get(UID)?.etag).toBe('old');
-
-    const p = setup({ server: V1, base: V1 });
-    p.options.pullError = { status: 500, data: '', headers: {}, errorMessage: '500 Internal Server Error' };
-    expect(await p.run()).toBe('failed');
-    expect(p.notices).toEqual([expect.stringContaining('500 Internal Server Error')]);
-    expect(p.note.writes).toEqual([]);
-  });
-
-  it('a failed PUT fails without writing the note or the base', async () => {
+  it('renames the note when asked, and skips with a warning when the name is taken', async () => {
     const v2 = edit(V1, 'TITLE:Baker', 'TITLE:Master baker');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl' } });
-    t.options.beforePut = () => ({ status: 403, data: '', headers: {}, errorMessage: '403 Forbidden' });
-    expect(await t.run()).toBe('failed');
-    expect(t.notices).toEqual([expect.stringContaining('403 Forbidden')]);
-    expect(t.note.writes).toEqual([]);
-    expect(t.entries.get(UID)?.etag).toBe('old');
-  });
-
-  it('a urn:uuid uid in the note matches a plain server UID without a conflict', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), uid: `urn:uuid:${UID}` } });
-    expect(await t.run()).toBe('unchanged');
-    expect(t.pushes).toEqual([]);
-    expect(t.note.appended).toEqual([]);
-    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain(`UID:${UID}`);
-  });
-
-  it('a card found under a different UID is not merged into', async () => {
-    const other = edit(V1, `UID:${UID}`, `UID:${UID}-other`);
-    const t = setup({ server: other, href: '/frank/contacts/other.vcf' });
-    expect(await t.run()).toBe('created');
-    expect(t.cards.get('/frank/contacts/other.vcf')!.raw).toBe(other);
-    expect(t.pushes[0].opts).toEqual({ ifNoneMatch: true });
-  });
-
-  it('note coercion warnings are notified', async () => {
-    // The note's list is read as its first item, which equals the server value: nothing to write.
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: ['Baker', 'Chef'] } });
-    expect(await t.run()).toBe('unchanged');
-    expect(t.notices).toEqual([expect.stringContaining('title')]);
-    expect(t.pushes).toEqual([]);
-  });
-
-  it('a conflict found again after a 412 is reported once', async () => {
-    const v2 = edit(V1, 'type=pref:06-12345678', 'type=pref:06-11111111');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), mobile: '06-22222222', email: 'jan@new.nl' } });
-    t.options.beforePut = (attempt) => (attempt === 1 ? { status: 412, data: '', headers: {}, errorMessage: '' } : undefined);
-    expect(await t.run()).toBe('both');
-    expect(t.pushes).toHaveLength(2);
-    expect(t.note.appended).toHaveLength(1);
-    expect(t.notices).toHaveLength(1);
-    expect(t.note.writes).toEqual([{ set: { mobile: '06-11111111' }, remove: [] }]);
-  });
-
-  it('a 412 on create retries through the lookup and merges', async () => {
-    const t = setup({ local: { ...friendlyOf(V1), title: 'Chef' } });
-    t.options.beforePut = (attempt) => {
-      // Another client creates the card between our lookup and our PUT.
-      if (attempt === 1) t.put(HREF, V1);
-    };
-    expect(await t.run()).toBe('pulled');
-    expect(t.pushes.map((p) => p.status)).toEqual([412]);
-    expect(t.pushes[0].opts).toEqual({ ifNoneMatch: true });
-    expect(t.note.frontmatter.title).toBe('Baker');
-    expect(t.note.appended).toHaveLength(1);
-    expect(t.cards.get(HREF)!.raw).toBe(V1);
-  });
-
-  it('a PUT rejected without an error message fails', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    t.options.beforePut = () => ({ status: 409, data: '', headers: {}, errorMessage: '' });
-    expect(await t.run()).toBe('failed');
-    expect(t.notices).toEqual([expect.stringContaining('409')]);
-    expect(t.note.writes).toEqual([]);
-    expect(t.entries.get(UID)?.etag).toBe('old');
-  });
-
-  it('a pulled card with another UID fails without writing', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    t.options.pullResult = { uid: undefined, raw: '', etag: 'x', href: HREF };
-    expect(await t.run()).toBe('failed');
-    expect(t.notices).toHaveLength(1);
-    expect(t.pushes).toEqual([]);
-    expect(t.note.writes).toEqual([]);
-    expect(t.entries.get(UID)?.etag).toBe('old');
-  });
-
-  it('an unexpected error fails with a notice', async () => {
-    const t = setup({ server: V1, base: V1 });
-    t.options.metaThrows = new Error('boom');
-    expect(await t.run()).toBe('failed');
-    expect(t.notices).toEqual([expect.stringContaining('boom')]);
-    expect(t.note.writes).toEqual([]);
-  });
-
-  it('a category added on the server reaches the note as a list', async () => {
-    const v2 = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nCATEGORIES:family,bakers\r\n');
     const t = setup({ server: v2, base: V1 });
-    expect(await t.run()).toBe('pulled');
-    expect(t.note.writes).toEqual([{ set: { categories: ['family', 'bakers'] }, remove: [] }]);
-  });
+    expect(await t.sync({}, { sourceName: 'Radicale', rename: 'Jan Bakker' })).toMatchObject({ kind: 'done' });
+    expect(t.note.renames).toEqual(['Jan Bakker']);
 
-  it('serializes the pushed card with CRLF', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
-    await t.run();
-    expect(t.pushes[0].vcard.raw).toBe(serializeCard(parseCard(t.pushes[0].vcard.raw)));
-  });
-
-  it('deleting mobile but keeping mobile-2 settles: the note is renumbered and the Apple label stays', async () => {
-    const v1 = edit(V1, 'TEL;type=WORK;type=VOICE', 'item3.TEL;type=CELL:06-22222222\r\nitem3.X-ABLabel:Werk mobiel\r\nTEL;type=WORK;type=VOICE');
-    const local = { ...friendlyOf(v1) };
-    expect(local).toMatchObject({ mobile: '06-12345678', 'mobile-2': '06-22222222' });
-    delete local.mobile;
-    const t = setup({ server: v1, base: v1, local });
-
-    expect(await t.run()).toBe('both');
-    expect(t.pushes).toHaveLength(1);
-    expect(t.note.frontmatter.mobile).toBe('06-22222222');
-    expect(t.note.frontmatter).not.toHaveProperty('mobile-2');
-    const card = lineTexts(t.cards.get(HREF)!.raw);
-    expect(card).toContain('item3.TEL;type=CELL:06-22222222');
-    expect(card).toContain('item3.X-ABLabel:Werk mobiel');
-    expect(card.join('\n')).not.toContain('06-12345678');
-
-    expect(await t.run()).toBe('unchanged');
-    expect(t.pushes).toHaveLength(1);
-    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('item3.X-ABLabel:Werk mobiel');
-  });
-
-  it('a relation written as a path settles to the canonical link text', async () => {
-    const sem: RelationContext = {
-      uidToName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
-      resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
-    };
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), children: ['[[06 People/Sem de Vries]]'] }, ctx: sem });
-    expect(await t.run()).toBe('both');
-    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
-    expect(t.note.frontmatter.children).toEqual(['[[Sem de Vries]]']);
-
-    expect(await t.run()).toBe('unchanged');
-    expect(t.pushes).toHaveLength(1);
-
-    // Already on the server, written as a path in the note: only the note changes.
-    const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
-    const p = setup({ server, base: server, local: { ...friendlyOf(server), spouse: '[[06 People/Sem de Vries|Sem]]' }, ctx: sem });
-    expect(await p.run()).toBe('pulled');
-    expect(p.pushes).toEqual([]);
-    expect(p.note.frontmatter.spouse).toBe('[[Sem de Vries]]');
-    expect(await p.run()).toBe('unchanged');
-  });
-
-  it('a created card settles the note too', async () => {
-    const t = setup({ local: { name: 'Sem Jansen', uid: 'sem-0001', 'mobile-2': '06-55555555' } });
-    expect(await t.run()).toBe('created');
-    expect(t.note.frontmatter.mobile).toBe('06-55555555');
-    expect(t.note.frontmatter).not.toHaveProperty('mobile-2');
-    expect(await t.run()).toBe('unchanged');
-    expect(t.pushes).toHaveLength(1);
-  });
-
-  it('numbered component and list-relation keys are left alone in the note', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), 'street-2': 'Elders 2', 'children-2': ['[[X]]'] } });
-    expect(await t.run()).toBe('unchanged');
-    expect(t.pushes).toEqual([]);
-    expect(t.note.frontmatter['street-2']).toBe('Elders 2');
-    expect(t.note.frontmatter['children-2']).toEqual(['[[X]]']);
-  });
-
-  it('a legacy note with the apple placeholder year pushes nothing and settles to --MM-DD', async () => {
-    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12' } });
-    expect(await t.run()).toBe('pulled');
-    expect(t.pushes).toEqual([]);
-    expect(t.note.appended).toEqual([]);
-    expect(t.note.frontmatter.birthday).toBe('--03-12');
-    expect(await t.run()).toBe('unchanged');
-  });
-
-  it('a legacy apple placeholder date in the note takes a server change as a clean pull', async () => {
-    const v2 = edit(V1, 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-12', 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-01');
-    const t = setup({ server: v2, base: V1, local: { ...friendlyOf(V1), birthday: '1604-03-12' } });
-    expect(await t.run()).toBe('pulled');
-    expect(t.pushes).toEqual([]);
-    expect(t.note.appended).toEqual([]);
-    expect(t.notices).toEqual([]);
-    expect(t.note.frontmatter.birthday).toBe('--04-01');
+    const taken = setup({ server: v2, base: V1 });
+    taken.note.taken.add('Jan Bakker');
+    expect(await taken.sync({}, { sourceName: 'Radicale', rename: 'Jan Bakker' })).toMatchObject({ kind: 'done' });
+    expect(taken.note.renames).toEqual([]);
+    expect(taken.notices).toEqual([expect.stringContaining('Jan Bakker')]);
+    expect(taken.note.frontmatter.title).toBe('Master baker');
+    expect(taken.entries.get(UID)?.raw).toBe(v2);
   });
 });
 
 describe('source is a note-only property', () => {
-  it('source is never sent to a created card and stays in the note', async () => {
+  it('source is never sent to a created card and is written as the target name', async () => {
     const t = setup({ local: { ...friendlyOf(V1), source: 'Family' } });
-    expect(await t.run()).toBe('created');
+    expect(await t.sync({}, { sourceName: 'Family' })).toEqual({ kind: 'done', outcome: 'created' });
     expect(t.pushes).toHaveLength(1);
     expect(t.pushes[0].vcard.raw).not.toMatch(/Family/);
     expect(t.note.frontmatter.source).toBe('Family');
-    expect(t.note.writes.every((w) => !('source' in w.set) && !w.remove.includes('source'))).toBe(true);
   });
 
-  it('source is never sent on a push and not removed by a pull', async () => {
+  it('source is never sent on a push', async () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl', source: 'Family' } });
-    expect(await t.run()).toBe('pushed');
+    expect(await t.sync({}, { sourceName: 'Family' })).toEqual({ kind: 'done', outcome: 'pushed' });
     expect(t.pushes[0].vcard.raw).not.toMatch(/Family/);
     expect(t.note.frontmatter.source).toBe('Family');
+  });
+});
+
+describe('moving between address books', () => {
+  function moveSetup(local: Record<string, unknown>) {
+    const from = fakeAdapter('/frank/contacts/');
+    const etag = from.put(HREF, V1);
+    const fromState = memoryState({ [UID]: { raw: V1, etag, href: HREF } });
+    const to = fakeAdapter('/frank/family/');
+    const toState = memoryState();
+    const { note, io } = memoryNote({ ...local, source: 'Family' });
+    const notices: string[] = [];
+    const deps: SyncDeps = { adapter: to.adapter, state: toState.state, rows: DEFAULT_MAPPING, ctx, notify: (m) => notices.push(m) };
+    const where = { sourceId: 'family', move: { from: { sourceId: 'radicale', href: HREF, etag }, adapter: from.adapter, state: fromState.state } };
+    return { from, to, fromState, toState, note, io, deps, where, notices, etag };
+  }
+
+  it('move writes the reviewed card to the new book and deletes the old', async () => {
+    const m = moveSetup({ ...friendlyOf(V1), mobile: '06-77777777' });
+    const result = await prepareSync(m.io, m.deps, m.where);
+    if (result.kind !== 'review') throw new Error(result.kind);
+    expect(result.prepared.move?.from).toEqual({ sourceId: 'radicale', href: HREF, etag: m.etag });
+    expect(result.prepared.target).toEqual({ sourceId: 'family' });
+    expect(changedRows(result.prepared)).toEqual([['mobile', 'local']]);
+    // Nothing yet.
+    expect(m.to.pushes).toEqual([]);
+    expect(m.from.deletes).toEqual([]);
+
+    const R = resultProps(result.prepared.rows, new Map(), result.prepared.server!.friendly.props);
+    expect(await applySync(result.prepared, R, m.io, m.deps, { sourceName: 'Family' })).toMatchObject({ kind: 'done', oldKept: false });
+    expect(m.from.pushes).toEqual([]);
+    expect(m.to.pushes).toHaveLength(1);
+    expect(m.to.pushes[0].opts).toEqual({ ifNoneMatch: true });
+    const moved = [...m.to.cards.values()][0];
+    expect(friendlyOf(moved.raw).mobile).toBe('06-77777777');
+    const changed = lineTexts(moved.raw).filter((l) => !lineTexts(V1).includes(l));
+    expect(changed.map((l) => l.split(/[;:]/)[0]).sort()).toEqual(['REV', 'item1.TEL']);
+    expect(m.from.cards.size).toBe(0);
+    expect(m.fromState.entries.size).toBe(0);
+    expect(m.toState.entries.get(UID)?.raw).toBe(moved.raw);
+    expect(m.note.frontmatter.source).toBe('Family');
+  });
+
+  it('a move without differences still opens the review', async () => {
+    const m = moveSetup(friendlyOf(V1));
+    const result = await prepareSync(m.io, m.deps, m.where);
+    expect(result.kind).toBe('review');
+    expect(m.fromState.sets).toEqual([]);
+    expect(m.toState.sets).toEqual([]);
+  });
+
+  it('a move whose old card changed meanwhile is stale and writes nothing', async () => {
+    const m = moveSetup({ ...friendlyOf(V1), mobile: '06-77777777' });
+    const result = await prepareSync(m.io, m.deps, m.where);
+    if (result.kind !== 'review') throw new Error(result.kind);
+    m.from.put(HREF, edit(V1, 'TITLE:Baker', 'TITLE:Head baker'));
+    const R = resultProps(result.prepared.rows, new Map(), result.prepared.server!.friendly.props);
+    expect(await applySync(result.prepared, R, m.io, m.deps, { sourceName: 'Family' })).toEqual({ kind: 'stale', reason: 'server' });
+    expect(m.to.pushes).toEqual([]);
+    expect(m.from.deletes).toEqual([]);
+    expect(m.note.writes).toEqual([]);
+    expect(m.fromState.entries.size).toBe(1);
   });
 });
 

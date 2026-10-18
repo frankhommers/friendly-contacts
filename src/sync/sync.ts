@@ -10,10 +10,9 @@ import { Source } from "src/settings/settings";
 import { activeSources, adapterFor, isSyncAvailable } from "src/sync/adapters";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
-import {moveCard} from "src/sync/moveCard";
 import {BaseHolder, CardLocation, noteSourceId, planSync, SyncPlan} from "src/sync/sources";
-import {locateCard, NoteIO, syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
-import {SyncStateEntry} from "src/sync/syncState";
+import {canApply, Choice, resultProps} from "src/sync/review";
+import {applySync, locateCard, NoteIO, prepareSync, SyncOutcome} from "src/sync/syncContact";
 import {ConfirmModal} from "src/ui/modals/confirmModal";
 import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
@@ -59,11 +58,6 @@ async function resolveNoteSource(app: App, frontmatter: Record<string, unknown>,
   if (!source) return { error: 'Sync is not set up' };
   const holders = baseIn.map((id) => ({ id, active: active.some((a) => a.id === id) }));
   return { source, explicit: named !== undefined, active, baseIn: holders };
-}
-
-/** Writes `source: <name>` into the note when it does not hold exactly that name. */
-async function writeSource(note: NoteIO, name: string): Promise<void> {
-  if ((await note.readFrontmatter()).source !== name) await note.writeProps({ source: name }, []);
 }
 
 function confirmMove(app: App, title: string): Promise<boolean> {
@@ -225,77 +219,78 @@ async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
     case 'adopt': {
       const target = byId(plan.sourceId);
       if (!target) return undefined;
-      const outcome = await syncWith(app, contact.file.path, note, target);
-      if (outcome === 'failed') return outcome;
-      await writeSource(note, target.name);
-      new Notice(`${name}: ${OUTCOME_TEXT[outcome]}${active.length > 1 ? ` (${target.name})` : ''}.`);
+      const outcome = await syncWith(app, contact.file.path, note, name, target);
+      if (outcome !== undefined && outcome !== 'failed') {
+        new Notice(`${name}: ${OUTCOME_TEXT[outcome]}${active.length > 1 ? ` (${target.name})` : ''}.`);
+      }
       return outcome;
     }
     case 'move': {
       const from = byId(plan.from.sourceId);
       const to = byId(plan.to);
       if (!from || !to) return undefined;
-      return moveNote(app, contact.file.path, note, name, uid, from, to);
+      if (!(await confirmMove(app, `Move ${name} from ${from.name} to ${to.name}?`))) return undefined;
+      const move = { from: plan.from, adapter: adapterFor(from), state: contactSyncState(from.id, app) };
+      return syncWith(app, contact.file.path, note, name, to, move, from.name);
     }
   }
 }
 
-/** One Sync of the note against one source's card, with that source's adapter and bases. */
-async function syncWith(app: App, path: string, note: NoteIO, source: Source): Promise<SyncOutcome> {
+/**
+ * Interim bridge until the review screen is wired in: prepare, then apply the preselected choices when no row
+ * needs a decision; with a conflict nothing is written.
+ */
+async function syncWith(
+  app: App,
+  path: string,
+  note: NoteIO,
+  name: string,
+  target: Source,
+  move?: { from: CardLocation; adapter: AdapterInterface; state: ReturnType<typeof contactSyncState> },
+  fromName?: string,
+): Promise<SyncOutcome | undefined> {
   const ctx = await relationContextFor(app, path);
-  const outcome = await syncNote(note, {
-    adapter: adapterFor(source),
-    state: contactSyncState(source.id, app),
+  const deps = {
+    adapter: adapterFor(target),
+    state: contactSyncState(target.id, app),
     rows: getSettings().friendly.mapping,
     ctx,
-    notify: (message) => new Notice(message),
-    now: () => new Date(),
-  });
+    notify: (message: string) => new Notice(message),
+  };
+  const prepared = await prepareSync(note, deps, { sourceId: target.id, move });
+  if (prepared.kind === 'failed') {
+    new Notice(`Sync failed: ${prepared.message}`);
+    return 'failed';
+  }
+  if (prepared.kind === 'upToDate') {
+    new Notice(`${name}: Up to date`);
+    return 'unchanged';
+  }
+  const choices = new Map<string, Choice>();
+  if (!canApply(prepared.prepared.rows, choices)) {
+    new Notice(`${name}: conflicts need the review screen; nothing was synced.`);
+    return undefined;
+  }
+  const R = resultProps(prepared.prepared.rows, choices, prepared.prepared.server?.friendly.props ?? {});
+  const result = await applySync(prepared.prepared, R, note, deps, { sourceName: target.name });
   await ctx.settle();
-  return outcome;
-}
-
-/**
- * Where the card just synced with `base` is, for a delete that only removes exactly that card: the base's ETag,
- * or (when the PUT answered without one) the server's ETag if the server card is still the synced one.
- */
-async function syncedCardLocation(adapter: AdapterInterface, sourceId: string, base: SyncStateEntry): Promise<CardLocation> {
-  if (base.etag) return { sourceId, href: base.href, etag: base.etag };
-  const pulled = await adapter.pull(base.href);
-  const same = pulled !== undefined && 'raw' in pulled && pulled.raw === base.raw;
-  return { sourceId, href: base.href, etag: same ? (pulled.etag ?? '') : '' };
-}
-
-/** Confirmed by the user: Sync against the old source, then move the resulting card to the note's source. */
-async function moveNote(app: App, path: string, note: NoteIO, name: string, uid: string, from: Source, to: Source): Promise<SyncOutcome | undefined> {
-  if (!(await confirmMove(app, `Move ${name} from ${from.name} to ${to.name}?`))) return undefined;
-
-  const outcome = await syncWith(app, path, note, from);
-  if (outcome === 'failed') return outcome; // Nothing is moved.
-  const fromAdapter = adapterFor(from);
-  const fromState = contactSyncState(from.id, app);
-  const base = await fromState.get(uid);
-  if (!base) {
-    new Notice(`Not moved: ${name} has no synced card in ${from.name}.`);
-    return 'failed';
+  switch (result.kind) {
+    case 'stale':
+      new Notice(result.reason === 'server' ? `${name} changed on the server meanwhile` : `${name} changed while reviewing`);
+      return undefined;
+    case 'failed':
+      new Notice(move ? `Not moved: ${name}: ${result.message}.` : `Sync failed: ${result.message}`);
+      return 'failed';
+    case 'done':
+      if (move) {
+        new Notice(
+          result.oldKept
+            ? `Moved ${name} to ${target.name}, but the old copy is still in ${fromName}; delete it there by hand.`
+            : `Moved ${name} to ${target.name}.`,
+        );
+      }
+      return result.outcome;
   }
-  const result = await moveCard(
-    base.raw,
-    uid,
-    { adapter: fromAdapter, state: fromState, location: await syncedCardLocation(fromAdapter, from.id, base) },
-    { adapter: adapterFor(to), state: contactSyncState(to.id, app) },
-  );
-  if (!result.ok) {
-    new Notice(`Not moved: ${name}: ${result.message}.`);
-    return 'failed';
-  }
-  await writeSource(note, to.name);
-  new Notice(
-    result.oldKept
-      ? `Moved ${name} to ${to.name}, but the old copy is still in ${from.name}; delete it there by hand.`
-      : `Moved ${name} to ${to.name}.`,
-  );
-  return outcome;
 }
 
 /** Pulls one card from the server of the given address book. */

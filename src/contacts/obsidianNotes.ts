@@ -56,8 +56,16 @@ export function noteIO(app: App, file: TFile): NoteIO {
         for (const key of remove) delete frontmatter[key];
       });
     },
-    async appendToBody(markdown: string) {
-      await app.vault.process(file, (data) => `${data.replace(/\s*$/, "")}\n\n${markdown}\n`);
+    async rename(newBasename: string) {
+      const folder = file.parent && !file.parent.isRoot() ? `${file.parent.path}/` : "";
+      const target = normalizePath(`${folder}${newBasename}.${file.extension}`);
+      if (target === file.path) return "renamed";
+      const existing = app.vault.getAbstractFileByPath(target);
+      // A case-only rename finds the note itself on a case-insensitive vault; that is no other file.
+      if (existing && existing !== file) return "exists";
+      // Through the file manager, so links to the note are updated.
+      await app.fileManager.renameFile(file, target);
+      return "renamed";
     },
   };
 }

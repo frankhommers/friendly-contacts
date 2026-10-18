@@ -1,26 +1,22 @@
 /**
- * One lossless Sync of a contact note with its CardDAV card.
+ * One Sync of a contact note with its CardDAV card, in two phases.
  *
- * Three-way merge of the last synced card (base), the server card and the note;
- * the note gets only the properties that changed, the server card is patched line
- * by line and written with If-Match. Nothing from obsidian or src/context: the
- * note, the server and the base store all come in through `deps`.
+ * `prepareSync` reads the note (L), the base (B) and the server card (S) and returns either "up to date" or the
+ * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists.
+ * `applySync` takes the result R built from the user's choices, checks nothing moved underneath, patches the card
+ * line by line and writes it with If-Match, then writes the note and stores the base. Nothing from obsidian or
+ * src/context: the note, the server and the base store all come in through `deps`.
  */
 
-import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
-import { isMappedProperty, MappingRow, rowForProperty } from 'src/contacts/friendly/mapping';
-import {
-  alignNoteDates,
-  Conflict,
-  coerceNoteProps,
-  mergeFriendly,
-  renderConflictCallout,
-  sameValue,
-} from 'src/contacts/friendly/merge';
+import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
+import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
+import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
-import { FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
+import { Friendly, FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
+import { moveCard } from 'src/sync/moveCard';
+import { isUpToDate, ReviewRow, reviewRows } from 'src/sync/review';
 import type { CardLocation } from 'src/sync/sources';
 import type { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import type { AppHttpResponse } from 'src/util/platformHttpClient';
@@ -29,26 +25,47 @@ import { cleanUid, generateUUID } from 'src/util/vcard';
 export interface NoteIO {
   readFrontmatter(): Promise<Record<string, unknown>>;
   writeProps(set: Record<string, FriendlyValue>, remove: string[]): Promise<void>;
-  appendToBody(markdown: string): Promise<void>;
+  /** Renames the note in its own folder; 'exists' (and nothing renamed) when that name is taken. */
+  rename(newBasename: string): Promise<'renamed' | 'exists'>;
 }
 
 export interface SyncDeps {
+  /** The adapter and base store of the source the card will live in (the target). */
   adapter: AdapterInterface;
   state: SyncState;
   rows: MappingRow[];
   ctx: RelationContext;
+  /** Warnings (note coercion, patch, a skipped rename); results come back as values. */
   notify(msg: string): void;
-  now(): Date;
 }
 
 export type SyncOutcome = 'unchanged' | 'pulled' | 'pushed' | 'both' | 'created' | 'failed';
 
 type Props = Record<string, FriendlyValue>;
 
-/** The card changed on the server between our GET and our PUT (412); start over once. */
-type Attempt = SyncOutcome | 'retry';
+export interface PreparedSync {
+  uid: string;
+  /** L as read (coerced, canonical relations, aligned dates). */
+  local: Props;
+  /** Mapped properties + source as read, for the staleness check at Apply. */
+  noteSnapshot: string;
+  server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string };
+  base?: Props;
+  rows: ReviewRow[];
+  /** Where the card will live. */
+  target: { sourceId: string };
+  /** The card is currently in another source (Part 1 'move'); Apply moves it to the target. */
+  move?: { from: CardLocation; adapter: AdapterInterface; state: SyncState };
+}
 
-/** A server or card problem; ends the sync as `failed` before anything is written. */
+export type PrepareResult = { kind: 'upToDate' } | { kind: 'review'; prepared: PreparedSync } | { kind: 'failed'; message: string };
+
+export type ApplyResult =
+  | { kind: 'done'; outcome: SyncOutcome; oldKept?: boolean }
+  | { kind: 'stale'; reason: 'note' | 'server' }
+  | { kind: 'failed'; message: string };
+
+/** A server or card problem; ends the sync as `failed`. */
 class SyncError extends Error {}
 
 const isResponse = (value: unknown): value is AppHttpResponse =>
@@ -60,81 +77,198 @@ export const succeeded = (res: AppHttpResponse): boolean => !res.errorMessage &&
 
 const cardUid = (raw: string): string => cleanUid(parseCard(raw).find((l) => !l.group && l.name === 'UID')?.value);
 
-export async function syncContact(note: NoteIO, deps: SyncDeps): Promise<SyncOutcome> {
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The note's mapped properties (coerced, keys sorted) and its `source`, as one comparable string. */
+function snapshotOf(frontmatter: Record<string, unknown>, rows: MappingRow[]): string {
+  const { props } = coerceNoteProps(frontmatter, rows);
+  const sorted = Object.keys(props)
+    .sort()
+    .map((key) => [key, props[key]]);
+  const source = frontmatter[RESERVED_PROPERTY];
+  return JSON.stringify({ props: sorted, source: source === undefined ? null : source });
+}
+
+/** The note's mapped properties a card can hold (unrepresentable keys such as `street-2` are left out). */
+function representable(props: Props, rows: MappingRow[]): Props {
+  return Object.fromEntries(Object.entries(props).filter(([p]) => !isUnrepresentable(p, rows)));
+}
+
+export async function prepareSync(
+  note: NoteIO,
+  deps: SyncDeps,
+  where: { sourceId: string; move?: { from: CardLocation; adapter: AdapterInterface; state: SyncState } },
+): Promise<PrepareResult> {
   try {
-    const { props: coerced, warnings } = coerceNoteProps(await note.readFrontmatter(), deps.rows);
+    const frontmatter = await note.readFrontmatter();
+    const noteSnapshot = snapshotOf(frontmatter, deps.rows);
+    const { props: coerced, warnings } = coerceNoteProps(frontmatter, deps.rows);
     for (const warning of warnings) deps.notify(warning);
-    const local: Props = Object.fromEntries(Object.entries(coerced).filter(([p]) => !isUnrepresentable(p, deps.rows)));
+    const local = representable(coerced, deps.rows);
 
     let uid = typeof local.uid === 'string' ? local.uid.trim() : '';
-    let lookup = true;
-    if (uid === '') {
+    const lookup = uid !== '';
+    if (!lookup) {
+      // Written to the note at Apply, never before.
       uid = `urn:uuid:${generateUUID()}`;
-      await note.writeProps({ uid }, []);
       local.uid = uid;
-      lookup = false;
     }
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const result = await syncOnce(note, deps, local, uid, lookup || attempt > 1);
-      if (result !== 'retry') return result;
+    const state = where.move ? where.move.state : deps.state;
+    const baseEntry = lookup ? await state.get(uid) : undefined;
+
+    let server: PreparedSync['server'];
+    if (where.move) {
+      const { from, adapter } = where.move;
+      const pulled = await pullCard(adapter, from.href, uid);
+      server = serverCard(pulled, from.href, pulled.etag || from.etag, deps);
+    } else {
+      const meta = lookup ? await findCard(deps.adapter, uid) : undefined;
+      if (meta) {
+        const pulled = await pullCard(deps.adapter, meta.href, uid);
+        server = serverCard(pulled, meta.href, pulled.etag || meta.etag, deps);
+      } else if (baseEntry) {
+        // A synced card that is gone (deleted, or not found by the lookup) is never silently recreated as a duplicate.
+        throw new SyncError(`${typeof local.name === 'string' ? local.name : uid} was not found on the server.`);
+      }
     }
-    deps.notify('Sync failed: the card keeps changing on the server (412 Precondition Failed). Try again.');
-    return 'failed';
+
+    const baseLines = baseEntry ? parseCard(baseEntry.raw) : undefined;
+    const baseCard = baseLines && { lines: baseLines, friendly: toFriendly(baseLines, deps.rows, deps.ctx) };
+    const base = baseCard?.friendly.props;
+
+    // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
+    const mine: Props = { ...local };
+    if (server?.friendly.props.uid !== undefined) mine.uid = server.friendly.props.uid;
+    if (typeof mine.uid === 'string') uid = mine.uid;
+    // A legacy Apple `1604-03-12` in the note is the cards' `--03-12`: no difference.
+    const aligned = alignNoteDates(mine, deps.rows, [baseCard, server && { lines: server.lines, friendly: server.friendly }]);
+    const L = canonicalRelations(aligned, deps);
+
+    const rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
+    if (server && !where.move && isUpToDate(rows)) {
+      // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
+      if (!baseEntry) await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href });
+      return { kind: 'upToDate' };
+    }
+
+    const prepared: PreparedSync = { uid, local: L, noteSnapshot, server, base, rows, target: { sourceId: where.sourceId } };
+    if (where.move) prepared.move = { ...where.move };
+    return { kind: 'review', prepared };
   } catch (e) {
-    deps.notify(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
-    return 'failed';
+    return { kind: 'failed', message: errorText(e) };
   }
 }
 
-async function syncOnce(note: NoteIO, deps: SyncDeps, local: Props, uid: string, lookup: boolean): Promise<Attempt> {
-  const meta = lookup ? await findCard(deps.adapter, uid) : undefined;
-  const base = await deps.state.get(uid);
-  if (!meta) {
-    // A synced card that is gone (deleted, or not found by the lookup) is never silently recreated as a duplicate.
-    if (base) throw new SyncError(`${typeof local.name === 'string' ? local.name : uid} was not found on the server.`);
-    return createCard(note, deps, local, uid);
+function serverCard(pulled: VCardRaw, href: string, etag: string | undefined, deps: SyncDeps): NonNullable<PreparedSync['server']> {
+  const lines = parseCard(pulled.raw);
+  return { lines, friendly: toFriendly(lines, deps.rows, deps.ctx), href, etag: etag ?? '', raw: pulled.raw };
+}
+
+export async function applySync(
+  prepared: PreparedSync,
+  R: Props,
+  note: NoteIO,
+  deps: SyncDeps,
+  opts: { rename?: string; sourceName: string },
+): Promise<ApplyResult> {
+  try {
+    // 1. Nothing moved in the note while the user was reviewing.
+    const frontmatter = await note.readFrontmatter();
+    if (snapshotOf(frontmatter, deps.rows) !== prepared.noteSnapshot) return { kind: 'stale', reason: 'note' };
+
+    // The card keeps the UID it was prepared with, whatever the choices say.
+    const result: Props = { ...R, uid: prepared.uid };
+    const { server } = prepared;
+
+    // 2. The card.
+    let final: Props;
+    let warnings: string[];
+    let stored: SyncStateEntry | undefined;
+    let serverChanged: boolean;
+    let oldKept: boolean | undefined;
+    if (!server) {
+      const card = newCard(result, deps.rows, deps.ctx);
+      const raw = serializeCard(card.lines);
+      const id = cleanUid(prepared.uid);
+      const res = await deps.adapter.push({ uid: id, raw }, { ifNoneMatch: true });
+      if (res.status === 412) return { kind: 'stale', reason: 'server' };
+      if (!succeeded(res)) return { kind: 'failed', message: describeResponse(res) };
+      stored = await createdBase(deps.adapter, id, raw, res);
+      final = toFriendly(card.lines, deps.rows, deps.ctx).props;
+      warnings = card.warnings;
+      serverChanged = true;
+    } else {
+      const patched = patch(server.lines, server.friendly, result, deps.rows, deps.ctx);
+      const raw = serializeCard(patched.lines);
+      warnings = patched.warnings;
+      serverChanged = raw !== serializeCard(server.lines);
+      final = serverChanged ? toFriendly(patched.lines, deps.rows, deps.ctx).props : server.friendly.props;
+      if (prepared.move) {
+        const moved = await applyMove(prepared, prepared.move, serverChanged ? raw : server.raw, deps);
+        if (moved.kind !== 'done') return moved;
+        oldKept = moved.oldKept;
+        serverChanged = true;
+        stored = undefined; // moveCard stored the base in the target.
+      } else if (serverChanged) {
+        if (!server.etag) {
+          return { kind: 'failed', message: `the server sent no ETag for ${server.href}; not writing without If-Match.` };
+        }
+        const res = await deps.adapter.push({ uid: cleanUid(prepared.uid), raw }, { href: server.href, ifMatch: server.etag });
+        if (res.status === 412) return { kind: 'stale', reason: 'server' };
+        if (!succeeded(res)) return { kind: 'failed', message: describeResponse(res) };
+        // Without an ETag in the response the base keeps etag ''; the base etag is never used for If-Match.
+        stored = { raw, etag: responseEtag(res), href: server.href };
+      } else {
+        stored = { raw: server.raw, etag: server.etag, href: server.href };
+      }
+    }
+
+    // 3. The note takes the card as it now is, so numbering (`mobile-2` -> `mobile`) and link text are canonical.
+    const noteChanged = await writeNote(note, deps, frontmatter, final, opts.sourceName);
+    for (const warning of warnings) deps.notify(warning);
+    if (opts.rename !== undefined) {
+      // The card and the note are written by now: a rename problem is a warning, the base is still stored.
+      try {
+        if ((await note.rename(opts.rename)) === 'exists') deps.notify(`Not renamed: a note named "${opts.rename}" already exists.`);
+      } catch (e) {
+        deps.notify(`Not renamed to "${opts.rename}": ${errorText(e)}`);
+      }
+    }
+
+    // 4. The base, under the target source.
+    if (stored) await deps.state.set(prepared.uid, stored);
+
+    const outcome: SyncOutcome = !server ? 'created' : serverChanged ? (noteChanged ? 'both' : 'pushed') : noteChanged ? 'pulled' : 'unchanged';
+    return oldKept === undefined ? { kind: 'done', outcome } : { kind: 'done', outcome, oldKept };
+  } catch (e) {
+    return { kind: 'failed', message: errorText(e) };
   }
+}
 
-  const server = await pullCard(deps.adapter, meta.href, uid);
-  const serverLines = parseCard(server.raw);
-  const serverFriendly = toFriendly(serverLines, deps.rows, deps.ctx);
-  const baseLines = base ? parseCard(base.raw) : undefined;
-  const baseCard = baseLines && { lines: baseLines, friendly: toFriendly(baseLines, deps.rows, deps.ctx) };
-  const baseProps = baseCard?.friendly.props;
-
-  // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
-  const mine: Props = { ...local };
-  if (serverFriendly.props.uid !== undefined) mine.uid = serverFriendly.props.uid;
-
-  // A legacy Apple `1604-03-12` in the note is the cards' `--03-12`: no edit for the merge. `mine` keeps the
-  // note's own value, so writeNote still moves the note to `--03-12`.
-  const aligned = alignNoteDates(mine, deps.rows, [baseCard, { lines: serverLines, friendly: serverFriendly }]);
-  const { merged, conflicts } = mergeFriendly(baseProps, serverFriendly.props, canonicalRelations(aligned, deps));
-  const patched = patch(serverLines, serverFriendly, merged, deps.rows, deps.ctx);
-  const raw = serializeCard(patched.lines);
-  const etag = server.etag || meta.etag;
-
-  let stored: SyncStateEntry = { raw: server.raw, etag, href: meta.href };
-  // Without a base the merge keeps the server card as it is; never PUT on a guess.
-  const serverChanged = baseProps !== undefined && raw !== serializeCard(serverLines);
-  if (serverChanged) {
-    if (!etag) throw new SyncError(`the server sent no ETag for ${meta.href}; not writing without If-Match.`);
-    const res = await deps.adapter.push({ uid: cleanUid(uid), raw }, { href: meta.href, ifMatch: etag });
-    if (res.status === 412) return 'retry';
-    if (!succeeded(res)) throw new SyncError(describeResponse(res));
-    // Without an ETag in the response the base keeps etag ''; the base etag is never used for If-Match.
-    stored = { raw, etag: responseEtag(res), href: meta.href };
+/**
+ * Moves the (patched) card from `move.from` to the target: create there, delete the old one, move the base.
+ * The old card must still be the one reviewed; otherwise nothing is written.
+ */
+async function applyMove(
+  prepared: PreparedSync,
+  move: NonNullable<PreparedSync['move']>,
+  raw: string,
+  deps: SyncDeps,
+): Promise<{ kind: 'done'; oldKept: boolean } | Extract<ApplyResult, { kind: 'stale' | 'failed' }>> {
+  const server = prepared.server as NonNullable<PreparedSync['server']>;
+  const current = await move.adapter.pull(move.from.href);
+  if (isResponse(current) || !current || current.raw !== server.raw || (current.etag && current.etag !== server.etag)) {
+    return { kind: 'stale', reason: 'server' };
   }
-
-  // The note takes the card as it now is on the server, so numbering (`mobile-2` -> `mobile`) and link text
-  // are canonical and the next Sync finds nothing to do.
-  const final = serverChanged ? toFriendly(patched.lines, deps.rows, deps.ctx).props : serverFriendly.props;
-  const noteChanged = await writeNote(note, deps, mine, final, conflicts);
-  for (const warning of patched.warnings) deps.notify(warning);
-  await deps.state.set(uid, stored);
-  if (serverChanged) return noteChanged ? 'both' : 'pushed';
-  return noteChanged ? 'pulled' : 'unchanged';
+  const result = await moveCard(
+    raw,
+    prepared.uid,
+    { adapter: move.adapter, state: move.state, location: { ...move.from, etag: server.etag } },
+    { adapter: deps.adapter, state: deps.state },
+  );
+  if (!result.ok) return { kind: 'failed', message: result.message };
+  return { kind: 'done', oldKept: result.oldKept };
 }
 
 /**
@@ -163,24 +297,6 @@ function isUnrepresentable(property: string, rows: MappingRow[]): boolean {
   const found = rowForProperty(property, rows);
   if (!found || found.ordinal < 2) return false;
   return found.row.kind === 'component' || (found.row.kind === 'relation' && !found.row.single);
-}
-
-/** No card on the server: create one from the note; never overwrites (If-None-Match). */
-async function createCard(note: NoteIO, deps: SyncDeps, local: Props, uid: string): Promise<Attempt> {
-  const card = newCard(local, deps.rows, deps.ctx);
-  const raw = serializeCard(card.lines);
-  const id = cleanUid(uid);
-  const res = await deps.adapter.push({ uid: id, raw }, { ifNoneMatch: true });
-  if (res.status === 412) return 'retry';
-  if (!succeeded(res)) throw new SyncError(describeResponse(res));
-
-  const stored = await createdBase(deps.adapter, id, raw, res);
-
-  // Like after any sync, the note takes the card's canonical properties (e.g. `mobile-2` alone becomes `mobile`).
-  await writeNote(note, deps, local, toFriendly(card.lines, deps.rows, deps.ctx).props, []);
-  for (const warning of card.warnings) deps.notify(warning);
-  await deps.state.set(uid, stored);
-  return 'created';
 }
 
 /**
@@ -246,29 +362,26 @@ async function pullCard(adapter: AdapterInterface, href: string, uid: string): P
 const responseEtag = (res: AppHttpResponse): string => res.headers?.etag?.replace(/"/g, '') ?? '';
 
 /**
- * Saves the user's conflicting values in a callout first, then makes the note's mapped properties equal to
- * `final` (the card's friendly properties), so a failed append never loses a value. Returns whether
- * properties changed.
+ * Makes the note's mapped properties equal to `final` (the card's friendly properties), touching only what
+ * differs from the note as it is now, and writes `source: <sourceName>`. Returns whether mapped properties changed.
  */
 async function writeNote(
   note: NoteIO,
   deps: SyncDeps,
-  local: Props,
+  frontmatter: Record<string, unknown>,
   final: Props,
-  conflicts: Conflict[],
+  sourceName: string,
 ): Promise<boolean> {
+  const current = representable(coerceNoteProps(frontmatter, deps.rows).props, deps.rows);
   const set: Props = {};
   for (const [property, value] of Object.entries(final)) {
-    if (!sameValue(value, local[property], property)) set[property] = value;
+    // `urn:uuid:X` in the note and `X` on the card are the same UID: the note keeps its spelling.
+    if (property === 'uid' && typeof value === 'string' && typeof current.uid === 'string' && cleanUid(value) === cleanUid(current.uid)) continue;
+    if (!sameValue(value, current[property], property)) set[property] = value;
   }
-  const remove = Object.keys(local).filter((p) => !(p in final) && isMappedProperty(p, deps.rows));
+  const remove = Object.keys(current).filter((p) => !(p in final) && isMappedProperty(p, deps.rows));
   const changed = Object.keys(set).length > 0 || remove.length > 0;
-
-  if (conflicts.length > 0) {
-    await note.appendToBody(renderConflictCallout(conflicts, deps.now()));
-    const names = conflicts.map((c) => c.property).join(', ');
-    deps.notify(`Sync conflict: kept the server value for ${names}. Your value is noted at the end of the note.`);
-  }
-  if (changed) await note.writeProps(set, remove);
+  if (frontmatter[RESERVED_PROPERTY] !== sourceName) set[RESERVED_PROPERTY] = sourceName;
+  if (Object.keys(set).length > 0 || remove.length > 0) await note.writeProps(set, remove);
   return changed;
 }

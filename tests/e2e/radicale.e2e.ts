@@ -1,5 +1,5 @@
 /**
- * End-to-end: the real Sync core (syncContact + CardDAV adapter + PlatformHttpClient) against a real
+ * End-to-end: the real Sync core (prepareSync/applySync + CardDAV adapter + PlatformHttpClient) against a real
  * Radicale 3.8.3 started by this suite. Run with `npm run test:e2e`; see tests/scripts/radicale-e2e.md.
  *
  * The note side is in memory (frontmatter + body); the server card is checked with plain HTTP GETs,
@@ -26,8 +26,9 @@ import { VCardMeta } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { carddavAdapter } from 'src/sync/adapters/carddavGeneric';
 import { moveCard } from 'src/sync/moveCard';
-import { importCandidates, noteSourceId, planSync, SyncPlan } from 'src/sync/sources';
-import { locateCard, NoteIO, SyncDeps, SyncOutcome, syncContact } from 'src/sync/syncContact';
+import { canApply, Choice, resultProps } from 'src/sync/review';
+import { CardLocation, importCandidates, noteSourceId, planSync, SyncPlan } from 'src/sync/sources';
+import { applySync, locateCard, NoteIO, prepareSync, SyncDeps, SyncOutcome } from 'src/sync/syncContact';
 import { createSyncState, FileStore, SyncState } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -189,7 +190,6 @@ async function createAddressBook(book = BOOK): Promise<void> {
 interface Note {
   frontmatter: Record<string, unknown>;
   body: string;
-  appended: string[];
   io: NoteIO;
 }
 
@@ -197,17 +197,13 @@ function memoryNote(frontmatter: Record<string, unknown>, body = 'Private: SECRE
   const note: Note = {
     frontmatter: { ...frontmatter },
     body,
-    appended: [],
     io: {
       readFrontmatter: async () => ({ ...note.frontmatter }),
       writeProps: async (set: Record<string, FriendlyValue>, remove: string[]) => {
         for (const key of remove) delete note.frontmatter[key];
         Object.assign(note.frontmatter, set);
       },
-      appendToBody: async (markdown: string) => {
-        note.appended.push(markdown);
-        note.body += `\n\n${markdown}`;
-      },
+      rename: async () => 'renamed' as const,
     },
   };
   return note;
@@ -285,7 +281,19 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     },
   };
 
-  async function syncWith(note: Note, book: Book) {
+  /** What the user picks in the review screen: per property, or the same side for every row that needs a decision. */
+  type Choices = Record<string, Choice> | 'server' | 'local';
+
+  /**
+   * One Sync as the review screen runs it: prepare, then Apply with the preselections plus `choices`.
+   * 'unchanged' when prepare finds the note up to date.
+   */
+  async function syncWith(
+    note: Note,
+    book: Book,
+    choices: Choices = {},
+    move?: { from: CardLocation; book: Book },
+  ): Promise<{ outcome: SyncOutcome; oldKept?: boolean }> {
     pushes.length = 0;
     notices.length = 0;
     const deps: SyncDeps = {
@@ -294,19 +302,31 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       rows: DEFAULT_MAPPING,
       ctx: await relationContext(adapter, notes),
       notify: (msg) => notices.push(msg),
-      now: () => new Date(2026, 9, 17, 9, 30),
     };
-    return syncContact(note.io, deps);
+    const where = { sourceId: book.source.id, move: move && { from: move.from, adapter: move.book.adapter, state: move.book.state } };
+    const prepared = await prepareSync(note.io, deps, where);
+    if (prepared.kind === 'failed') throw new Error(prepared.message);
+    if (prepared.kind === 'upToDate') return { outcome: 'unchanged' };
+    const { rows, server } = prepared.prepared;
+    const picked =
+      typeof choices === 'string'
+        ? new Map(rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, choices as Choice]))
+        : new Map(Object.entries(choices));
+    expect(canApply(rows, picked), `undecided: ${rows.filter((r) => r.changed && r.preselect === undefined).map((r) => r.property)}`).toBe(true);
+    const R = resultProps(rows, picked, server?.friendly.props ?? {});
+    const result = await applySync(prepared.prepared, R, note.io, deps, { sourceName: book.source.name });
+    if (result.kind !== 'done') throw new Error(`apply: ${JSON.stringify(result)}`);
+    return { outcome: result.outcome, oldKept: result.oldKept };
   }
 
-  const sync = (note: Note) => syncWith(note, bookList[0]);
+  const sync = async (note: Note, choices: Choices = {}) => (await syncWith(note, bookList[0], choices)).outcome;
 
   /**
    * Sync's source choice as runSync in src/sync/sync.ts makes it (the same pure functions, no Obsidian):
    * the note's `source:` or the book holding its base, a search of every book for the UID, then sync, adopt or move.
-   * The move confirmation is taken as given.
+   * The move confirmation is taken as given; the move is applied with the reviewed card.
    */
-  async function syncAcrossBooks(note: Note): Promise<{ plan: SyncPlan; outcome?: SyncOutcome; move?: Awaited<ReturnType<typeof moveCard>> }> {
+  async function syncAcrossBooks(note: Note): Promise<{ plan: SyncPlan; outcome?: SyncOutcome; oldKept?: boolean }> {
     const uid = cleanUid(String(note.frontmatter.uid));
     const baseIn: string[] = [];
     for (const book of bookList) if (await book.state.get(uid)) baseIn.push(book.source.id);
@@ -322,24 +342,12 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     const plan = planSync({ id: chosen.id, explicit: named !== undefined }, found, nameOf);
 
     if (plan.kind === 'sync' || plan.kind === 'adopt') {
-      const book = byId(plan.sourceId);
-      const outcome = await syncWith(note, book);
-      await note.io.writeProps({ source: book.source.name }, []);
+      const { outcome } = await syncWith(note, byId(plan.sourceId));
       return { plan, outcome };
     }
     if (plan.kind === 'move') {
-      const from = byId(plan.from.sourceId);
-      const to = byId(plan.to);
-      const outcome = await syncWith(note, from);
-      const base = (await from.state.get(uid))!;
-      const move = await moveCard(
-        base.raw,
-        uid,
-        { adapter: from.adapter, state: from.state, location: { sourceId: from.source.id, href: base.href, etag: base.etag } },
-        { adapter: to.adapter, state: to.state },
-      );
-      if (move.ok) await note.io.writeProps({ source: to.source.name }, []);
-      return { plan, outcome, move };
+      const { outcome, oldKept } = await syncWith(note, byId(plan.to), {}, { from: plan.from, book: byId(plan.from.sourceId) });
+      return { plan, outcome, oldKept };
     }
     return { plan };
   }
@@ -473,18 +481,15 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await serverEtag(JAN_HREF)).toBe(etag);
   });
 
-  it('4. the same field edited on both sides keeps the server value and notes the local one', async () => {
+  it('4. the same field edited on both sides is decided by the user: Radicale', async () => {
     const before = await serverCard(JAN_HREF);
     await putCard(JAN_HREF, before.replace('TITLE:Baker', 'TITLE:Head baker'));
     const serverVersion = await serverCard(JAN_HREF);
     jan.frontmatter.title = 'Pastry chef';
 
-    expect(await sync(jan)).toBe('pulled');
+    expect(await sync(jan, { title: 'server' })).toBe('pulled');
     expect(jan.frontmatter.title).toBe('Head baker');
-    expect(jan.appended).toHaveLength(1);
-    expect(jan.appended[0]).toContain('Pastry chef');
-    expect(jan.body).toContain('Pastry chef');
-    expect(notices.some((n) => n.includes('Sync conflict') && n.includes('title'))).toBe(true);
+    expect(jan.body).not.toContain('Pastry chef');
     expect(pushes).toEqual([]);
     expect(await serverCard(JAN_HREF)).toBe(serverVersion);
   });
@@ -572,7 +577,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     Object.assign(fm, converted.set);
     const note = memoryNote(fm);
 
-    expect(await sync(note)).toBe('pulled');
+    // Without a base every difference is a decision; taking Radicale everywhere changes nothing on the server.
+    expect(await sync(note, 'server')).toBe('pulled');
     expect(pushes).toEqual([]);
     expect(await serverCard(href)).toBe(before);
     expect(await serverEtag(href)).toBe(etag);
@@ -580,9 +586,6 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     const server = toFriendly(parseCard(before), DEFAULT_MAPPING, await relationContext(adapter, notes)).props;
     const mapped = Object.fromEntries(Object.entries(note.frontmatter).filter(([k]) => isMappedProperty(k, DEFAULT_MAPPING)));
     expect(mapped).toEqual(server);
-    expect(note.appended).toHaveLength(1);
-    expect(note.appended[0]).toContain('> - phone: 06-12345678');
-    expect(note.appended[0]).toContain('> - phone-2: 030-1234567');
 
     expect(await sync(note)).toBe('unchanged');
     expect(pushes).toEqual([]);
@@ -706,7 +709,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     note.frontmatter.source = 'Family';
     const result = await syncAcrossBooks(note);
     expect(result.plan).toMatchObject({ kind: 'move', to: 'family' });
-    expect(result.move).toEqual({ ok: true, oldKept: false });
+    expect(result).toMatchObject({ outcome: 'pushed', oldKept: false });
 
     // The card is in the new book and gone from the old one.
     expect((await request('GET', href)).status).toBe(404);
@@ -740,7 +743,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
 
     const result = await syncAcrossBooks(note);
     expect(result.plan).toEqual({ kind: 'sync', sourceId: 'family' });
-    expect(result.move).toBeUndefined();
+    expect(result.oldKept).toBeUndefined();
     expect(result.outcome).not.toBe('failed');
     // The other copy and its base are untouched; the named book now has a base too.
     expect(await serverCard(`${BOOK}twin.vcf`)).toBe(radicaleCopy);
