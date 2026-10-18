@@ -89,3 +89,10 @@ export function authorizationHeader(credentials: StoredCredentials): string {
     ? `Bearer ${credentials.authKey}`
     : `Basic ${credentials.authKey}`;
 }
+
+/** What the settings screen says about saved credentials; never the secret itself. */
+export function connectionLabel(stored: StoredCredentials): string {
+  return stored.authType === 'apikey'
+    ? 'Connected with API key'
+    : `Connected as ${usernameFromAuthKey(stored.authKey) || 'anonymous'}`;
+}

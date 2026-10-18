@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   authorizationHeader,
+  connectionLabel,
   encodeBasicAuth,
   resolveCredentials,
   usernameFromAuthKey
@@ -74,5 +75,13 @@ describe('authorizationHeader', () => {
   it('builds Basic and Bearer headers', () => {
     expect(authorizationHeader({ authType: 'basic', authKey: 'abc' })).toBe('Basic abc');
     expect(authorizationHeader({ authType: 'apikey', authKey: 'abc' })).toBe('Bearer abc');
+  });
+});
+
+describe('connectionLabel', () => {
+  it('names the user or the API key, never the secret', () => {
+    expect(connectionLabel({ authType: 'apikey', authKey: 'topsecret' })).toBe('Connected with API key');
+    expect(connectionLabel({ authType: 'basic', authKey: encodeBasicAuth('anna', 'pw') })).toBe('Connected as anna');
+    expect(connectionLabel({ authType: 'basic', authKey: '' })).toBe('Connected as anonymous');
   });
 });

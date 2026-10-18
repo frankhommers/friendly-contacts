@@ -4,8 +4,12 @@ import {
   migrateSources,
   noteSourceId,
   planSync,
+  removalBlocker,
   sourceNameFromUrl,
+  uniqueSourceName,
   validateSourceName,
+  withoutSource,
+  withSource,
 } from 'src/sync/sources';
 import type { Source } from 'src/settings/settings.d';
 import { describe, expect, it, vi } from 'vitest';
@@ -136,5 +140,33 @@ describe('planSync', () => {
       expect(plan.kind).toBe('refuse');
       expect(plan.kind === 'refuse' && plan.message).toMatch(/^The card is in Family and Work; /);
     }
+  });
+});
+
+describe('address book list helpers', () => {
+  it('names a new address book uniquely', () => {
+    expect(uniqueSourceName([])).toBe('Address book');
+    expect(uniqueSourceName([source('a', 'address book'), source('b', 'Address book 2')])).toBe('Address book 3');
+  });
+
+  it('adds the first source as default and keeps the default afterwards', () => {
+    const first = withSource({ sources: [] as Source[], defaultSource: '' }, source('a', 'A'));
+    expect(first).toEqual({ sources: [source('a', 'A')], defaultSource: 'a' });
+    const second = withSource(first, source('b', 'B'));
+    expect(second.defaultSource).toBe('a');
+    expect(second.sources.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(withSource(second, { ...source('b', 'B2') }).sources.map((s) => s.name)).toEqual(['A', 'B2']);
+  });
+
+  it('removes a source', () => {
+    const list = { sources: [source('a', 'A'), source('b', 'B')], defaultSource: 'a' };
+    expect(withoutSource(list, 'b')).toEqual({ sources: [source('a', 'A')], defaultSource: 'a' });
+  });
+
+  it('refuses removing the default or a source in use', () => {
+    const a = source('a', 'A');
+    expect(removalBlocker(a, 'a', 0)).toBe('Make another address book the default first.');
+    expect(removalBlocker(a, 'b', 3)).toBe('3 contacts use A.');
+    expect(removalBlocker(a, 'b', 0)).toBeUndefined();
   });
 });

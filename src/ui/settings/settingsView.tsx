@@ -32,7 +32,7 @@ export class ContactsSettingTab extends PluginSettingTab {
         <CardFieldSettings />
         <PropertyNamesSettings app={this.app} />
         <InsightSettings />
-        <SynchronizationSettings />
+        <SynchronizationSettings app={this.app} />
       </>
     );
   }

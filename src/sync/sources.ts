@@ -26,7 +26,7 @@ export function sourceNameFromUrl(url: string): string {
   }
 }
 
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+export const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /** Error text for an empty name or a case-insensitive duplicate of another source; undefined when fine. */
 export function validateSourceName(name: string, sources: Source[], selfId?: string): string | undefined {
@@ -138,4 +138,37 @@ export function importCandidates<T extends { uid: string; fileName: string }>(re
   return remote
     .filter((card) => !known.has(card.uid))
     .sort((a, b) => a.fileName.localeCompare(b.fileName));
+}
+
+/** "Address book", or "Address book 2", "Address book 3", ... when that name is taken. */
+export function uniqueSourceName(sources: Source[], base = 'Address book'): string {
+  let name = base;
+  for (let n = 2; sources.some((s) => sameName(s.name, name)); n++) name = `${base} ${n}`;
+  return name;
+}
+
+type SourceList = { sources: Source[]; defaultSource: string };
+
+/** The list with `source` added (the first one becomes the default) or, when its id is known, replaced. */
+export function withSource<T extends SourceList>(settings: T, source: Source): T {
+  const exists = settings.sources.some((s) => s.id === source.id);
+  return {
+    ...settings,
+    sources: exists ? settings.sources.map((s) => (s.id === source.id ? source : s)) : [...settings.sources, source],
+    defaultSource: settings.defaultSource === '' || !settings.sources.some((s) => s.id === settings.defaultSource)
+      ? source.id
+      : settings.defaultSource,
+  };
+}
+
+/** The list without that source. Callers refuse removing the default first, so the default stays valid. */
+export function withoutSource<T extends SourceList>(settings: T, id: string): T {
+  return { ...settings, sources: settings.sources.filter((s) => s.id !== id) };
+}
+
+/** Why a source cannot be removed: it is the default, or notes use it. undefined when it can go. */
+export function removalBlocker(source: Source, defaultSource: string, noteCount: number): string | undefined {
+  if (source.id === defaultSource) return 'Make another address book the default first.';
+  if (noteCount > 0) return `${noteCount} contacts use ${source.name}.`;
+  return undefined;
 }

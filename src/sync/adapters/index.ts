@@ -35,3 +35,24 @@ export function adapterFor(source: Source): AdapterInterface {
   adapters.set(source.id, { key, adapter });
   return adapter;
 }
+
+/** Drops the cached adapter of a removed source. */
+export function forgetAdapter(sourceId: string): void {
+  adapters.delete(sourceId);
+}
+
+/** Tries the address book with these settings. Returns what to tell the user when it does not work, else undefined. */
+export async function connectionProblem(source: Pick<Source, 'addressBookUrl' | 'authType' | 'authKey'>): Promise<string | undefined> {
+  try {
+    const result = await carddavAdapter(source).checkConnectivity();
+    if (result.errorMessage) {
+      return `failed to enable connection! ${result.errorMessage}. Please check your connection settings.`;
+    }
+    if (!(result.status >= 200 && result.status < 300)) {
+      return 'failed to enable connection! unknown error. Please check your connection settings.';
+    }
+    return undefined;
+  } catch (err: any) {
+    return `failed to enable connection! ${err?.message || err || 'Unknown error'}.`;
+  }
+}
