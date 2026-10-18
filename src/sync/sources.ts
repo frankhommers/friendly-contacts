@@ -1,4 +1,5 @@
 import type { AuthType, Source } from "src/settings/settings.d";
+import { cleanUid } from "src/util/vcard";
 
 /** Pure helpers for the address book list; no Obsidian or context imports. */
 
@@ -163,6 +164,18 @@ export function importCandidates<T extends { uid: string; fileName: string }>(re
   return remote
     .filter((card) => !known.has(card.uid))
     .sort((a, b) => a.fileName.localeCompare(b.fileName));
+}
+
+/**
+ * True when a contact note already holds this card's UID, or one was imported earlier in the same run (the
+ * metadata cache may not show a fresh note yet). A card without a UID is never "known".
+ */
+export function uidAlreadyImported(uid: string | undefined, noteUids: Iterable<string | undefined>, importedNow: Set<string>): boolean {
+  const wanted = cleanUid(uid);
+  if (wanted === '') return false;
+  if (importedNow.has(wanted)) return true;
+  for (const noteUid of noteUids) if (cleanUid(noteUid) === wanted) return true;
+  return false;
 }
 
 /** "Address book", or "Address book 2", "Address book 3", ... when that name is taken. */

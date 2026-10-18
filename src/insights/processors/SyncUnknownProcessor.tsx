@@ -1,15 +1,24 @@
 import * as React from "react";
 import {Contact} from "src/contacts";
-import {importRemoteCard} from "src/contacts/obsidianNotes";
+import {contactNotes, importRemoteCard} from "src/contacts/obsidianNotes";
 import {getApp} from "src/context/sharedAppContext";
 import {getSettings} from "src/context/sharedSettingsContext";
 import {InsightProcessor, InsightQueItem, PropsRenderGroup, RunType} from "src/insights/insight.d";
 import {insightQueueStore} from "src/insights/insightsQueStore";
 import {sync} from "src/sync";
 import {activeSources, isSyncAvailable} from "src/sync/adapters";
+import {uidAlreadyImported} from "src/sync/sources";
+import {cleanUid} from "src/util/vcard";
 
 
-const ImportUnknownVcardToVault = async (queItem: InsightQueItem) => {
+/** UIDs imported so far in one "Import All" run; the metadata cache may not show those notes yet. */
+const ImportUnknownVcardToVault = async (queItem: InsightQueItem, importedNow: Set<string> = new Set()) => {
+  // The same card can be queued once per address book; a UID that has a note is not imported again.
+  const noteUids = contactNotes(getApp()).map((note) => note.uid);
+  if (uidAlreadyImported(queItem.data.uid, noteUids, importedNow)) {
+    await insightQueueStore.remove(queItem);
+    return;
+  }
   const source = activeSources().find((candidate) => candidate.id === queItem.data.sourceId);
   if (!source) {
     // The address book was removed or disabled since the insight was queued.
@@ -22,6 +31,7 @@ const ImportUnknownVcardToVault = async (queItem: InsightQueItem) => {
     const outcome = await importRemoteCard(getApp(), rawCard, queItem.data, source);
     if (outcome === "unnamed") console.warn("Skipping contact without name", rawCard.raw);
     // A card that was skipped because its note exists stays in the list.
+    if (outcome === "imported") importedNow.add(cleanUid(queItem.data.uid ?? rawCard.uid));
     if (outcome !== "skipped") await insightQueueStore.remove(queItem);
   }
 }
@@ -31,8 +41,9 @@ const renderGroup = ({queItems}: PropsRenderGroup): JSX.Element | null => {
     return async (event: React.MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
+      const importedNow = new Set<string>();
       for (const queItem of queItems) {
-        await ImportUnknownVcardToVault(queItem);
+        await ImportUnknownVcardToVault(queItem, importedNow);
       }
     }
   }

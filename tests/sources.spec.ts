@@ -7,6 +7,7 @@ import {
   planSync,
   removalBlocker,
   sourceNameFromUrl,
+  uidAlreadyImported,
   uniqueSourceName,
   validateSourceName,
   withoutSource,
@@ -198,5 +199,24 @@ describe('patchSource', () => {
     expect(next?.sources[0]).toMatchObject({ id: 'a', name: 'New', enabled: true });
     expect(patchSource(current, 'gone', { enabled: true })).toBeUndefined();
     expect(patchSource(current, 'a', { id: 'x', authKey: 'z' } as never)?.sources[0].id).toBe('a');
+  });
+});
+
+describe('uidAlreadyImported', () => {
+  it('knows a UID that has a note, ignoring the urn:uuid: prefix', () => {
+    expect(uidAlreadyImported('abc', ['x', 'abc'], new Set())).toBe(true);
+    expect(uidAlreadyImported('urn:uuid:abc', ['abc'], new Set())).toBe(true);
+    expect(uidAlreadyImported('abc', ['urn:uuid:abc'], new Set())).toBe(true);
+    expect(uidAlreadyImported('abc', ['x', undefined], new Set())).toBe(false);
+  });
+
+  it('knows a UID imported earlier in the same run', () => {
+    expect(uidAlreadyImported('abc', [], new Set(['abc']))).toBe(true);
+    expect(uidAlreadyImported('def', [], new Set(['abc']))).toBe(false);
+  });
+
+  it('a card without a UID is never known', () => {
+    expect(uidAlreadyImported(undefined, [undefined, ''], new Set(['']))).toBe(false);
+    expect(uidAlreadyImported('', [''], new Set(['']))).toBe(false);
   });
 });
