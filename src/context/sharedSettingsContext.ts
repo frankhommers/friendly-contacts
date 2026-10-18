@@ -74,12 +74,19 @@ export async function updateSetting(path: string, value: string | boolean | stri
   await setSettings(updated);
 }
 
+/** Saves run one after the other, in call order, so the last call is the last write. */
+let saveQueue: Promise<void> = Promise.resolve();
+
 export async function setSettings(settingsInput: ContactsPluginSettings) {
   if (!saveData) throw new Error('Plugin context has not been set.')
   // Making sure the signal fires by assigning new object.
   const updatedSettings = deepCloneObject(settingsInput);
-  await saveData(updatedSettings)
+  // The new settings are visible before the save finishes: a patch made while a save is running starts from
+  // them, instead of from the old ones and overwriting this change.
   settings.value = updatedSettings;
+  const write = saveQueue.then(() => saveData(updatedSettings));
+  saveQueue = write.catch(() => undefined);
+  await write;
 }
 
 export function getSettings(): ContactsPluginSettings {

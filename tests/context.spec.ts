@@ -136,6 +136,59 @@ describe('sharedSettingsContext', () => {
     expect(retrieved).to.deep.equal(mockSettings);
   });
 
+  it('two overlapping saves cannot lose one another', async () => {
+    const started: ContactsPluginSettings[] = [];
+    const finish: Array<() => void> = [];
+    let slow = false;
+    const diskSave = vi.fn((data: ContactsPluginSettings) => {
+      if (!slow) return Promise.resolve();
+      started.push(data);
+      return new Promise<void>((resolve) => finish.push(resolve));
+    });
+    await initSettings(loadData, diskSave);
+    slow = true;
+    // Two patches, each made from the settings as they are when it is made (like saveSourcePatch).
+    const first = setSettings({ ...getSettings(), contactsFolder: 'A' });
+    const second = setSettings({ ...getSettings(), defaultHashtag: '#b' });
+    expect(getSettings()).toMatchObject({ contactsFolder: 'A', defaultHashtag: '#b' });
+    // Writes go one after the other, in call order.
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    finish[0]();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    finish[1]();
+    await Promise.all([first, second]);
+    expect(started[1]).toMatchObject({ contactsFolder: 'A', defaultHashtag: '#b' });
+  });
+
+  it('a failed save rejects its caller but later saves still go through', async () => {
+    const failing = vi.fn().mockResolvedValue(undefined);
+    await initSettings(loadData, failing);
+    failing.mockClear();
+    failing.mockRejectedValueOnce(new Error('disk full'));
+    await expect(setSettings({ ...getSettings(), contactsFolder: 'X' })).rejects.toThrow('disk full');
+    await setSettings({ ...getSettings(), contactsFolder: 'Y' });
+    expect(failing).toHaveBeenCalledTimes(2);
+    expect(failing.mock.calls[1][0]).toMatchObject({ contactsFolder: 'Y' });
+  });
+
+  it('initSettings reports the migrated book on the first load only', async () => {
+    const { sources: _sources, defaultSource: _defaultSource, ...old } = mockSettings;
+    const legacy = {
+      ...old,
+      syncEnabled: true,
+      syncSelected: 'CardDAV',
+      CardDAV: { addressBookUrl: 'https://pim.example/frank/contacts/', authType: 'basic', authKey: 'k', syncInterval: 900 },
+    };
+    const first = await initSettings(async () => legacy, saveData);
+    const saved = saveData.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(first).toEqual({ migratedFrom: 'carddav' });
+    expect((saved.sources as Source[])[0].id).toBe('carddav');
+    // The second start loads what the first one saved.
+    const second = await initSettings(async () => saved, saveData);
+    expect(second.migratedFrom).toBeUndefined();
+    expect(getSettings().sources).toEqual(saved.sources);
+  });
+
   it('throws if getSettings called while not initialized', () => {
     expect(() => getSettings()).toThrow('Plugin context has not been set.');
   });
