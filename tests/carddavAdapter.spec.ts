@@ -4,15 +4,9 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let baseUrl = '';
+const bookA = () => ({ addressBookUrl: baseUrl + 'frank/contacts/', authType: 'apikey' as const, authKey: 'k' });
 
-vi.mock("src/context/sharedSettingsContext", () => ({
-  getSettings: vi.fn(() => ({
-    sources: [{ id: 's1', name: 'contacts', addressBookUrl: baseUrl + 'frank/contacts/', authType: 'apikey', authKey: 'k', enabled: true }],
-    defaultSource: 's1',
-  })),
-}));
-
-import { carddavGenericAdapter } from "src/sync/adapters/carddavGeneric";
+import { carddavAdapter } from "src/sync/adapters/carddavGeneric";
 
 type Received = { method?: string; url?: string; headers: http.IncomingHttpHeaders; body: string };
 let server: http.Server;
@@ -50,8 +44,33 @@ afterAll(async () => {
 });
 
 describe('carddav adapter', () => {
+  it('two adapters use their own url and credentials', async () => {
+    const a = carddavAdapter(bookA());
+    const b = carddavAdapter({ addressBookUrl: baseUrl + 'jan/work/', authType: 'basic', authKey: 'amFuOnB3' });
+
+    await a.push({ uid: 'abc', raw: 'RAW' }, { href: 'x.vcf' });
+    expect(last?.url).toBe('/frank/contacts/x.vcf');
+    expect(last?.headers.authorization).toBe('Bearer k');
+
+    await b.push({ uid: 'abc', raw: 'RAW' }, { href: 'x.vcf' });
+    expect(last?.url).toBe('/jan/work/x.vcf');
+    expect(last?.headers.authorization).toBe('Basic amFuOnB3');
+
+    await a.delete('y.vcf');
+    expect(last?.url).toBe('/frank/contacts/y.vcf');
+    expect(last?.headers.authorization).toBe('Bearer k');
+  });
+
+  it('checkConnectivity asks the bound address book with its credentials', async () => {
+    const res = await carddavAdapter(bookA()).checkConnectivity();
+    expect(last?.method).toBe('OPTIONS');
+    expect(last?.url).toBe('/frank/contacts/');
+    expect(last?.headers.authorization).toBe('Bearer k');
+    expect(res.status).toBe(204);
+  });
+
   it('push uses href and If-Match', async () => {
-    const adapter = carddavGenericAdapter();
+    const adapter = carddavAdapter(bookA());
     const res = await adapter.push({ uid: 'abc', raw: 'RAW' }, { href: '/frank/contacts/ABC.vcf', ifMatch: 'e1' });
     expect(last?.method).toBe('PUT');
     expect(last?.url).toBe('/frank/contacts/ABC.vcf');
@@ -63,7 +82,7 @@ describe('carddav adapter', () => {
   });
 
   it('delete sends If-Match when given', async () => {
-    const adapter = carddavGenericAdapter();
+    const adapter = carddavAdapter(bookA());
     await adapter.delete('/frank/contacts/ABC.vcf', 'e7');
     expect(last?.method).toBe('DELETE');
     expect(last?.url).toBe('/frank/contacts/ABC.vcf');
@@ -73,25 +92,25 @@ describe('carddav adapter', () => {
   });
 
   it('push resolves a relative href against the address book', async () => {
-    await carddavGenericAdapter().push({ uid: 'abc', raw: 'RAW' }, { href: 'ABC.vcf' });
+    await carddavAdapter(bookA()).push({ uid: 'abc', raw: 'RAW' }, { href: 'ABC.vcf' });
     expect(last?.url).toBe('/frank/contacts/ABC.vcf');
   });
 
   it('push sends If-None-Match: * for new cards', async () => {
-    await carddavGenericAdapter().push({ uid: 'abc', raw: 'RAW' }, { href: '/frank/contacts/abc.vcf', ifNoneMatch: true });
+    await carddavAdapter(bookA()).push({ uid: 'abc', raw: 'RAW' }, { href: '/frank/contacts/abc.vcf', ifNoneMatch: true });
     expect(last?.headers['if-none-match']).toBe('*');
     expect(last?.headers['if-match']).toBeUndefined();
   });
 
   it('push without opts keeps the <uid>.vcf url and sends no precondition', async () => {
-    await carddavGenericAdapter().push({ uid: 'abc', raw: 'RAW' });
+    await carddavAdapter(bookA()).push({ uid: 'abc', raw: 'RAW' });
     expect(last?.url).toMatch(/\/frank\/contacts\/+abc\.vcf$/);
     expect(last?.headers['if-match']).toBeUndefined();
     expect(last?.headers['if-none-match']).toBeUndefined();
   });
 
   it('pull returns etag and href', async () => {
-    const res = await carddavGenericAdapter().pull('/frank/contacts/abc.vcf');
+    const res = await carddavAdapter(bookA()).pull('/frank/contacts/abc.vcf');
     expect(res).toMatchObject({ uid: 'abc', etag: 'e2', href: '/frank/contacts/abc.vcf' });
   });
 
@@ -110,13 +129,13 @@ describe('carddav adapter', () => {
     reportBody = `<?xml version="1.0" encoding="utf-8"?>
 <multistatus xmlns="DAV:">${card('/frank/contacts/longer.vcf', 'urn:uuid:abc-1', 'e7')}${card('/frank/contacts/ABC.vcf', 'urn:uuid:abc', 'e8')}
 </multistatus>`;
-    const meta = await carddavGenericAdapter().getMetaByUid('abc');
+    const meta = await carddavAdapter(bookA()).getMetaByUid('abc');
     expect(last?.method).toBe('REPORT');
     expect(meta).toMatchObject({ href: '/frank/contacts/ABC.vcf', etag: 'e8', uid: 'abc' });
 
     reportBody = `<?xml version="1.0" encoding="utf-8"?>
 <multistatus xmlns="DAV:">${card('/frank/contacts/longer.vcf', 'urn:uuid:abc-1', 'e7')}
 </multistatus>`;
-    expect(await carddavGenericAdapter().getMetaByUid('abc')).toBeUndefined();
+    expect(await carddavAdapter(bookA()).getMetaByUid('abc')).toBeUndefined();
   });
 });

@@ -4,15 +4,21 @@ import {Contact} from "src/contacts";
 import {hasVCardValues} from "src/contacts/friendlyNotes";
 import {contactSyncState, noteIO, relationContextFor} from "src/contacts/obsidianNotes";
 import {getApp} from "src/context/sharedAppContext";
-import { getSettings, settings } from "src/context/sharedSettingsContext";
-import { getCurrentAdapter } from "src/sync/adapters";
-import { defaultSourceOf } from "src/sync/sources";
+import { getSettings } from "src/context/sharedSettingsContext";
+import { adapterFor, defaultActiveSource, isSyncAvailable } from "src/sync/adapters";
+import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
 import {syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
 import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
 
-export const enabled = computed(() => (settings.value ? defaultSourceOf(settings.value)?.enabled === true : false));
+export const enabled = computed(() => isSyncAvailable());
+
+/** Until sync is source-aware (Tasks 4-6), the operations here talk to the default source when it is active. */
+function currentAdapter(): AdapterInterface | undefined {
+  const source = defaultActiveSource();
+  return source ? adapterFor(source) : undefined;
+}
 
 function hasUidMatch(remoteContact:VCardMeta, currentContacts: Contact[]) {
   const uid = remoteContact.uid;
@@ -47,7 +53,7 @@ export async function getUnknownFromRemote(currentContacts: Contact[]): Promise<
 }
 
 export async function getRawVcardFromRemote(href: string) {
-  const adapter = getCurrentAdapter();
+  const adapter = currentAdapter();
   if(adapter) {
     return adapter.pull(href);
   }
@@ -56,7 +62,7 @@ export async function getRawVcardFromRemote(href: string) {
 
 /** Deletes the contact's card on the server and forgets its sync state; true when deleted. */
 export async function deleteOnRemote(contact: Contact): Promise<boolean> {
-  const adapter = getCurrentAdapter();
+  const adapter = currentAdapter();
   if (!adapter) {
     return false;
   }
@@ -123,7 +129,7 @@ export async function syncContact(contact: Contact): Promise<SyncOutcome | undef
 }
 
 async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
-  const adapter = getCurrentAdapter();
+  const adapter = currentAdapter();
   if (!adapter) {
     new Notice('Sync is not set up.');
     return undefined;
@@ -165,14 +171,14 @@ export async function pullFromRemote(href: string): Promise<VCardRaw | undefined
 
 
 async function getList() {
-  const adapter = getCurrentAdapter()
+  const adapter = currentAdapter()
   if (adapter) {
     return adapter.getMetaList();
   }
 }
 
 async function getMetaByUID(uid: string): Promise<VCardMeta | undefined> {
-  const adapter = getCurrentAdapter();
+  const adapter = currentAdapter();
   if(adapter) {
     const res:VCardMeta | AppHttpResponse | undefined = await adapter.getMetaByUid(uid);
     if (res && "errorMessage" in res && res.errorMessage) {

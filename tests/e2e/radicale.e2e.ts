@@ -23,7 +23,7 @@ import { initSettings } from 'src/context/sharedSettingsContext';
 import { encodeBasicAuth } from 'src/settings/carddavCredentials';
 import { VCardMeta } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
-import { carddavGenericAdapter } from 'src/sync/adapters/carddavGeneric';
+import { carddavAdapter } from 'src/sync/adapters/carddavGeneric';
 import { NoteIO, SyncDeps, syncContact } from 'src/sync/syncContact';
 import { createSyncState, FileStore } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
@@ -238,7 +238,20 @@ async function relationContext(adapter: AdapterInterface, notes: { name: string;
 }
 
 describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
-  const adapter = carddavGenericAdapter();
+  // The port is only known once Radicale runs, so the bound adapter is made in beforeAll.
+  let bound: AdapterInterface | undefined;
+  const real = () => {
+    if (!bound) throw new Error('Radicale is not running yet');
+    return bound;
+  };
+  const adapter: AdapterInterface = {
+    push: (vcard, opts) => real().push(vcard, opts),
+    delete: (href, ifMatch) => real().delete(href, ifMatch),
+    pull: (href) => real().pull(href),
+    getMetaList: () => real().getMetaList(),
+    getMetaByUid: (uid) => real().getMetaByUid(uid),
+    checkConnectivity: () => real().checkConnectivity(),
+  };
   const state = createSyncState(memoryFileStore(), 'sync-state');
   const pushes: string[] = [];
   const notices: string[] = [];
@@ -288,20 +301,19 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     vi.stubGlobal('DOMParser', chromiumLikeDomParser());
     await startRadicale();
     await createAddressBook();
+    const source = {
+      id: 'radicale',
+      name: 'Radicale',
+      addressBookUrl: `http://127.0.0.1:${port}${BOOK}`,
+      authType: 'basic' as const,
+      authKey: encodeBasicAuth('frank', 'x'),
+      enabled: true,
+    };
     await initSettings(
-      async () => ({
-        sources: [{
-          id: 'radicale',
-          name: 'Radicale',
-          addressBookUrl: `http://127.0.0.1:${port}${BOOK}`,
-          authType: 'basic',
-          authKey: encodeBasicAuth('frank', 'x'),
-          enabled: true,
-        }],
-        defaultSource: 'radicale',
-      }),
+      async () => ({ sources: [source], defaultSource: 'radicale' }),
       async () => {},
     );
+    bound = carddavAdapter(source);
   });
 
   afterAll(async () => {

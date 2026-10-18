@@ -1,5 +1,4 @@
 import { PushOptions, VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
-import { StoredCredentials } from "src/settings/carddavCredentials";
 import { AppHttpResponse } from "src/util/platformHttpClient";
 
 export interface AdapterInterface {
@@ -39,10 +38,10 @@ export interface AdapterInterface {
   getMetaByUid(uid: string): Promise<VCardMeta | AppHttpResponse | undefined>;
 
   /**
-   * Check if the remote party is reachable with current settings.
-   * @returns Promise resolving to true if connection succeeds, false otherwise
+   * Check if the address book this adapter is bound to is reachable with its credentials.
+   * @returns The server response; callers check status and errorMessage
    */
-  checkConnectivity(addressBookUrl: string, credentials: StoredCredentials): Promise<AppHttpResponse>
+  checkConnectivity(): Promise<AppHttpResponse>
 }
 
 

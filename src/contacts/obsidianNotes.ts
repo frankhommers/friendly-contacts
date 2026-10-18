@@ -17,7 +17,7 @@ import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contact
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import { createContactFile, findContactFiles, isFileInFolder } from "src/file/file";
 import { insightQueueStore } from "src/insights/insightsQueStore";
-import { getCurrentAdapter } from "src/sync/adapters";
+import { adapterFor, defaultActiveSource } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
 import type { NoteIO } from "src/sync/syncContact";
 import { createSyncState, obsidianFileStore, SyncState } from "src/sync/syncState";
@@ -172,11 +172,11 @@ let remoteCache: { at: number; list: RemoteContact[] } | undefined;
 
 /** Contacts on the server with the file name they would get on import; cached for 5 minutes. */
 export async function remoteContacts(): Promise<RemoteContact[]> {
-  const adapter = getCurrentAdapter();
-  if (!adapter) return [];
+  const source = defaultActiveSource();
+  if (!source) return [];
   if (remoteCache && Date.now() - remoteCache.at < REMOTE_TTL_MS) return remoteCache.list;
   try {
-    const metas = await adapter.getMetaList();
+    const metas = await adapterFor(source).getMetaList();
     if (!Array.isArray(metas)) return [];
     const list = metas.flatMap((meta) => {
       const fileName = contactFileName(meta.n, meta.fn);

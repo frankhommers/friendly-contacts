@@ -9,7 +9,7 @@ import {
   usernameFromAuthKey
 } from "src/settings/carddavCredentials";
 import {ContactsPluginSettings, Source} from "src/settings/settings";
-import {carddavGenericAdapter} from "src/sync/adapters/carddavGeneric";
+import {carddavAdapter} from "src/sync/adapters/carddavGeneric";
 import {defaultSourceOf, sourceNameFromUrl} from "src/sync/sources";
 import {generateUUID} from "src/util/vcard";
 import CarddavSettings, {CarddavSettingsInterface} from "src/ui/settings/components/carddavSettings";
@@ -68,7 +68,7 @@ export function SynchronizationSettings() {
     const credentials: StoredCredentials = { authType: resolved.authType, authKey: resolved.authKey };
 
     try {
-      const result = await carddavGenericAdapter().checkConnectivity(carddavSettings.addressBookUrl, credentials);
+      const result = await carddavAdapter({ addressBookUrl: carddavSettings.addressBookUrl, ...credentials }).checkConnectivity();
       if (result.errorMessage) {
         setWarning(`failed to enable connection! ${result.errorMessage}. Please check your connection settings.`);
         return;
@@ -116,11 +116,7 @@ export function SynchronizationSettings() {
     if (source?.enabled) await setSettings(withDefaultSource(current, { ...source, enabled: false }));
   }
 
-  React.useEffect(() => {
-    if(isDisabled) {
-      disableSync();
-    }
-  }, [isDisabled]);
+  // On mobile the address books are unavailable at runtime (activeSources() is empty); the saved settings stay.
 
   return (
     <>
