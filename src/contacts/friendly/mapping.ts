@@ -196,6 +196,9 @@ export function renameRow(rows: MappingRow[], from: string, to: string): Mapping
  */
 export const FIXED_PROPERTIES = ['uid', 'name', 'photo'] as const;
 
+/** The note property that names the address book; set by the plugin, never read from or written to a card. */
+export const RESERVED_PROPERTY = 'source';
+
 export function isFixedProperty(property: string): boolean {
   return (FIXED_PROPERTIES as readonly string[]).includes(property);
 }
@@ -224,6 +227,7 @@ export function validateMapping(rows: MappingRow[]): string[] {
   for (const row of rows) {
     const key = row.property.trim();
     if (key === '') errors.push('A property name is empty.');
+    if (key === RESERVED_PROPERTY) errors.push('`source` is reserved for the address book.');
     if (seen.has(key)) errors.push(`Duplicate property name: ${key}`);
     seen.add(key);
     // Friendly names are lower-case; only the upper-case spelling collides with a vCard key in old-style notes.

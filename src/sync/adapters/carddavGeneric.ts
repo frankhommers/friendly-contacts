@@ -1,8 +1,9 @@
 import { getSettings } from "src/context/sharedSettingsContext";
 import { authorizationHeader, StoredCredentials } from "src/settings/carddavCredentials";
-import { ContactsPluginSettings } from "src/settings/settings";
+import { ContactsPluginSettings, Source } from "src/settings/settings";
 import { PushOptions, VCardMeta, VCardRaw } from "src/sync/adapters/adapter";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
+import { defaultSourceOf } from "src/sync/sources";
 import { AppHttpResponse, PlatformHttpClient } from "src/util/platformHttpClient";
 import { cleanUid, fnOutOfString, nOutOfString, uidOutOfString } from "src/util/vcard";
 
@@ -12,7 +13,13 @@ const escapeXml = (text: string): string =>
 
 export function carddavGenericAdapter(): AdapterInterface {
 
-  const getAuthHeader = (settings:ContactsPluginSettings) => authorizationHeader(settings.CardDAV);
+  // Until the adapter is bound to a source (Task 2), it talks to the default source.
+  const book = (settings: ContactsPluginSettings): Source => {
+    const source = defaultSourceOf(settings);
+    if (!source) throw new Error('No address book is set up.');
+    return source;
+  };
+  const getAuthHeader = (settings:ContactsPluginSettings) => authorizationHeader(book(settings));
 
   const checkConnectivity = async (addressBookUrl: string, credentials: StoredCredentials): Promise<AppHttpResponse> =>  {
     return await PlatformHttpClient.request({
@@ -82,7 +89,7 @@ export function carddavGenericAdapter(): AdapterInterface {
 </C:addressbook-query>`;
 
     const res = await PlatformHttpClient.request({
-      url: settings.CardDAV.addressBookUrl,
+      url: book(settings).addressBookUrl,
       method: 'REPORT',
       headers: {
         'Authorization': getAuthHeader(settings),
@@ -123,7 +130,7 @@ export function carddavGenericAdapter(): AdapterInterface {
 </C:addressbook-query>`;
 
     const res = await PlatformHttpClient.request({
-      url: settings.CardDAV.addressBookUrl ,
+      url: book(settings).addressBookUrl ,
       method: 'REPORT',
       headers: {
         'Authorization': getAuthHeader(settings),
@@ -156,7 +163,7 @@ export function carddavGenericAdapter(): AdapterInterface {
 
   const pull = async (href: string): Promise<VCardRaw | AppHttpResponse> => {
     const settings = getSettings();
-    const vcfUrl = new URL(href, settings.CardDAV.addressBookUrl).toString();
+    const vcfUrl = new URL(href, book(settings).addressBookUrl).toString();
     const res = await PlatformHttpClient.request({
       url: vcfUrl,
       method: 'GET',
@@ -185,8 +192,8 @@ export function carddavGenericAdapter(): AdapterInterface {
   const push = async (vcard: VCardRaw, opts?: PushOptions): Promise<AppHttpResponse> => {
     const settings = getSettings();
     const vcfUrl = opts?.href
-      ? new URL(opts.href, settings.CardDAV.addressBookUrl).toString()
-      : settings.CardDAV.addressBookUrl + `/${encodeURIComponent(vcard.uid ?? '')}.vcf`;
+      ? new URL(opts.href, book(settings).addressBookUrl).toString()
+      : book(settings).addressBookUrl + `/${encodeURIComponent(vcard.uid ?? '')}.vcf`;
     const headers: Record<string, string> = {
       ['Authorization']: getAuthHeader(settings),
       ['Content-Type']: 'text/vcard; version=4.0; charset=utf-8;'
@@ -206,7 +213,7 @@ export function carddavGenericAdapter(): AdapterInterface {
 
   const deleteContact = async (href: string, ifMatch?: string): Promise<AppHttpResponse> => {
     const settings = getSettings();
-    const vcfUrl = new URL(href, settings.CardDAV.addressBookUrl).toString();
+    const vcfUrl = new URL(href, book(settings).addressBookUrl).toString();
     const headers: Record<string, string> = { Authorization: getAuthHeader(settings) };
     if (ifMatch) {
       headers['If-Match'] = `"${ifMatch}"`;

@@ -6,6 +6,7 @@ import {getSettings} from "src/context/sharedSettingsContext";
 import {InsightProcessor, InsightQueItem, PropsRenderGroup, RunType} from "src/insights/insight.d";
 import {insightQueueStore} from "src/insights/insightsQueStore";
 import {sync} from "src/sync";
+import {defaultSourceOf} from "src/sync/sources";
 
 
 const ImportUnknownVcardToVault = async (queItem: InsightQueItem) => {
@@ -94,7 +95,7 @@ export const SyncUnknownProcessor: InsightProcessor = {
     function isEnabled(settingPropertyName: string) {
       const setting = getSettings();
       const processorActive = setting.processors[`${settingPropertyName}`] as boolean;
-      const syncEnabled = setting.syncEnabled;
+      const syncEnabled = defaultSourceOf(setting)?.enabled === true;
       return processorActive && syncEnabled;
     }
 

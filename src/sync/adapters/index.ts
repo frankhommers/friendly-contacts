@@ -1,4 +1,5 @@
 import { settings } from "src/context/sharedSettingsContext";
+import { defaultSourceOf } from "src/sync/sources";
 import { carddavGenericAdapter } from "src/sync/adapters/carddavGeneric";
 
 export const adapters = {
@@ -9,6 +10,6 @@ export const adapters = {
 export function getCurrentAdapter() {
   const setting = settings.value;
   if (!setting) return undefined;
-  if (setting.syncSelected === "None") return undefined;
-  return adapters[setting.syncSelected];
+  if (!defaultSourceOf(setting)?.enabled) return undefined;
+  return adapters.CardDAV;
 }

@@ -1,15 +1,17 @@
 import {Platform} from "obsidian";
 import * as React from "react";
 import {useState} from "react";
-import {getSettings, setSettings, updateSetting} from "src/context/sharedSettingsContext";
+import {getSettings, setSettings} from "src/context/sharedSettingsContext";
 import {
   hasStoredCredentials,
   resolveCredentials,
   StoredCredentials,
   usernameFromAuthKey
 } from "src/settings/carddavCredentials";
-import {SyncSelected} from "src/settings/settings";
+import {ContactsPluginSettings, Source} from "src/settings/settings";
 import {carddavGenericAdapter} from "src/sync/adapters/carddavGeneric";
+import {defaultSourceOf, sourceNameFromUrl} from "src/sync/sources";
+import {generateUUID} from "src/util/vcard";
 import CarddavSettings, {CarddavSettingsInterface} from "src/ui/settings/components/carddavSettings";
 
 /**
@@ -25,18 +27,31 @@ function formFromSaved(addressBookUrl: string, saved: StoredCredentials): Cardda
   };
 }
 
+type SyncSelected = 'None' | 'CardDAV';
+
+/** Settings with `source` as the default source (added when there was none), or with it replaced. */
+function withDefaultSource(settings: ContactsPluginSettings, source: Source): ContactsPluginSettings {
+  const exists = settings.sources.some((s) => s.id === source.id);
+  return {
+    ...settings,
+    sources: exists ? settings.sources.map((s) => (s.id === source.id ? source : s)) : [...settings.sources, source],
+    defaultSource: exists ? settings.defaultSource : source.id,
+  };
+}
+
 export function SynchronizationSettings() {
   const isDisabled = Platform.isMobileApp;
   const [warning, setWarning] = useState('');
   const initSettings = getSettings();
-  const [syncEnabled, setSyncEnabled] = useState<boolean>(initSettings.syncEnabled);
-  const [syncSelected, setSyncSelected] = useState<SyncSelected>(initSettings.syncSelected);
+  const initSource = defaultSourceOf(initSettings);
+  const [syncEnabled, setSyncEnabled] = useState<boolean>(initSource?.enabled === true);
+  const [syncSelected, setSyncSelected] = useState<SyncSelected>(initSource ? 'CardDAV' : 'None');
   const [savedCredentials, setSavedCredentials] = useState<StoredCredentials>({
-    authType: initSettings.CardDAV.authType,
-    authKey: initSettings.CardDAV.authKey
+    authType: initSource?.authType ?? 'apikey',
+    authKey: initSource?.authKey ?? ''
   });
   const [carddavSettings, setCarddavSettings] = useState<CarddavSettingsInterface>(
-    formFromSaved(initSettings.CardDAV.addressBookUrl, savedCredentials)
+    formFromSaved(initSource?.addressBookUrl ?? '', savedCredentials)
   );
 
   const enableSync = async () => {
@@ -63,18 +78,20 @@ export function SynchronizationSettings() {
         return;
       }
 
-      const updateSetting = getSettings();
-      updateSetting.syncEnabled = true;
-      updateSetting.CardDAV = {
+      const current = getSettings();
+      const existing = defaultSourceOf(current);
+      const source: Source = {
+        id: existing?.id ?? generateUUID(),
+        name: existing?.name ?? sourceNameFromUrl(carddavSettings.addressBookUrl),
         addressBookUrl: carddavSettings.addressBookUrl,
-        syncInterval: 900,
+        enabled: true,
         ...credentials
       };
       setSavedCredentials(credentials);
       setCarddavSettings(formFromSaved(carddavSettings.addressBookUrl, credentials));
       setSyncEnabled(true);
       setWarning('');
-      await setSettings(updateSetting);
+      await setSettings(withDefaultSource(current, source));
     } catch (err: any) {
       setWarning(`failed to enable connection! ${err?.message || err || 'Unknown error'}.`);
     }
@@ -82,7 +99,9 @@ export function SynchronizationSettings() {
 
   const forgetSaved = async () => {
     setSavedCredentials({ ...savedCredentials, authKey: '' });
-    await updateSetting('CardDAV.authKey', '');
+    const current = getSettings();
+    const source = defaultSourceOf(current);
+    if (source) await setSettings(withDefaultSource(current, { ...source, authKey: '' }));
   };
 
   const connectedAs = savedCredentials.authType === 'apikey'
@@ -92,12 +111,10 @@ export function SynchronizationSettings() {
   const disableSync = async () => {
     setSyncEnabled(false);
     setSyncSelected('None');
-    await updateSetting('syncEnabled', false)
+    const current = getSettings();
+    const source = defaultSourceOf(current);
+    if (source?.enabled) await setSettings(withDefaultSource(current, { ...source, enabled: false }));
   }
-
-  React.useEffect(() => {
-    updateSetting('syncSelected', syncSelected)
-  }, [syncSelected]);
 
   React.useEffect(() => {
     if(isDisabled) {

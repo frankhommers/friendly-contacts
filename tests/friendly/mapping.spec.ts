@@ -105,6 +105,14 @@ describe('friendly mapping', () => {
     expect(errors.some((e) => e.includes('TEL[CELL'))).toBe(true);
   });
 
+  it('source is reserved', () => {
+    const rows: MappingRow[] = [
+      ...DEFAULT_MAPPING,
+      { kind: 'field', property: 'source', read: ['X-SOURCE'], write: 'X-SOURCE' },
+    ];
+    expect(validateMapping(rows).some((e) => e.includes('`source` is reserved for the address book.'))).toBe(true);
+  });
+
   it('reports a mirror that names no relation row', () => {
     const rows = DEFAULT_MAPPING.map((r) => (r.property === 'parents' ? { ...r, mirror: 'children2' } : r)) as MappingRow[];
     const errors = validateMapping(rows);

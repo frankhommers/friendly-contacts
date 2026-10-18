@@ -6,12 +6,13 @@ import {contactSyncState, noteIO, relationContextFor} from "src/contacts/obsidia
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings, settings } from "src/context/sharedSettingsContext";
 import { getCurrentAdapter } from "src/sync/adapters";
+import { defaultSourceOf } from "src/sync/sources";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
 import {syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
 import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
 
-export const enabled = computed(() => settings.value?.syncEnabled ?? false);
+export const enabled = computed(() => (settings.value ? defaultSourceOf(settings.value)?.enabled === true : false));
 
 function hasUidMatch(remoteContact:VCardMeta, currentContacts: Contact[]) {
   const uid = remoteContact.uid;

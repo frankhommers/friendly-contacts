@@ -19,7 +19,7 @@ vi.mock("src/insights/insightService", () => ({
 }));
 
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
-import type { ContactsPluginSettings } from 'src/settings/settings.d';
+import type { ContactsPluginSettings, Source } from 'src/settings/settings.d';
 import { afterEach,describe, expect, it, vi } from 'vitest';
 
 const mockSettings: ContactsPluginSettings = {
@@ -28,15 +28,9 @@ const mockSettings: ContactsPluginSettings = {
   processors: {
     someRandomProcessor: true,
   },
-  syncEnabled: false,
   groupInsights: true,
-  syncSelected: 'None',
-  CardDAV: {
-    addressBookUrl: '',
-    syncInterval: 900,
-    authKey: '',
-    authType: 'apikey'
-  },
+  sources: [],
+  defaultSource: '',
   createFieldsKeys:['N.FN'],
   friendly: { mapping: [], mirrorRelations: false } as ContactsPluginSettings['friendly'],
 };
@@ -83,6 +77,25 @@ describe('sharedSettingsContext', () => {
     expect(retrieved).to.deep.equal(testDefaultSettings);
     expect(saveData).toHaveBeenCalledTimes(1);
     expect(saveData).toHaveBeenCalledWith(expect.objectContaining(testDefaultSettings));
+  });
+
+  it('initSettings migrates CardDAV to a source', async () => {
+    const { sources: _sources, defaultSource: _defaultSource, ...old } = mockSettings;
+    const legacy = {
+      ...old,
+      syncEnabled: true,
+      syncSelected: 'CardDAV',
+      CardDAV: { addressBookUrl: 'https://pim.example/frank/contacts/', authType: 'basic', authKey: 'k', syncInterval: 900 },
+    };
+    await initSettings(async () => legacy, saveData);
+    const saved = saveData.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(saved.sources).toEqual([expect.objectContaining({
+      name: 'contacts', addressBookUrl: 'https://pim.example/frank/contacts/', authType: 'basic', authKey: 'k', enabled: true,
+    })]);
+    expect(saved.defaultSource).toBe((saved.sources as Source[])[0].id);
+    expect(saved).not.toHaveProperty('CardDAV');
+    expect(saved).not.toHaveProperty('syncEnabled');
+    expect(saved).not.toHaveProperty('syncSelected');
   });
 
   it('gives stored settings without a friendly key the default mapping', async () => {

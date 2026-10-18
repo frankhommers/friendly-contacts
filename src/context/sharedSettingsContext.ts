@@ -2,7 +2,9 @@ import { signal } from "@preact/signals-core";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import { ContactsPluginSettings } from "src/settings/settings.d";
+import { migrateSources } from "src/sync/sources";
 import { deepCloneObject } from "src/util/deepCloneObject";
+import { generateUUID } from "src/util/vcard";
 
 export const settings = signal<ContactsPluginSettings | undefined>(undefined);
 let saveData: (data: any) => Promise<void>;
@@ -16,7 +18,7 @@ function isLegacyDefault(keys: unknown): boolean {
 export async function initSettings(
   loadData: () => Promise<any>,   // a callable async function
   mySaveData: (data: any) => Promise<void> // another callable async function
-) {
+): Promise<{ migratedFrom?: string }> {
 
   const insightsSetting = insightService.settings();
   const insightsSettingDefaults = insightsSetting.reduce((acc:Record<string, string|boolean>, setting) => {
@@ -27,13 +29,13 @@ export async function initSettings(
 
   saveData = mySaveData;
   const loaded = await loadData() ?? {};
+  const { CardDAV: _cardDAV, syncSelected: _syncSelected, syncEnabled: _syncEnabled, ...rest } = loaded;
+  const { sources, defaultSource, migratedFrom } = migrateSources(loaded, generateUUID);
   const initializedSettings = {
       ...DEFAULT_SETTINGS,
-      ...loaded,
-      CardDAV: {
-        ...DEFAULT_SETTINGS.CardDAV,
-        ...(loaded.CardDAV ?? {})
-      },
+      ...rest,
+      sources,
+      defaultSource,
       processors: {
         ...insightsSettingDefaults,
         ...(loaded.processors ?? {})
@@ -48,6 +50,7 @@ export async function initSettings(
       }
     };
     await setSettings(initializedSettings);
+    return { migratedFrom };
 }
 
 export async function updateSetting(path: string, value: string | boolean | string[]) {

@@ -29,15 +29,9 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
   contactsFolder: '',
   defaultHashtag: '',
   processors: {},
-  syncSelected: 'None',
-  syncEnabled: false,
   groupInsights: true,
-  CardDAV: {
-    addressBookUrl: '',
-    syncInterval: 900,
-    authKey: '',
-    authType: 'apikey'
-  },
+  sources: [],
+  defaultSource: '',
   createFieldsKeys: [
     'firstname', 'lastname', 'mobile', 'phone', 'work-phone', 'email', 'work-email', 'birthday',
     'street', 'city', 'postcode', 'country', 'website', 'company', 'title', 'categories',

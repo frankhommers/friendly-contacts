@@ -1,16 +1,16 @@
 import type { MappingRow } from "src/contacts/friendly/mapping";
 
 export type AuthType = "basic" | "apikey";
-export type SyncSelected = "None" | "CardDAV";
 
 export interface ContactsPluginSettings {
   contactsFolder: string;
   defaultHashtag: string;
   processors: ProcessorsSettings
-  syncSelected: SyncSelected;
-  syncEnabled: boolean;
   groupInsights: boolean;
-  CardDAV: CardDavSyncSettings;
+  /** Address books (CardDAV). */
+  sources: Source[];
+  /** Id of the source new contacts go to; '' when there is none. */
+  defaultSource: string;
   createFieldsKeys: string[]
   friendly: FriendlySettings;
 }
@@ -20,11 +20,13 @@ export interface FriendlySettings {
 }
 
 
-interface CardDavSyncSettings {
+export interface Source {
+  id: string;
+  name: string;
   addressBookUrl: string;
-  syncInterval: number;
-  authKey: string;
   authType: AuthType;
+  authKey: string;
+  enabled: boolean;
 }
 
 interface ProcessorsSettings {

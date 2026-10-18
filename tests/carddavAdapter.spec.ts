@@ -7,7 +7,8 @@ let baseUrl = '';
 
 vi.mock("src/context/sharedSettingsContext", () => ({
   getSettings: vi.fn(() => ({
-    CardDAV: { addressBookUrl: baseUrl + 'frank/contacts/', authType: 'apikey', authKey: 'k', syncInterval: 900 },
+    sources: [{ id: 's1', name: 'contacts', addressBookUrl: baseUrl + 'frank/contacts/', authType: 'apikey', authKey: 'k', enabled: true }],
+    defaultSource: 's1',
   })),
 }));
 

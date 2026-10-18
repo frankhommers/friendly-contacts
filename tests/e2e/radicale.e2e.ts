@@ -290,14 +290,15 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     await createAddressBook();
     await initSettings(
       async () => ({
-        syncSelected: 'CardDAV',
-        syncEnabled: true,
-        CardDAV: {
+        sources: [{
+          id: 'radicale',
+          name: 'Radicale',
           addressBookUrl: `http://127.0.0.1:${port}${BOOK}`,
           authType: 'basic',
           authKey: encodeBasicAuth('frank', 'x'),
-          syncInterval: 0,
-        },
+          enabled: true,
+        }],
+        defaultSource: 'radicale',
       }),
       async () => {},
     );
