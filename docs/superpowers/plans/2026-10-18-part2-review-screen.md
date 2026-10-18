@@ -47,6 +47,11 @@ source", "Import").
   Apply is enabled at once — spec says "every row comes from Obsidian" — cost if wrong: one extra click.
 - Ruling: a source move without property differences still opens the screen (only the move line), so the move is
   always confirmed — spec "No differences … no source change" — cost if wrong: none.
+- Ruling (from the Part 1 final review): the orchestration (source plan → prepare → review → apply → reopen) lives
+  in an obsidian-free module `src/sync/syncFlow.ts` with injected dependencies and is unit-tested; `src/sync/sync.ts`
+  only wires Obsidian into it. Apply re-validates a move against the current state: before writing, the card must
+  still be only in `from` (re-run `locateCard` on the active books); otherwise `stale` — cost if wrong: one extra
+  lookup per move.
 - Ruling: "Sync this contact" appears as a command and in the existing sidebar menu; not in the file menu (spec
   leaves it to the builder) — cost if wrong: one more menu entry later.
 
@@ -189,10 +194,13 @@ source", "Import").
 ### Task 4: Orchestration, Sync this contact, Also changes, rename
 
 **Files:**
-- Modify: `src/sync/sync.ts` (`runSync`; remove `confirmMove`, `moveNote`, `syncWith`'s one-shot sync),
-  `src/main.ts` (command), `src/ui/sidebar/components/ContactView.tsx` (menu entry label stays "Sync")
-- Create: `src/sync/reviewExtras.ts`
-- Test: `tests/reviewExtras.spec.ts`
+- Modify: `src/sync/sync.ts` (`runSync` becomes wiring only; remove `confirmMove`, `moveNote`, `syncWith`'s one-shot
+  sync), `src/main.ts` (command), `src/ui/sidebar/components/ContactView.tsx` (menu entry label stays "Sync")
+- Create: `src/sync/reviewExtras.ts`, `src/sync/syncFlow.ts`
+- Test: `tests/reviewExtras.spec.ts`, `tests/syncFlow.spec.ts` (with fakes: plan kinds sync/adopt/move/refuse,
+  up-to-date, cancel writes nothing, stale note → reopen, 412 → reopen, reopen limit 3, move re-validated at Apply
+  (card appeared in the target meanwhile → stale, nothing written), `source:` written only after success);
+  `tests/e2e/radicale.e2e.ts` calls `syncFlow` instead of its hand-copied `syncAcrossBooks`
 
 **Interfaces:**
 - Consumes: Tasks 1–3; Part 1 `noteSourceId`, `planSync`, `locateCard`, `importRemoteCard`; `planMirrorWrites`,
