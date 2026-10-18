@@ -343,7 +343,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       country: 'Nederland',
       'work-city': 'Utrecht',
       note: 'Met at the market\nlikes rye',
-      birthday: '1604-03-12',
+      birthday: '--03-12',
       uid: JAN_UID,
     });
     expect(Object.keys(jan.frontmatter).filter((k) => /^[A-Z]|X-/.test(k))).toEqual([]);
