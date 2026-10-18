@@ -88,18 +88,35 @@ export async function saveSourcePatch(id: string, patch: SourcePatch): Promise<b
   return true;
 }
 
-/** Renames a source: the notes first, then the setting. Throws when the name is not valid or the source is gone. */
+/**
+ * Why `from` cannot be renamed to `to`: contact notes already name `to`, and renaming would merge them into this
+ * book. Their paths go to the console. undefined when nothing is in the way (a change of letter case only is fine).
+ */
+export function renameRefusal(app: App, from: string, to: string): string | undefined {
+  if (sameName(from, to)) return undefined;
+  const taken = notesNamingSource(app, to);
+  if (taken.length === 0) return undefined;
+  console.log(`Friendly Contacts: notes that already use the address book name ${to}:\n${taken.map((f) => f.path).join("\n")}`);
+  return `Not renamed: ${taken.length} note(s) already use ${to}. See console.`;
+}
+
+/**
+ * Renames a source: the notes first, then the setting. Throws when the name is not valid or the source is gone;
+ * returns `{ refused }` (nothing touched) when notes already use the new name.
+ */
 export async function renameSource(
   app: App,
   id: string,
   newName: string,
-): Promise<{ renamed: number; failed: string[] }> {
+): Promise<{ renamed: number; failed: string[] } | { refused: string }> {
   const { sources } = getSettings();
   const source = sources.find((s) => s.id === id);
   if (!source) throw new Error("This address book no longer exists.");
   const name = newName.trim();
   const problem = validateSourceName(name, sources, id);
   if (problem) throw new Error(problem);
+  const refused = renameRefusal(app, source.name, name);
+  if (refused) return { refused };
   const result = await renameSourceInNotes(app, source.name, name);
   if (!(await saveSourcePatch(id, { name }))) throw new Error("This address book no longer exists.");
   return result;

@@ -140,6 +140,35 @@ describe("renameSource", () => {
   });
 });
 
+describe("renameSource refusal", () => {
+  it("refuses, touching nothing, when notes already name the new name", async () => {
+    store.settings = { sources: [{ ...work }, { ...home }], defaultSource: "w" };
+    store.order = [];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { app, fms } = vault([
+      { path: "a.md", fm: { source: "Work" } },
+      { path: "b.md", fm: { source: "office" } },
+      { path: "c.md", fm: { source: "Office" } },
+    ]);
+    const result = await renameSource(app, "w", "Office");
+    expect(result).toEqual({ refused: "Not renamed: 2 note(s) already use Office. See console." });
+    expect(fms.get("a.md")).toEqual({ source: "Work" });
+    expect(fms.get("b.md")).toEqual({ source: "office" });
+    expect(store.order).toEqual([]);
+    expect((store.settings.sources[0] as Source).name).toBe("Work");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("b.md"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("c.md"));
+    log.mockRestore();
+  });
+
+  it("a change of letter case only is not blocked by the book's own notes", async () => {
+    store.settings = { sources: [{ ...work }], defaultSource: "w" };
+    const { app, fms } = vault([{ path: "a.md", fm: { source: "Work" } }]);
+    expect(await renameSource(app, "w", "WORK")).toEqual({ renamed: 1, failed: [] });
+    expect(fms.get("a.md")).toEqual({ source: "WORK" });
+  });
+});
+
 describe("saveSourcePatch", () => {
   it("a stale patch does not revert a newer rename", async () => {
     store.settings = { sources: [{ ...work, name: "Office", enabled: false }], defaultSource: "w" };

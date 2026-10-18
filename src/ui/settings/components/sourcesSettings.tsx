@@ -1,6 +1,6 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
-import { notesNamingSource, removalRefusal, removeSource, renameSource, saveSourcePatch } from "src/contacts/sourceNotes";
+import { notesNamingSource, removalRefusal, removeSource, renameRefusal, renameSource, saveSourcePatch } from "src/contacts/sourceNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import {
   connectionLabel,
@@ -68,9 +68,21 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
     }
     setNameError('');
     const from = source.name;
+    const refused = renameRefusal(app, from, wanted);
+    if (refused) {
+      new Notice(refused);
+      setName(source.name);
+      return;
+    }
     const count = notesNamingSource(app, from).length;
     const rename = () => attempt(async () => {
-      const { renamed, failed } = await renameSource(app, source.id, wanted);
+      const result = await renameSource(app, source.id, wanted);
+      if ('refused' in result) {
+        new Notice(result.refused);
+        setName(source.name);
+        return;
+      }
+      const { renamed, failed } = result;
       onChanged();
       if (failed.length > 0) console.log(`Friendly Contacts: not renamed in:\n${failed.join('\n')}`);
       if (count > 0) {
