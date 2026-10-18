@@ -82,6 +82,14 @@ describe('vcard creatEmpty', () => {
 
 describe('vcard parse', () => {
 
+  it('normalises year-less birthdays in the legacy record', async () => {
+    const compact = await parseValidVCards('BEGIN:VCARD\nVERSION:4.0\nFN:A B\nN:B;A;;;\nBDAY:--0315\nEND:VCARD\n');
+    expect(compact[0]['BDAY']).toBe('--03-15');
+
+    const apple = await parseValidVCards('BEGIN:VCARD\nVERSION:3.0\nFN:A B\nN:B;A;;;\nBDAY;X-APPLE-OMIT-YEAR=1604:1604-03-15\nEND:VCARD\n');
+    expect(apple[0]['BDAY']).toBe('--03-15');
+  });
+
   it('Should parse N field components correctly', async () => {
     const vcf = fixtures.readVcfFixture('noFirstName.vcf');
     const result = await parseValidVCards(vcf);

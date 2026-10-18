@@ -118,7 +118,7 @@ function parseVCardLine(line: string): VCardForObsidianRecord {
 	} else if (propKey in StructuredFields) {
 		parsedData = parseStructuredField(propKey as keyof typeof StructuredFields, value, typeValues);
 	} else if (['BDAY', 'ANNIVERSARY'].includes(propKey)) {
-		parsedData[`${propKey}${typeValues}`] = formatVCardDate(value)
+		parsedData[`${propKey}${typeValues}`] = formatVCardDate(value, params['x-apple-omit-year']?.[0])
   } else if (propKey.startsWith("X-")) {
     parsedData[`${propKey}${typeValues}`] = value;
   } else {
@@ -130,8 +130,21 @@ function parseVCardLine(line: string): VCardForObsidianRecord {
 	return parsedData;
 }
 
-function formatVCardDate(input: string): string {
+function formatVCardDate(input: string, omitYear?: string): string {
 	let trimmed = input.trim();
+
+	const yearless = /^--(\d{2})-?(\d{2})$/.exec(trimmed);
+	if (yearless) {
+		return `--${yearless[1]}-${yearless[2]}`;
+	}
+
+	// Apple writes year-less dates with a placeholder year, flagged by X-APPLE-OMIT-YEAR.
+	if (omitYear) {
+		const withYear = /^(\d{4})-?(\d{2})-?(\d{2})(?:T.*)?$/.exec(trimmed);
+		if (withYear && withYear[1] === omitYear.trim()) {
+			return `--${withYear[2]}-${withYear[3]}`;
+		}
+	}
 
   if (trimmed[8] === 'T') {
     trimmed = trimmed.slice(0, 8);

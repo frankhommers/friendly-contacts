@@ -3,6 +3,7 @@ import * as React from "react";
 import { Contact } from "src/contacts";
 import { fileId } from "src/file/file";
 import { ContactView } from "src/ui/sidebar/components/ContactView";
+import { compareBirthdays } from "src/util/birthday";
 import { Sort } from "src/util/constants";
 import myScrollTo from "src/util/myScrollTo";
 import { getSortName } from "src/util/nameUtils";
@@ -13,24 +14,6 @@ type ContactsListProps = {
 	sort: Sort;
 	processAvatar: (contact: Contact) => void;
 	exportVCF: (contactFile: TFile) => void;
-};
-
-const getNextBirthday = (birthdayStr: string): Date => {
-	const today = new Date();
-	const currentYear = today.getFullYear();
-	// Extract month and day from the birthday string.
-	const [ , monthStr, dayStr ] = birthdayStr.split('-');
-	const month = Number(monthStr); // 1-12
-	const day = Number(dayStr);     // 1-31
-
-	// Create a date for the birthday this year.
-	let nextBirthday = new Date(currentYear, month - 1, day);
-
-	// If this year's birthday has already passed, use the birthday in the next year.
-	if (nextBirthday < today) {
-		nextBirthday = new Date(currentYear + 1, month - 1, day);
-	}
-	return nextBirthday;
 };
 
 export const ContactsListView = (props: ContactsListProps) => {
@@ -49,22 +32,8 @@ export const ContactsListView = (props: ContactsListProps) => {
           const nameB= getSortName(b.data);
           return nameA.localeCompare(nameB);
         }
-				case Sort.BIRTHDAY: {
-					const aBday = a.data['BDAY'];
-					const bBday = b.data['BDAY'];
-
-					// Push contacts without a birthday to the bottom.
-					if (aBday && !bBday) return -1;
-					if (!aBday && bBday) return 1;
-					if (!aBday && !bBday) return 0;
-
-					// Calculate the next birthday date for each contact.
-					const nextA = getNextBirthday(aBday);
-					const nextB = getNextBirthday(bBday);
-
-					// Sort by the computed next birthday (earlier dates come first).
-					return nextA.getTime() - nextB.getTime();
-				}
+				case Sort.BIRTHDAY:
+					return compareBirthdays(a.data['BDAY'], b.data['BDAY'], new Date());
 				case Sort.ORG: {
 					const orgA = a.data['ORG'];
 					const orgB = b.data['ORG'];

@@ -297,6 +297,8 @@ Here’s a breakdown of supported vCard fields and their **human-readable meanin
 | `TITLE`             | Job Title                      | `Senior Developer`          |
 | `ROLE`              | Job Role                       | `Software Engineer`         |
 
+Dates without a year, such as a birthday or anniversary where the year is unknown, are written `--MM-DD` (for example `--03-15`). Keep the `birthday` and `anniversary` properties as Text properties in Obsidian; the Date type rejects that form.
+
 ---
 
 <!-- TOC --><a name="-address-fields"></a>
