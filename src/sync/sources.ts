@@ -70,3 +70,64 @@ export function migrateSources(loaded: Record<string, unknown>, newId: () => str
   };
   return { sources: [source], defaultSource: id, migratedFrom: id };
 }
+
+/** Where a card was found: the source, and the card's href and ETag there. */
+export type CardLocation = { sourceId: string; href: string; etag: string };
+
+export type SyncPlan =
+  | { kind: 'sync'; sourceId: string } // card in the note's source, or no card anywhere -> sync/create there
+  | { kind: 'adopt'; sourceId: string } // note has no source:, card found in exactly one source
+  | { kind: 'move'; from: CardLocation; to: string } // note names a source, card is in exactly one other
+  | { kind: 'refuse'; message: string };
+
+/**
+ * The source a note syncs with. An explicit `source:` name is that source or an error, never a fallback.
+ * Without a name: the first source in `baseIn` (sources holding a sync base for the note's UID, enabled ones
+ * first), else the default. A disabled source chosen this way is an error too.
+ */
+export function noteSourceId(
+  noteSource: string | undefined,
+  sources: Source[],
+  baseIn: string[],
+  defaultSource: string,
+): { id: string } | { error: string } {
+  const usable = (source: Source) =>
+    source.enabled ? { id: source.id } : { error: `Address book '${source.name}' is not enabled` };
+  if (noteSource !== undefined && noteSource.trim() !== '') {
+    const named = findSourceByName(sources, noteSource);
+    return named ? usable(named) : { error: `Unknown address book '${noteSource.trim()}'` };
+  }
+  if (baseIn.length > 0) {
+    // Callers list enabled sources first; a base only in a disabled one refuses (the card may still be there).
+    const holder = sources.find((s) => s.id === baseIn[0]);
+    return holder ? usable(holder) : { id: baseIn[0] };
+  }
+  const fallback = sources.find((s) => s.id === defaultSource);
+  return fallback ? usable(fallback) : { error: 'No address book is set up' };
+}
+
+const listNames = (names: string[]): string =>
+  names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+/** What Sync does, given the note's source and the sources where a card with the note's exact UID was found. */
+export function planSync(
+  noteSource: { id: string; explicit: boolean },
+  found: CardLocation[],
+  sourceName: (id: string) => string,
+): SyncPlan {
+  if (found.length === 0 || found.some((f) => f.sourceId === noteSource.id)) {
+    return { kind: 'sync', sourceId: noteSource.id };
+  }
+  if (found.length === 1) {
+    const [only] = found;
+    return noteSource.explicit
+      ? { kind: 'move', from: only, to: noteSource.id }
+      : { kind: 'adopt', sourceId: only.sourceId };
+  }
+  return {
+    kind: 'refuse',
+    message:
+      `The card is in ${listNames(found.map((f) => sourceName(f.sourceId)))}; ` +
+      'keep one copy (delete the others on the server) and set source: to that address book.',
+  };
+}

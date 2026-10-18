@@ -24,6 +24,7 @@ import { encodeBasicAuth } from 'src/settings/carddavCredentials';
 import { VCardMeta } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { carddavAdapter } from 'src/sync/adapters/carddavGeneric';
+import { moveCard } from 'src/sync/moveCard';
 import { NoteIO, SyncDeps, syncContact } from 'src/sync/syncContact';
 import { createSyncState, FileStore } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
@@ -167,17 +168,17 @@ async function startRadicale(): Promise<void> {
   throw new Error(`Radicale did not answer on port ${port}:\n${radicaleLog}`);
 }
 
-async function createAddressBook(): Promise<void> {
+async function createAddressBook(book = BOOK): Promise<void> {
   const res = await request(
     'MKCOL',
-    BOOK,
+    book,
     `<?xml version="1.0" encoding="utf-8"?>
 <D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
   <D:set><D:prop><D:resourcetype><D:collection/><C:addressbook/></D:resourcetype></D:prop></D:set>
 </D:mkcol>`,
     { 'Content-Type': 'application/xml; charset=utf-8' },
   );
-  expect(res.status, `MKCOL ${BOOK}: ${res.data}`).toBe(201);
+  expect(res.status, `MKCOL ${book}: ${res.data}`).toBe(201);
 }
 
 // --- the plugin side: in-memory note, base store and relation lookups ---
@@ -519,5 +520,75 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
 
     expect(await sync(note)).toBe('unchanged');
     expect(pushes).toEqual([]);
+  });
+
+  it('9. moves a card to a second address book: create there, delete here, move the base', async () => {
+    const family = `/frank/family/`;
+    await createAddressBook(family);
+    const familyAdapter = carddavAdapter({
+      addressBookUrl: `http://127.0.0.1:${port}${family}`,
+      authType: 'basic',
+      authKey: encodeBasicAuth('frank', 'x'),
+    });
+    const familyState = createSyncState(memoryFileStore(), 'sync-state/family');
+
+    const uid = 'C0FFEE00-0000-4000-8000-000000000009';
+    const href = `${BOOK}to-move.vcf`;
+    await putCard(href, SEM_CARD.replace(SEM_UID, uid).replace(/Sem/g, 'Mo'));
+    const note = await importCard(href);
+    expect(await sync(note)).toBe('unchanged');
+    const base = await state.get(uid);
+    expect(base?.etag).toBeTruthy();
+    const location = { sourceId: 'radicale', href: base!.href, etag: base!.etag };
+
+    // The target already has a card with this UID: refused before anything is written.
+    const blocking = `${family}blocking.vcf`;
+    await putCard(blocking, base!.raw);
+    expect(await moveCard(base!.raw, uid, { adapter, state, location }, { adapter: familyAdapter, state: familyState })).toEqual({
+      ok: false,
+      message: 'The address book already has a card with this UID',
+    });
+    expect(await serverCard(href)).toBe(base!.raw);
+    expect(await state.get(uid)).toEqual(base);
+    expect((await request('DELETE', blocking)).status).toBeLessThan(300);
+
+    expect(await moveCard(base!.raw, uid, { adapter, state, location }, { adapter: familyAdapter, state: familyState })).toEqual({
+      ok: true,
+      oldKept: false,
+    });
+    expect((await request('GET', href)).status).toBe(404);
+    expect(await state.get(uid)).toBeUndefined();
+    const moved = await familyState.get(uid);
+    expect(moved?.href).toMatch(new RegExp(`^${family}[^/]+\\.vcf$`));
+    expect(unfolded(await serverCard(moved!.href))).toEqual(unfolded(base!.raw));
+    expect(moved?.etag).toBe((await serverEtag(moved!.href))?.replace(/"/g, ''));
+  });
+
+  it('10. a move whose old card changed in the meantime keeps both copies', async () => {
+    const family = `/frank/family/`;
+    const familyAdapter = carddavAdapter({
+      addressBookUrl: `http://127.0.0.1:${port}${family}`,
+      authType: 'basic',
+      authKey: encodeBasicAuth('frank', 'x'),
+    });
+    const familyState = createSyncState(memoryFileStore(), 'sync-state/family');
+    const uid = 'C0FFEE00-0000-4000-8000-000000000010';
+    const href = `${BOOK}changed.vcf`;
+    const card = SEM_CARD.replace(SEM_UID, uid).replace(/Sem/g, 'Lou');
+    await putCard(href, card);
+    const note = await importCard(href);
+    expect(await sync(note)).toBe('unchanged');
+    const base = (await state.get(uid))!;
+    // Another client edits the old card after our Sync.
+    await putCard(href, card.replace('FN:Lou de Vries', 'FN:Lou de Vries-Jansen'));
+
+    const location = { sourceId: 'radicale', href: base.href, etag: base.etag };
+    expect(await moveCard(base.raw, uid, { adapter, state, location }, { adapter: familyAdapter, state: familyState })).toEqual({
+      ok: true,
+      oldKept: true,
+    });
+    expect(await serverCard(href)).toContain('FN:Lou de Vries-Jansen');
+    expect((await familyState.get(uid))?.href).toMatch(new RegExp(`^${family}`));
+    expect(await state.get(uid)).toBeUndefined();
   });
 });

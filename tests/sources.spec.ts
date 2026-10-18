@@ -1,4 +1,12 @@
-import { findSourceByName, migrateSources, sourceNameFromUrl, validateSourceName } from 'src/sync/sources';
+import {
+  CardLocation,
+  findSourceByName,
+  migrateSources,
+  noteSourceId,
+  planSync,
+  sourceNameFromUrl,
+  validateSourceName,
+} from 'src/sync/sources';
 import type { Source } from 'src/settings/settings.d';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -69,5 +77,64 @@ describe('findSourceByName', () => {
     const sources = [source('a', 'Family')];
     expect(findSourceByName(sources, ' FAMILY ')).toBe(sources[0]);
     expect(findSourceByName(sources, 'Work')).toBeUndefined();
+  });
+});
+
+describe('noteSourceId', () => {
+  const sources = [source('p', 'Private'), source('f', 'Family'), { ...source('w', 'Work'), enabled: false }];
+
+  it('unknown or disabled source refuses', () => {
+    expect(noteSourceId('Office', sources, ['p'], 'p')).toEqual({ error: "Unknown address book 'Office'" });
+    expect(noteSourceId('work', sources, ['p'], 'p')).toEqual({ error: "Address book 'Work' is not enabled" });
+    // Never a fallback to the base or the default.
+    expect(noteSourceId(' family ', sources, ['p'], 'p')).toEqual({ id: 'f' });
+  });
+
+  it('no source uses the source holding the base', () => {
+    expect(noteSourceId(undefined, sources, ['f', 'p'], 'p')).toEqual({ id: 'f' });
+  });
+
+  it('no source with the base only in a disabled source refuses', () => {
+    // The card may still be there: never create a second copy in the default.
+    expect(noteSourceId(undefined, sources, ['w'], 'p')).toEqual({ error: "Address book 'Work' is not enabled" });
+  });
+
+  it('no source and no base uses the default', () => {
+    expect(noteSourceId(undefined, sources, [], 'f')).toEqual({ id: 'f' });
+    expect(noteSourceId(undefined, sources, [], '')).toEqual({ error: 'No address book is set up' });
+    expect(noteSourceId(undefined, sources, [], 'gone')).toEqual({ error: 'No address book is set up' });
+    expect(noteSourceId(undefined, sources, [], 'w')).toEqual({ error: "Address book 'Work' is not enabled" });
+  });
+});
+
+describe('planSync', () => {
+  const names: Record<string, string> = { p: 'Private', f: 'Family', w: 'Work' };
+  const name = (id: string) => names[id] ?? id;
+  const at = (sourceId: string): CardLocation => ({ sourceId, href: `/${sourceId}/jan.vcf`, etag: `e-${sourceId}` });
+
+  it('card in own source syncs', () => {
+    expect(planSync({ id: 'p', explicit: true }, [at('p')], name)).toEqual({ kind: 'sync', sourceId: 'p' });
+    expect(planSync({ id: 'p', explicit: false }, [at('f'), at('p'), at('w')], name)).toEqual({ kind: 'sync', sourceId: 'p' });
+  });
+
+  it('card nowhere creates in own source', () => {
+    expect(planSync({ id: 'f', explicit: true }, [], name)).toEqual({ kind: 'sync', sourceId: 'f' });
+    expect(planSync({ id: 'f', explicit: false }, [], name)).toEqual({ kind: 'sync', sourceId: 'f' });
+  });
+
+  it('card only elsewhere is adopted without source', () => {
+    expect(planSync({ id: 'p', explicit: false }, [at('f')], name)).toEqual({ kind: 'adopt', sourceId: 'f' });
+  });
+
+  it('card only elsewhere is moved with explicit source', () => {
+    expect(planSync({ id: 'p', explicit: true }, [at('f')], name)).toEqual({ kind: 'move', from: at('f'), to: 'p' });
+  });
+
+  it('card in two other sources refuses and names them', () => {
+    for (const explicit of [true, false]) {
+      const plan = planSync({ id: 'p', explicit }, [at('f'), at('w')], name);
+      expect(plan.kind).toBe('refuse');
+      expect(plan.kind === 'refuse' && plan.message).toMatch(/^The card is in Family and Work; /);
+    }
   });
 });

@@ -21,6 +21,7 @@ import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relat
 import { FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
+import type { CardLocation } from 'src/sync/sources';
 import type { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import type { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid, generateUUID } from 'src/util/vcard';
@@ -53,9 +54,9 @@ class SyncError extends Error {}
 const isResponse = (value: unknown): value is AppHttpResponse =>
   typeof value === 'object' && value !== null && 'status' in value && 'errorMessage' in value;
 
-const describeResponse = (res: AppHttpResponse): string => res.errorMessage || `HTTP ${res.status}`;
+export const describeResponse = (res: AppHttpResponse): string => res.errorMessage || `HTTP ${res.status}`;
 
-const succeeded = (res: AppHttpResponse): boolean => !res.errorMessage && res.status >= 200 && res.status < 300;
+export const succeeded = (res: AppHttpResponse): boolean => !res.errorMessage && res.status >= 200 && res.status < 300;
 
 const cardUid = (raw: string): string => cleanUid(parseCard(raw).find((l) => !l.group && l.name === 'UID')?.value);
 
@@ -173,10 +174,7 @@ async function createCard(note: NoteIO, deps: SyncDeps, local: Props, uid: strin
   if (res.status === 412) return 'retry';
   if (!succeeded(res)) throw new SyncError(describeResponse(res));
 
-  // The server picks the href; ask for it. The base must still be stored when that lookup fails.
-  const found = await deps.adapter.getMetaByUid(id);
-  const meta = !isResponse(found) && found && sameUid(found, id) ? found : undefined;
-  const stored: SyncStateEntry = { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${encodeURIComponent(id)}.vcf` };
+  const stored = await createdBase(deps.adapter, id, raw, res);
 
   // Like after any sync, the note takes the card's canonical properties (e.g. `mobile-2` alone becomes `mobile`).
   await writeNote(note, deps, local, toFriendly(card.lines, deps.rows, deps.ctx).props, []);
@@ -185,11 +183,52 @@ async function createCard(note: NoteIO, deps: SyncDeps, local: Props, uid: strin
   return 'created';
 }
 
+/**
+ * The base for a card just created with If-None-Match (`res` is the PUT's response). The server picks the href;
+ * ask for it. The base must still be stored when that lookup fails.
+ */
+export async function createdBase(adapter: AdapterInterface, id: string, raw: string, res: AppHttpResponse): Promise<SyncStateEntry> {
+  let meta: VCardMeta | undefined;
+  try {
+    const found = await adapter.getMetaByUid(id);
+    meta = !isResponse(found) && found && sameUid(found, id) ? found : undefined;
+  } catch {
+    meta = undefined;
+  }
+  return { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${encodeURIComponent(id)}.vcf` };
+}
+
 /** getMetaByUid matches UIDs that merely contain ours; only an exact match is this contact's card. */
 async function findCard(adapter: AdapterInterface, uid: string): Promise<VCardMeta | undefined> {
   const found = await adapter.getMetaByUid(cleanUid(uid));
   if (isResponse(found)) throw new SyncError(describeResponse(found));
   return found && sameUid(found, cleanUid(uid)) ? found : undefined;
+}
+
+/**
+ * Looks the UID up in every given source with the same exact-UID match as Sync. `found` lists the sources that
+ * hold the card; `failed` lists the sources whose lookup failed (their answer is unknown).
+ */
+export async function locateCard(
+  sources: { sourceId: string; adapter: AdapterInterface }[],
+  uid: string,
+): Promise<{ found: CardLocation[]; failed: { sourceId: string; message: string }[] }> {
+  const found: CardLocation[] = [];
+  const failed: { sourceId: string; message: string }[] = [];
+  const results = await Promise.all(
+    sources.map(async ({ sourceId, adapter }) => {
+      try {
+        return { sourceId, meta: await findCard(adapter, uid) };
+      } catch (e) {
+        return { sourceId, error: e instanceof Error ? e.message : String(e) };
+      }
+    }),
+  );
+  for (const result of results) {
+    if ('error' in result) failed.push({ sourceId: result.sourceId, message: result.error ?? '' });
+    else if (result.meta) found.push({ sourceId: result.sourceId, href: result.meta.href, etag: result.meta.etag });
+  }
+  return { found, failed };
 }
 
 /** A missing UID in the lookup result is left to pullCard, which checks the card itself. */

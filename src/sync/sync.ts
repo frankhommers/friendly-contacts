@@ -1,28 +1,80 @@
 import {computed} from "@preact/signals-core";
-import {Notice} from "obsidian";
+import {App, Notice} from "obsidian";
 import {Contact} from "src/contacts";
 import {hasVCardValues} from "src/contacts/friendlyNotes";
+import {coerceNoteProps} from "src/contacts/friendly/merge";
 import {contactSyncState, noteIO, relationContextFor} from "src/contacts/obsidianNotes";
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
-import { adapterFor, defaultActiveSource, isSyncAvailable } from "src/sync/adapters";
+import { Source } from "src/settings/settings";
+import { activeSources, adapterFor, defaultActiveSource, isSyncAvailable } from "src/sync/adapters";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
-import {syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
+import {moveCard} from "src/sync/moveCard";
+import {CardLocation, noteSourceId, planSync, SyncPlan} from "src/sync/sources";
+import {locateCard, NoteIO, syncContact as syncNote, SyncOutcome} from "src/sync/syncContact";
+import {SyncStateEntry} from "src/sync/syncState";
+import {ConfirmModal} from "src/ui/modals/confirmModal";
 import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
 
 export const enabled = computed(() => isSyncAvailable());
 
-/** Until sync is source-aware (Tasks 4-6), the operations here talk to the default source when it is active. */
+/** Until listing and importing are source-aware (Tasks 5-6), they talk to the default source when it is active. */
 function currentAdapter(): AdapterInterface | undefined {
   const source = defaultActiveSource();
   return source ? adapterFor(source) : undefined;
 }
 
-/** The id of the source whose sync state the operations here use (the default source, when it is active). */
-function currentSourceId(): string | undefined {
-  return defaultActiveSource()?.id;
+/** The note's `source:` name; undefined when the property is missing or empty. */
+function sourceProperty(frontmatter: Record<string, unknown>): string | undefined {
+  const value = frontmatter.source;
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  return text === '' ? undefined : text;
+}
+
+/** The note's uid as Sync reads it ('' when there is none). */
+function noteUid(frontmatter: Record<string, unknown>): string {
+  const uid = coerceNoteProps(frontmatter, getSettings().friendly.mapping).props.uid;
+  return typeof uid === 'string' ? uid.trim() : '';
+}
+
+type NoteSource = { source: Source; explicit: boolean; active: Source[] };
+
+/**
+ * The active source a note syncs with: its `source:` (never a fallback when that is unknown or disabled), else the
+ * active source holding a sync base for its UID, else the default source.
+ */
+async function resolveNoteSource(app: App, frontmatter: Record<string, unknown>, uid: string): Promise<NoteSource | { error: string }> {
+  const active = activeSources();
+  if (active.length === 0) return { error: 'Sync is not set up' };
+  const named = sourceProperty(frontmatter);
+  const settings = getSettings();
+  const baseIn: string[] = [];
+  if (uid !== '') {
+    // Active sources first; a base only in a disabled source makes noteSourceId refuse rather than pick the default.
+    const inactive = settings.sources.filter((s) => !active.some((a) => a.id === s.id));
+    for (const source of [...active, ...inactive]) {
+      if (await contactSyncState(source.id, app).get(uid)) baseIn.push(source.id);
+    }
+  }
+  const resolved = noteSourceId(named, settings.sources, baseIn, settings.defaultSource);
+  if ('error' in resolved) return resolved;
+  const source = active.find((s) => s.id === resolved.id);
+  if (!source) return { error: 'Sync is not set up' };
+  return { source, explicit: named !== undefined, active };
+}
+
+/** Writes `source: <name>` into the note when it does not hold exactly that name. */
+async function writeSource(note: NoteIO, name: string): Promise<void> {
+  if ((await note.readFrontmatter()).source !== name) await note.writeProps({ source: name }, []);
+}
+
+function confirmMove(app: App, title: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    new ConfirmModal(app, title, 'Move', () => resolve(true), 'Cancel', () => resolve(false)).open();
+  });
 }
 
 function hasUidMatch(remoteContact:VCardMeta, currentContacts: Contact[]) {
@@ -67,19 +119,23 @@ export async function getRawVcardFromRemote(href: string) {
 
 /** Deletes the contact's card on the server and forgets its sync state; true when deleted. */
 export async function deleteOnRemote(contact: Contact): Promise<boolean> {
-  const adapter = currentAdapter();
-  const sourceId = currentSourceId();
-  if (!adapter || sourceId === undefined) {
-    return false;
-  }
   const uid = cleanUid(contact.data['UID']);
   if (!uid) {
     new Notice(`${contact.file.basename} has no UID; there is no card on the server to delete.`);
     return false;
   }
-  const meta = await getMetaByUID(uid);
+  const app = getApp();
+  // Only in the note's own source; never in another one that happens to hold the UID.
+  const resolved = await resolveNoteSource(app, await noteIO(app, contact.file).readFrontmatter(), uid);
+  if ('error' in resolved) {
+    new Notice(`Not deleting ${contact.file.basename}: ${resolved.error}.`);
+    return false;
+  }
+  const sourceId = resolved.source.id;
+  const adapter = adapterFor(resolved.source);
+  const meta = await getMetaByUID(adapter, uid);
   if (!meta) {
-    new Notice(`${contact.file.basename} was not found on the server.`);
+    new Notice(`${contact.file.basename} was not found in ${resolved.source.name}.`);
     return false;
   }
   if (cleanUid(meta.uid) !== uid) {
@@ -101,7 +157,7 @@ export async function deleteOnRemote(contact: Contact): Promise<boolean> {
     return false;
   }
   await contactSyncState(sourceId).remove(uid);
-  new Notice(`Deleted ${contact.file.basename} from the server; the note stays.`);
+  new Notice(`Deleted ${contact.file.basename} from ${resolved.source.name}; the note stays.`);
   return true;
 }
 
@@ -135,34 +191,117 @@ export async function syncContact(contact: Contact): Promise<SyncOutcome | undef
 }
 
 async function runSync(contact: Contact): Promise<SyncOutcome | undefined> {
-  const adapter = currentAdapter();
-  const sourceId = currentSourceId();
-  if (!adapter || sourceId === undefined) {
-    new Notice('Sync is not set up.');
-    return undefined;
-  }
   const app = getApp();
   const rows = getSettings().friendly.mapping;
   const note = noteIO(app, contact.file);
-  if (hasVCardValues(await note.readFrontmatter(), rows)) {
+  const name = contact.file.basename;
+  const frontmatter = await note.readFrontmatter();
+  if (hasVCardValues(frontmatter, rows)) {
     // Sync reads only friendly properties: a UID kept in `UID` is not seen, and syncing would create a second card.
-    new Notice(`${contact.file.basename} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.`);
+    new Notice(`${name} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.`);
     return undefined;
   }
 
-  const ctx = await relationContextFor(app, contact.file.path);
+  const uid = noteUid(frontmatter);
+  const resolved = await resolveNoteSource(app, frontmatter, uid);
+  if ('error' in resolved) {
+    new Notice(`Not syncing ${name}: ${resolved.error}.`);
+    return undefined;
+  }
+  const { source, explicit, active } = resolved;
+  const byId = (id: string) => active.find((s) => s.id === id);
+  const sourceName = (id: string) => byId(id)?.name ?? id;
+
+  let plan: SyncPlan = { kind: 'sync', sourceId: source.id };
+  if (uid !== '') {
+    // Before anything is created or moved, every active source is searched for the exact UID.
+    const { found, failed } = await locateCard(active.map((s) => ({ sourceId: s.id, adapter: adapterFor(s) })), uid);
+    if (failed.length > 0 && !found.some((f) => f.sourceId === source.id)) {
+      const which = failed.map((f) => `${sourceName(f.sourceId)} (${f.message})`).join(', ');
+      new Notice(`Not syncing ${name}: could not search ${which}, and the card could be there.`);
+      return 'failed';
+    }
+    plan = planSync({ id: source.id, explicit }, found, sourceName);
+  }
+
+  switch (plan.kind) {
+    case 'refuse':
+      new Notice(`Not syncing ${name}: ${plan.message}`);
+      return undefined;
+    case 'sync':
+    case 'adopt': {
+      const target = byId(plan.sourceId);
+      if (!target) return undefined;
+      const outcome = await syncWith(app, contact.file.path, note, target);
+      if (outcome === 'failed') return outcome;
+      await writeSource(note, target.name);
+      new Notice(`${name}: ${OUTCOME_TEXT[outcome]}${active.length > 1 ? ` (${target.name})` : ''}.`);
+      return outcome;
+    }
+    case 'move': {
+      const from = byId(plan.from.sourceId);
+      const to = byId(plan.to);
+      if (!from || !to) return undefined;
+      return moveNote(app, contact.file.path, note, name, uid, from, to);
+    }
+  }
+}
+
+/** One Sync of the note against one source's card, with that source's adapter and bases. */
+async function syncWith(app: App, path: string, note: NoteIO, source: Source): Promise<SyncOutcome> {
+  const ctx = await relationContextFor(app, path);
   const outcome = await syncNote(note, {
-    adapter,
-    state: contactSyncState(sourceId, app),
-    rows,
+    adapter: adapterFor(source),
+    state: contactSyncState(source.id, app),
+    rows: getSettings().friendly.mapping,
     ctx,
     notify: (message) => new Notice(message),
     now: () => new Date(),
   });
   await ctx.settle();
-  if (outcome !== 'failed') {
-    new Notice(`${contact.file.basename}: ${OUTCOME_TEXT[outcome]}.`);
+  return outcome;
+}
+
+/**
+ * Where the card just synced with `base` is, for a delete that only removes exactly that card: the base's ETag,
+ * or (when the PUT answered without one) the server's ETag if the server card is still the synced one.
+ */
+async function syncedCardLocation(adapter: AdapterInterface, sourceId: string, base: SyncStateEntry): Promise<CardLocation> {
+  if (base.etag) return { sourceId, href: base.href, etag: base.etag };
+  const pulled = await adapter.pull(base.href);
+  const same = pulled !== undefined && 'raw' in pulled && pulled.raw === base.raw;
+  return { sourceId, href: base.href, etag: same ? (pulled.etag ?? '') : '' };
+}
+
+/** Confirmed by the user: Sync against the old source, then move the resulting card to the note's source. */
+async function moveNote(app: App, path: string, note: NoteIO, name: string, uid: string, from: Source, to: Source): Promise<SyncOutcome | undefined> {
+  if (!(await confirmMove(app, `Move ${name} from ${from.name} to ${to.name}?`))) return undefined;
+
+  const outcome = await syncWith(app, path, note, from);
+  if (outcome === 'failed') return outcome; // Nothing is moved.
+  const fromAdapter = adapterFor(from);
+  const fromState = contactSyncState(from.id, app);
+  const base = await fromState.get(uid);
+  if (!base) {
+    new Notice(`Not moved: ${name} has no synced card in ${from.name}.`);
+    return 'failed';
   }
+  const result = await moveCard(
+    base.raw,
+    uid,
+    { adapter: fromAdapter, state: fromState, location: await syncedCardLocation(fromAdapter, from.id, base) },
+    { adapter: adapterFor(to), state: contactSyncState(to.id, app) },
+  );
+  if (!result.ok) {
+    new Notice(`Not moved: ${name}: ${result.message}.`);
+    return 'failed';
+  }
+  await writeSource(note, to.name);
+  new Notice(
+    result.oldKept
+      ? `Moved ${name} to ${to.name}, but the old copy is still in ${from.name}; delete it there by hand.`
+      : `Moved ${name} to ${to.name}.`,
+  );
   return outcome;
 }
 
@@ -184,14 +323,11 @@ async function getList() {
   }
 }
 
-async function getMetaByUID(uid: string): Promise<VCardMeta | undefined> {
-  const adapter = currentAdapter();
-  if(adapter) {
-    const res:VCardMeta | AppHttpResponse | undefined = await adapter.getMetaByUid(uid);
-    if (res && "errorMessage" in res && res.errorMessage) {
-      new Notice(res.errorMessage);
-      return undefined;
-    }
-    return res as VCardMeta | undefined;
+async function getMetaByUID(adapter: AdapterInterface, uid: string): Promise<VCardMeta | undefined> {
+  const res: VCardMeta | AppHttpResponse | undefined = await adapter.getMetaByUid(uid);
+  if (res && "errorMessage" in res && res.errorMessage) {
+    new Notice(res.errorMessage);
+    return undefined;
   }
+  return res as VCardMeta | undefined;
 }

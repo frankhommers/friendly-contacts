@@ -5,7 +5,7 @@ import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
-import { NoteIO, SyncDeps, syncContact } from 'src/sync/syncContact';
+import { locateCard, NoteIO, SyncDeps, syncContact } from 'src/sync/syncContact';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -648,5 +648,53 @@ describe('syncContact', () => {
     expect(t.note.appended).toEqual([]);
     expect(t.notices).toEqual([]);
     expect(t.note.frontmatter.birthday).toBe('--04-01');
+  });
+});
+
+describe('source is a note-only property', () => {
+  it('source is never sent to a created card and stays in the note', async () => {
+    const t = setup({ local: { ...friendlyOf(V1), source: 'Family' } });
+    expect(await t.run()).toBe('created');
+    expect(t.pushes).toHaveLength(1);
+    expect(t.pushes[0].vcard.raw).not.toMatch(/Family/);
+    expect(t.note.frontmatter.source).toBe('Family');
+    expect(t.note.writes.every((w) => !('source' in w.set) && !w.remove.includes('source'))).toBe(true);
+  });
+
+  it('source is never sent on a push and not removed by a pull', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), email: 'jan@new.nl', source: 'Family' } });
+    expect(await t.run()).toBe('pushed');
+    expect(t.pushes[0].vcard.raw).not.toMatch(/Family/);
+    expect(t.note.frontmatter.source).toBe('Family');
+  });
+});
+
+describe('locateCard', () => {
+  it('finds the card by exact UID in every source and reports lookup errors', async () => {
+    const a = fakeAdapter();
+    const b = fakeAdapter();
+    const c = fakeAdapter();
+    const d = fakeAdapter();
+    const etag = a.put(HREF, V1);
+    // b's server answers with a card whose UID merely contains ours: not this contact's card.
+    b.adapter.getMetaByUid = async () => ({ href: '/b/other.vcf', etag: 'x', lastModified: new Date(), uid: `${UID}-X`, fn: undefined, n: undefined });
+    c.options.metaError = { status: 500, data: '', headers: {}, errorMessage: 'HTTP 500' };
+    d.options.metaThrows = new Error('offline');
+
+    const result = await locateCard(
+      [
+        { sourceId: 'a', adapter: a.adapter },
+        { sourceId: 'b', adapter: b.adapter },
+        { sourceId: 'c', adapter: c.adapter },
+        { sourceId: 'd', adapter: d.adapter },
+      ],
+      `urn:uuid:${UID}`,
+    );
+
+    expect(result.found).toEqual([{ sourceId: 'a', href: HREF, etag }]);
+    expect(result.failed).toEqual([
+      { sourceId: 'c', message: 'HTTP 500' },
+      { sourceId: 'd', message: 'offline' },
+    ]);
   });
 });
