@@ -17,7 +17,7 @@ export function nOutOfString(messyString: string):string|undefined {
 /** The first ORG component (the company), unescaped; undefined when the card has none. */
 export function orgOutOfString(messyString: string): string | undefined {
   const unfolded = messyString.replace(/\r\n[ \t]/g, '');
-  const match = /^org(?:;[^:\r\n]*)?:(.*)$/im.exec(unfolded);
+  const match = /^(?:[\w-]+\.)?org(?:;[^:\r\n]*)?:(.*)$/im.exec(unfolded);
   if (!match) return undefined;
   const first = /^((?:\\.|[^;\\])*)/.exec(match[1].replace(/\r$/, ''))?.[1] ?? '';
   const org = first.replace(/\\([\\,;nN])/g, (_, c: string) => (c === 'n' || c === 'N' ? '\n' : c)).trim();

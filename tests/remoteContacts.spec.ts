@@ -56,6 +56,7 @@ describe('orgOutOfString', () => {
   it('is the first ORG component, unescaped', () => {
     expect(orgOutOfString('BEGIN:VCARD\r\nORG:Acme\\; Inc;Sales\r\nEND:VCARD')).toBe('Acme; Inc');
     expect(orgOutOfString('ORG;TYPE=work:Acme')).toBe('Acme');
+    expect(orgOutOfString('item1.ORG:Acme;Sales')).toBe('Acme');
     expect(orgOutOfString('FN:Anna')).toBeUndefined();
   });
 });
@@ -82,6 +83,32 @@ describe('remoteContacts', () => {
     expect(state.notices[0]).toContain('Could not read Work');
     expect(state.notices[0]).not.toContain('secret-key');
     expect(state.notices[0]).not.toContain('http://x/a/');
+  });
+
+  it('retries a failed source on the next call', async () => {
+    state.active = [source('a'), source('b', 'Work')];
+    state.lists = { a: [meta('1', 'Anna')], b: new Error('offline') };
+    expect((await remoteContacts()).map((r) => r.uid)).toEqual(['1']);
+    state.lists = { a: [meta('1', 'Anna')], b: [meta('2', 'Piet')] };
+    expect((await remoteContacts()).map((r) => r.uid)).toEqual(['1', '2']);
+    expect(state.calls).toEqual(['a', 'b', 'b']);
+  });
+
+  it('tells about a failing source once, not on every retry', async () => {
+    state.active = [source('b', 'Work')];
+    state.lists = { b: new Error('offline') };
+    await remoteContacts();
+    await remoteContacts();
+    expect(state.notices).toHaveLength(1);
+  });
+
+  it('non-array response counts as a failure', async () => {
+    state.active = [source('a', 'Work')];
+    state.lists = { a: { status: 401, data: '', headers: {}, errorMessage: '401 Unauthorized' } };
+    expect(await remoteContacts()).toEqual([]);
+    expect(state.notices).toEqual(['Could not read Work: 401 Unauthorized']);
+    state.lists = { a: [meta('1', 'Anna')] };
+    expect((await remoteContacts()).map((r) => r.uid)).toEqual(['1']);
   });
 
   it('caches per set of active sources', async () => {

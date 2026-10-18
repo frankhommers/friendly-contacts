@@ -174,10 +174,14 @@ export async function renamePropertyInNotes(app: App, renames: Rename[]): Promis
 }
 
 const REMOTE_TTL_MS = 5 * 60 * 1000;
-let remoteCache: { key: string; at: number; list: RemoteContact[] } | undefined;
+/** Per source (keyed by id, url and credentials); only sources that loaded are cached, a failed one is retried. */
+const remoteCache = new Map<string, { key: string; at: number; list: RemoteContact[] }>();
+/** When the user was last told that a source could not be read, so a retry does not repeat the Notice. */
+const lastFailureNotice = new Map<string, number>();
 
 export function clearRemoteContactsCache(): void {
-  remoteCache = undefined;
+  remoteCache.clear();
+  lastFailureNotice.clear();
 }
 
 /** A failure text for the user: never the address book URL or its credentials. */
@@ -191,36 +195,42 @@ function failureText(reason: unknown, source: Source): string {
 
 /**
  * Contacts on the servers of every active address book, with the file name they would get on import.
- * Cached for 5 minutes per set of active sources; a source that cannot be read is skipped with a Notice.
+ * Each source is cached for 5 minutes; one that cannot be read is skipped with a Notice (at most one per 5 minutes)
+ * and tried again on the next call.
  */
 export async function remoteContacts(): Promise<RemoteContact[]> {
   const sources = activeSources();
-  if (sources.length === 0) return [];
-  const key = JSON.stringify(sources.map((s) => [s.id, s.addressBookUrl, s.authType, s.authKey]));
-  if (remoteCache?.key === key && Date.now() - remoteCache.at < REMOTE_TTL_MS) return remoteCache.list;
+  for (const id of remoteCache.keys()) if (!sources.some((s) => s.id === id)) remoteCache.delete(id);
   const lists = await Promise.all(
     sources.map(async (source): Promise<RemoteContact[]> => {
+      const key = JSON.stringify([source.addressBookUrl, source.authType, source.authKey]);
+      const cached = remoteCache.get(source.id);
+      if (cached?.key === key && Date.now() - cached.at < REMOTE_TTL_MS) return cached.list;
       try {
         const metas = await adapterFor(source).getMetaList();
         if (!Array.isArray(metas)) {
-          const status = metas.errorMessage || (metas.status ? `HTTP ${metas.status}` : "unknown error");
-          throw new Error(status);
+          throw new Error(metas.errorMessage || (metas.status ? `HTTP ${metas.status}` : "unknown error"));
         }
-        return metas.flatMap((meta) => {
+        const list = metas.flatMap((meta) => {
           const fileName = contactFileName(meta.n, meta.fn);
           return meta.uid && fileName
             ? [{ uid: cleanUid(meta.uid), fileName, sourceId: source.id, href: meta.href, etag: meta.etag, org: meta.org }]
             : [];
         });
+        remoteCache.set(source.id, { key, at: Date.now(), list });
+        lastFailureNotice.delete(source.id);
+        return list;
       } catch (error) {
-        new Notice(`Could not read ${source.name}: ${failureText(error, source)}`);
+        const told = lastFailureNotice.get(source.id);
+        if (told === undefined || Date.now() - told >= REMOTE_TTL_MS) {
+          lastFailureNotice.set(source.id, Date.now());
+          new Notice(`Could not read ${source.name}: ${failureText(error, source)}`);
+        }
         return [];
       }
     }),
   );
-  const list = lists.flat();
-  remoteCache = { key, at: Date.now(), list };
-  return list;
+  return lists.flat();
 }
 
 /**
