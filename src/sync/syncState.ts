@@ -86,25 +86,83 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
   };
 }
 
+const parseIndex = (text: string | undefined): SyncIndex => {
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as SyncIndex;
+  } catch {
+    return {};
+  }
+};
+
 /**
  * Moves the sync state of the single-server days (files directly in `root`) into `root/<sourceId>/`.
- * Returns the number of files moved. Does nothing once `root/<sourceId>/index.json` exists.
- * `index.json` moves last, so a move that was cut short is finished by the next run.
+ * Safe to run on every load and after an interrupted run: it merges, and the target always wins.
+ * - A base the target already has (index entry and card) stays; the legacy copy is removed.
+ * - Any other legacy base moves over; no target card with an index entry is ever overwritten.
+ * - The root `index.json` goes last, once every legacy card is handled.
+ * Returns the number of files that left `root` (moved, or dropped as a duplicate); 0 with nothing to do.
  */
 export async function migrateSyncStateDir(store: FileStore, root: string, sourceId: string): Promise<number> {
-  const target = `${root}/${sourceId}`;
-  if ((await store.read(`${target}/index.json`)) !== undefined) {
+  const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+  const rootFiles = await store.list(root);
+  const rootIndexPath = rootFiles.find((path) => nameOf(path) === 'index.json');
+  const rootCards = rootFiles.filter((path) => nameOf(path).endsWith('.vcf'));
+  if (rootIndexPath === undefined && rootCards.length === 0) {
     return 0;
   }
-  const files = await store.list(root);
-  const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
-  const moving = files
-    .filter((path) => nameOf(path) === 'index.json' || nameOf(path).endsWith('.vcf'))
-    .sort((a, b) => Number(nameOf(a) === 'index.json') - Number(nameOf(b) === 'index.json'));
-  for (const path of moving) {
-    await store.rename(path, `${target}/${nameOf(path)}`);
+
+  const target = `${root}/${sourceId}`;
+  const legacy = parseIndex(rootIndexPath === undefined ? undefined : await store.read(rootIndexPath));
+  const targetIndex = parseIndex(await store.read(`${target}/index.json`));
+  const targetCards = new Set((await store.list(target)).map(nameOf));
+  const uidOfCard = new Map(Object.keys(legacy).map((uid) => [`${fileNameOf(uid)}.vcf`, uid]));
+  const merged: SyncIndex = { ...targetIndex };
+  let changed = false;
+  let handled = 0;
+
+  const targetHas = (uid: string | undefined, card: string) =>
+    targetCards.has(card) && (uid === undefined || targetIndex[uid] !== undefined);
+
+  for (const path of rootCards) {
+    const card = nameOf(path);
+    const uid = uidOfCard.get(card);
+    if (targetHas(uid, card)) {
+      // The target's base wins (a stray card without an index entry only counts when the target has the file).
+      await store.remove(path);
+    } else {
+      // A target card without an index entry is unusable (no etag, no href): the legacy one replaces it.
+      if (targetCards.has(card)) {
+        await store.remove(`${target}/${card}`);
+      }
+      await store.rename(path, `${target}/${card}`);
+      targetCards.add(card);
+      if (uid !== undefined) {
+        merged[uid] = legacy[uid];
+        changed = true;
+      }
+    }
+    handled++;
   }
-  return moving.length;
+
+  // Cards moved by an interrupted run: the card is in the target, only its index entry is missing.
+  const movedBefore = new Set(rootCards.map(nameOf));
+  for (const [uid, entry] of Object.entries(legacy)) {
+    const card = `${fileNameOf(uid)}.vcf`;
+    if (!movedBefore.has(card) && targetCards.has(card) && targetIndex[uid] === undefined && merged[uid] === undefined) {
+      merged[uid] = entry;
+      changed = true;
+    }
+  }
+
+  if (changed || (rootIndexPath !== undefined && !targetCards.has('index.json'))) {
+    await store.write(`${target}/index.json`, JSON.stringify(merged, null, 2));
+  }
+  if (rootIndexPath !== undefined) {
+    await store.remove(rootIndexPath);
+    handled++;
+  }
+  return handled;
 }
 
 /** Thin wrapper over the vault adapter (hidden folders such as .obsidian are reachable). */

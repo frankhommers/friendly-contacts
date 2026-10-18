@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSyncState, FileStore, migrateSyncStateDir } from "src/sync/syncState";
 
 function memoryStore() {
@@ -144,15 +144,52 @@ describe('sync state per source', () => {
     expect(await createSyncState(store, 's/id1').get('abc')).toEqual(entry);
   });
 
-  it('does not touch another source folder or overwrite existing state', async () => {
+  it('merge keeps the target\'s newer base', async () => {
     const { store, files } = memoryStore();
-    files.set('s/id1/index.json', '{"x":1}');
-    files.set('s/id1/x.vcf', 'X');
-    files.set('s/index.json', 'old');
-    files.set('s/a.vcf', 'A');
+    const old = { ...entry, raw: 'OLD', etag: 'old' };
+    const newer = { ...entry, raw: 'NEW', etag: 'new' };
+    files.set('s/index.json', JSON.stringify({ abc: { etag: 'old', href: entry.href }, def: { etag: 'old', href: entry.href } }));
+    files.set('s/abc.vcf', 'OLD');
+    files.set('s/def.vcf', 'DEF');
+    files.set('s/id1/index.json', JSON.stringify({ abc: { etag: 'new', href: entry.href } }));
+    files.set('s/id1/abc.vcf', 'NEW');
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(3);
+    expect([...files.keys()].sort()).toEqual(['s/id1/abc.vcf', 's/id1/def.vcf', 's/id1/index.json']);
+    const state = createSyncState(store, 's/id1');
+    expect(await state.get('abc')).toEqual(newer);
+    expect(await state.get('abc')).not.toEqual(old);
+    expect((await state.get('def'))?.raw).toBe('DEF');
+  });
+
+  it('retries an interrupted move on the next load', async () => {
+    const { store, files } = memoryStore();
+    const index = { a: { etag: 'ea', href: '/a.vcf' }, b: { etag: 'eb', href: '/b.vcf' }, c: { etag: 'ec', href: '/c.vcf' } };
+    // First run died after moving a.vcf (no index yet) and a sync wrote a fresh base for c in the target.
+    files.set('s/index.json', JSON.stringify(index));
+    files.set('s/b.vcf', 'B');
+    files.set('s/c.vcf', 'C-old');
+    files.set('s/id1/a.vcf', 'A');
+    files.set('s/id1/c.vcf', 'C-new');
+    files.set('s/id1/index.json', JSON.stringify({ c: { etag: 'ec2', href: '/c.vcf' } }));
+    expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(3);
+    expect([...files.keys()].filter(path => !path.startsWith('s/id1/'))).toEqual([]);
+    const state = createSyncState(store, 's/id1');
+    expect(await state.get('a')).toEqual({ raw: 'A', etag: 'ea', href: '/a.vcf' });
+    expect(await state.get('b')).toEqual({ raw: 'B', etag: 'eb', href: '/b.vcf' });
+    expect(await state.get('c')).toEqual({ raw: 'C-new', etag: 'ec2', href: '/c.vcf' });
     expect(await migrateSyncStateDir(store, 's', 'id1')).toBe(0);
-    expect(files.get('s/id1/index.json')).toBe('{"x":1}');
-    expect(files.get('s/index.json')).toBe('old');
+  });
+
+  it('never overwrites a target card', async () => {
+    const { store, files } = memoryStore();
+    files.set('s/index.json', JSON.stringify({ a: { etag: 'ea', href: '/a.vcf' } }));
+    files.set('s/a.vcf', 'A-old');
+    files.set('s/id1/index.json', JSON.stringify({ a: { etag: 'new', href: '/a.vcf' } }));
+    files.set('s/id1/a.vcf', 'A-new');
+    const rename = vi.fn(store.rename);
+    await migrateSyncStateDir({ ...store, rename }, 's', 'id1');
+    expect(rename).not.toHaveBeenCalled();
+    expect(files.get('s/id1/a.vcf')).toBe('A-new');
   });
 
   it('does nothing without old state', async () => {

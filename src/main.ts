@@ -2,6 +2,7 @@ import "src/insights/insightLoading";
 
 import {Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
 import { getPluginDir, setPluginDir } from "src/context/sharedAppContext";
+import { defaultSourceOf } from "src/sync/sources";
 import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
 import { getSettings, initSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
@@ -27,12 +28,13 @@ export default class ContactsPlugin extends Plugin {
 
 		setPluginDir(this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`);
 		const { migratedFrom } = await initSettings(this.loadData.bind(this), this.saveData.bind(this));
-		if (migratedFrom) {
-			// The sync bases of the single server move into the folder of the source made from it.
+		// Every load: sync bases of the single-server days (and those of an interrupted move) go to the default source.
+		const legacyTarget = migratedFrom ?? defaultSourceOf(getSettings())?.id;
+		if (legacyTarget) {
 			try {
-				await migrateSyncStateDir(obsidianFileStore(this.app), `${getPluginDir()}/sync-state`, migratedFrom);
+				await migrateSyncStateDir(obsidianFileStore(this.app), `${getPluginDir()}/sync-state`, legacyTarget);
 			} catch (error) {
-				console.error('Friendly Contacts: moving the sync state failed', error);
+				console.error('Friendly Contacts: moving the sync state failed, retrying on the next load', error);
 			}
 		}
 		this.registerView(
