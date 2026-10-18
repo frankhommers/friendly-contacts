@@ -10,7 +10,7 @@ The suite starts its own Radicale:
 - fresh temp storage;
 - `[auth] type = none`;
 - a free port;
-- the address book `/frank/contacts/` is made with MKCOL.
+- the address books `/frank/contacts/` (source "Radicale") and `/frank/family/` (source "Family") are made with MKCOL.
 
 It stops Radicale when done. It is not part of `npm run test:run`.
 
@@ -43,6 +43,13 @@ Scenarios:
 5. `children: ['[[Sem]]']` becomes `RELATED;TYPE=child:urn:uuid:<Sem's UID>` on the server.
 6. `met-via: '[[Piet]]'` is never sent to the server.
 7. A new note without `uid` is `created`. The card is on the server, and the base has the server's href.
+8. The first Sync of a converted upstream note changes nothing on the server.
+9. A card moves to the second book. If that book already has the UID the move is refused and nothing changes.
+10. If the old card changed in the meantime, the move keeps both copies.
+11. Cards are imported from both books (`importCandidates`). Each base lands in its own `sync-state/<source id>/`.
+12. Changing `source:` and Sync moves the card (the plan is `move`). The card is in the new book, gone from the
+    old one, and only the edited line (and REV) differs.
+13. A card that is already in the named book is not moved. The other copy stays.
 
 Note: `DOMParser` in the suite is jsdom's, with `querySelector('response')` matching prefixed elements
 (`CR:address-data`) like Chromium does. Plain jsdom does not match them; Obsidian (Chromium) does.
@@ -107,5 +114,25 @@ Then check:
       "Contacts folder location" setting follows, and links still resolve.
 - [ ] **Property names settings:** Settings → **Property names**. Rename `mobile` to `gsm`. Accept the offer to
       rename it in the contact notes. **Sync** still writes the TEL line. *Reset to defaults* brings `mobile` back.
+- [ ] **Second address book:** create `/frank/family/` the same way as `contacts` (MKCOL) and put a card in it:
+      `curl -u frank:secret -T tests/fixtures/appleV3.vcf http://127.0.0.1:5299/frank/family/anna.vcf`, after
+      changing its `UID:` line to a new value. In settings add an address book, name it `Family`, URL
+      `http://127.0.0.1:5299/frank/family/`, user `frank`, password `secret`, and enable it. The default book stays
+      the first one.
+- [ ] **Import from the second book:** run the command *Import contact from server…*. The list shows both books'
+      cards, each with its book name (`<name> · Family`). Import the Family card: the note has `source: Family`,
+      and `sync-state/<Family's id>/` holds its card (not the first book's folder). Import another card from the
+      sidebar's import button too: same result, with the book that card came from.
+- [ ] **Move between books:** in the Family note change `source:` to the first book's name and **Sync**. Confirm
+      the move dialog (*Cancel* leaves everything as it was). With `curl` the card is in the new book and gone from
+      the old one, and the notice says it moved. A second **Sync** says the note is already in sync.
+- [ ] **Sync refused:** set `source:` to a name that is not a book (or to a disabled book). **Sync** refuses with a
+      notice and nothing changes on either server. A card that is in both books syncs with the book `source:` names
+      and leaves the other copy alone.
+- [ ] **Rename a book:** Settings → rename `Family` to `Relatives`. The notes with `source: Family` now say
+      `source: Relatives`, and **Sync** still works for them.
+- [ ] **Remove a book:** try to remove the default book: refused ("Make another address book the default first").
+      Try to remove a book that notes use: refused with the number of contacts. Remove a book no note uses: it goes,
+      and its `sync-state/<id>/` folder is no longer used.
 - [ ] **Mirror relationships on this device:** turn it off, then reload the plugin. Adding a child no longer
       touches the other note.

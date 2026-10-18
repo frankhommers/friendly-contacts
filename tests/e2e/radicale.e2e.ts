@@ -20,13 +20,15 @@ import { RelationContext, resolveRemoteName } from 'src/contacts/friendly/relati
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { contactFileName, renderFriendlyNote } from 'src/contacts/friendlyNotes';
 import { initSettings } from 'src/context/sharedSettingsContext';
+import type { Source } from 'src/settings/settings.d';
 import { encodeBasicAuth } from 'src/settings/carddavCredentials';
 import { VCardMeta } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { carddavAdapter } from 'src/sync/adapters/carddavGeneric';
 import { moveCard } from 'src/sync/moveCard';
-import { NoteIO, SyncDeps, syncContact } from 'src/sync/syncContact';
-import { createSyncState, FileStore } from 'src/sync/syncState';
+import { importCandidates, noteSourceId, planSync, SyncPlan } from 'src/sync/sources';
+import { locateCard, NoteIO, SyncDeps, SyncOutcome, syncContact } from 'src/sync/syncContact';
+import { createSyncState, FileStore, SyncState } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -40,6 +42,7 @@ if (!HAS_PYTHON) {
 }
 
 const BOOK = '/frank/contacts/';
+const FAMILY = '/frank/family/';
 const JAN_HREF = `${BOOK}ABC-DEF.vcf`;
 const JAN_UID = '1234ABCD-0000-4000-8000-000000000001';
 const SEM_UID = '5E4A0000-0000-4000-8000-000000000002';
@@ -216,9 +219,16 @@ function memoryFileStore(): FileStore {
     read: async (path) => files.get(path),
     write: async (path, data) => void files.set(path, data),
     remove: async (path) => void files.delete(path),
-    list: async () => [],
+    list: async (dir) => [...files.keys()].filter((path) => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/')),
     rename: async () => {},
   };
+}
+
+/** An address book as the plugin sees it: its source, the adapter bound to it and its own sync-state dir. */
+interface Book {
+  source: Source;
+  adapter: AdapterInterface;
+  state: SyncState;
 }
 
 /** Notes in the "vault" (link name + uid); unknown names and UIDs fall back to the server's contact list. */
@@ -255,7 +265,12 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     getMetaByUid: (uid) => real().getMetaByUid(uid),
     checkConnectivity: () => real().checkConnectivity(),
   };
-  const state = createSyncState(memoryFileStore(), 'sync-state');
+  // One store for both books, like the vault; each book's bases live in sync-state/<source id>/.
+  const store = memoryFileStore();
+  const state = createSyncState(store, 'sync-state/radicale');
+  let radicaleSource: Source;
+  let family: Book;
+  let bookList: Book[] = [];
   const pushes: string[] = [];
   const notices: string[] = [];
   let jan: Note;
@@ -270,12 +285,12 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     },
   };
 
-  async function sync(note: Note) {
+  async function syncWith(note: Note, book: Book) {
     pushes.length = 0;
     notices.length = 0;
     const deps: SyncDeps = {
-      adapter: counting,
-      state,
+      adapter: book.adapter === adapter ? counting : book.adapter,
+      state: book.state,
       rows: DEFAULT_MAPPING,
       ctx: await relationContext(adapter, notes),
       notify: (msg) => notices.push(msg),
@@ -284,15 +299,61 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     return syncContact(note.io, deps);
   }
 
-  /** Like importRemoteCard: pull, translate to friendly properties, store the pulled card as base. */
-  async function importCard(href: string): Promise<Note> {
-    const pulled = await adapter.pull(href);
+  const sync = (note: Note) => syncWith(note, bookList[0]);
+
+  /**
+   * Sync's source choice as runSync in src/sync/sync.ts makes it (the same pure functions, no Obsidian):
+   * the note's `source:` or the book holding its base, a search of every book for the UID, then sync, adopt or move.
+   * The move confirmation is taken as given.
+   */
+  async function syncAcrossBooks(note: Note): Promise<{ plan: SyncPlan; outcome?: SyncOutcome; move?: Awaited<ReturnType<typeof moveCard>> }> {
+    const uid = cleanUid(String(note.frontmatter.uid));
+    const baseIn: string[] = [];
+    for (const book of bookList) if (await book.state.get(uid)) baseIn.push(book.source.id);
+    const named = typeof note.frontmatter.source === 'string' ? note.frontmatter.source : undefined;
+    const sources = bookList.map((b) => b.source);
+    const chosen = noteSourceId(named, sources, baseIn, 'radicale');
+    if ('error' in chosen) return { plan: { kind: 'refuse', message: chosen.error } };
+    const byId = (id: string) => bookList.find((b) => b.source.id === id)!;
+    const nameOf = (id: string) => byId(id).source.name;
+
+    const { found, failed } = await locateCard(bookList.map((b) => ({ sourceId: b.source.id, adapter: b.adapter })), uid);
+    expect(failed).toEqual([]);
+    const plan = planSync({ id: chosen.id, explicit: named !== undefined }, found, nameOf);
+
+    if (plan.kind === 'sync' || plan.kind === 'adopt') {
+      const book = byId(plan.sourceId);
+      const outcome = await syncWith(note, book);
+      await note.io.writeProps({ source: book.source.name }, []);
+      return { plan, outcome };
+    }
+    if (plan.kind === 'move') {
+      const from = byId(plan.from.sourceId);
+      const to = byId(plan.to);
+      const outcome = await syncWith(note, from);
+      const base = (await from.state.get(uid))!;
+      const move = await moveCard(
+        base.raw,
+        uid,
+        { adapter: from.adapter, state: from.state, location: { sourceId: from.source.id, href: base.href, etag: base.etag } },
+        { adapter: to.adapter, state: to.state },
+      );
+      if (move.ok) await note.io.writeProps({ source: to.source.name }, []);
+      return { plan, outcome, move };
+    }
+    return { plan };
+  }
+
+  /** Like importRemoteCard: pull, translate to friendly properties (plus `source:`), store the pulled card as base. */
+  async function importFrom(book: Book, href: string): Promise<Note> {
+    const pulled = await book.adapter.pull(href);
     if (!pulled || !('raw' in pulled)) throw new Error(`pull ${href} failed`);
     const props = toFriendly(parseCard(pulled.raw), DEFAULT_MAPPING, await relationContext(adapter, notes)).props;
     const uid = cleanUid(String(props.uid));
-    await state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href });
-    return memoryNote(props);
+    await book.state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href });
+    return memoryNote({ ...props, source: book.source.name });
   }
+  const importCard = (href: string) => importFrom(bookList[0], href);
 
   const cardCount = async () => {
     const metas = await adapter.getMetaList();
@@ -304,19 +365,24 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     vi.stubGlobal('DOMParser', chromiumLikeDomParser());
     await startRadicale();
     await createAddressBook();
-    const source = {
-      id: 'radicale',
-      name: 'Radicale',
-      addressBookUrl: `http://127.0.0.1:${port}${BOOK}`,
-      authType: 'basic' as const,
+    await createAddressBook(FAMILY);
+    const bookSource = (id: string, name: string, book: string): Source => ({
+      id,
+      name,
+      addressBookUrl: `http://127.0.0.1:${port}${book}`,
+      authType: 'basic',
       authKey: encodeBasicAuth('frank', 'x'),
       enabled: true,
-    };
+    });
+    radicaleSource = bookSource('radicale', 'Radicale', BOOK);
+    const familySource = bookSource('family', 'Family', FAMILY);
     await initSettings(
-      async () => ({ sources: [source], defaultSource: 'radicale' }),
+      async () => ({ sources: [radicaleSource, familySource], defaultSource: 'radicale' }),
       async () => {},
     );
-    bound = carddavAdapter(source);
+    bound = carddavAdapter(radicaleSource);
+    family = { source: familySource, adapter: carddavAdapter(familySource), state: createSyncState(store, 'sync-state/family') };
+    bookList = [{ source: radicaleSource, adapter, state }, family];
   });
 
   afterAll(async () => {
@@ -523,14 +589,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   });
 
   it('9. moves a card to a second address book: create there, delete here, move the base', async () => {
-    const family = `/frank/family/`;
-    await createAddressBook(family);
-    const familyAdapter = carddavAdapter({
-      addressBookUrl: `http://127.0.0.1:${port}${family}`,
-      authType: 'basic',
-      authKey: encodeBasicAuth('frank', 'x'),
-    });
-    const familyState = createSyncState(memoryFileStore(), 'sync-state/family');
+    const familyAdapter = family.adapter;
+    const familyState = family.state;
 
     const uid = 'C0FFEE00-0000-4000-8000-000000000009';
     const href = `${BOOK}to-move.vcf`;
@@ -542,7 +602,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     const location = { sourceId: 'radicale', href: base!.href, etag: base!.etag };
 
     // The target already has a card with this UID: refused before anything is written.
-    const blocking = `${family}blocking.vcf`;
+    const blocking = `${FAMILY}blocking.vcf`;
     await putCard(blocking, base!.raw);
     expect(await moveCard(base!.raw, uid, { adapter, state, location }, { adapter: familyAdapter, state: familyState })).toEqual({
       ok: false,
@@ -559,19 +619,14 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect((await request('GET', href)).status).toBe(404);
     expect(await state.get(uid)).toBeUndefined();
     const moved = await familyState.get(uid);
-    expect(moved?.href).toMatch(new RegExp(`^${family}[^/]+\\.vcf$`));
+    expect(moved?.href).toMatch(new RegExp(`^${FAMILY}[^/]+\\.vcf$`));
     expect(unfolded(await serverCard(moved!.href))).toEqual(unfolded(base!.raw));
     expect(moved?.etag).toBe((await serverEtag(moved!.href))?.replace(/"/g, ''));
   });
 
   it('10. a move whose old card changed in the meantime keeps both copies', async () => {
-    const family = `/frank/family/`;
-    const familyAdapter = carddavAdapter({
-      addressBookUrl: `http://127.0.0.1:${port}${family}`,
-      authType: 'basic',
-      authKey: encodeBasicAuth('frank', 'x'),
-    });
-    const familyState = createSyncState(memoryFileStore(), 'sync-state/family');
+    const familyAdapter = family.adapter;
+    const familyState = family.state;
     const uid = 'C0FFEE00-0000-4000-8000-000000000010';
     const href = `${BOOK}changed.vcf`;
     const card = SEM_CARD.replace(SEM_UID, uid).replace(/Sem/g, 'Lou');
@@ -588,7 +643,103 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       oldKept: true,
     });
     expect(await serverCard(href)).toContain('FN:Lou de Vries-Jansen');
-    expect((await familyState.get(uid))?.href).toMatch(new RegExp(`^${family}`));
+    expect((await familyState.get(uid))?.href).toMatch(new RegExp(`^${FAMILY}`));
     expect(await state.get(uid)).toBeUndefined();
+  });
+
+  it('11. imports from both books: each base lands in its own source dir', async () => {
+    const boUid = 'C0FFEE00-0000-4000-8000-000000000011';
+    const annaUid = 'C0FFEE00-0000-4000-8000-000000000012';
+    await putCard(`${BOOK}bo.vcf`, SEM_CARD.replace(SEM_UID, boUid).replace(/Sem/g, 'Bo'));
+    await putCard(`${FAMILY}anna.vcf`, SEM_CARD.replace(SEM_UID, annaUid).replace(/Sem/g, 'Anna'));
+
+    // What remoteContacts() lists: every book's cards with their source id and import file name.
+    const remote = [];
+    for (const book of bookList) {
+      const metas = await book.adapter.getMetaList();
+      if (!Array.isArray(metas)) throw new Error(`getMetaList failed: ${metas.errorMessage}`);
+      for (const meta of metas) {
+        const fileName = contactFileName(meta.n, meta.fn);
+        if (meta.uid && fileName) remote.push({ uid: cleanUid(meta.uid), fileName, sourceId: book.source.id, href: meta.href });
+      }
+    }
+    // Every other card already has a note.
+    const noteUids = remote.map((r) => r.uid).filter((uid) => uid !== boUid && uid !== annaUid);
+    const candidates = importCandidates(remote, noteUids);
+    expect(candidates.map((c) => ({ fileName: c.fileName, sourceId: c.sourceId, href: c.href }))).toEqual([
+      { fileName: 'Anna de Vries', sourceId: 'family', href: `${FAMILY}anna.vcf` },
+      { fileName: 'Bo de Vries', sourceId: 'radicale', href: `${BOOK}bo.vcf` },
+    ]);
+
+    const imported: Record<string, Note> = {};
+    for (const candidate of candidates) {
+      const book = bookList.find((b) => b.source.id === candidate.sourceId)!;
+      imported[candidate.uid] = await importFrom(book, candidate.href);
+    }
+    expect(imported[boUid].frontmatter).toMatchObject({ name: 'Bo de Vries', source: 'Radicale', uid: boUid });
+    expect(imported[annaUid].frontmatter).toMatchObject({ name: 'Anna de Vries', source: 'Family', uid: annaUid });
+
+    expect((await state.get(boUid))?.href).toBe(`${BOOK}bo.vcf`);
+    expect((await family.state.get(annaUid))?.href).toBe(`${FAMILY}anna.vcf`);
+    expect(await family.state.get(boUid)).toBeUndefined();
+    expect(await state.get(annaUid)).toBeUndefined();
+    const dirOf = async (dir: string) => (await store.list(dir)).filter((path) => path.endsWith('.vcf'));
+    expect(await dirOf('sync-state/family')).toContain(`sync-state/family/${annaUid}.vcf`);
+    expect(await dirOf('sync-state/family')).not.toContain(`sync-state/family/${boUid}.vcf`);
+    expect(await dirOf('sync-state/radicale')).toContain(`sync-state/radicale/${boUid}.vcf`);
+    expect(await dirOf('sync-state/radicale')).not.toContain(`sync-state/radicale/${annaUid}.vcf`);
+
+    // Each note syncs with its own book.
+    expect(await syncAcrossBooks(imported[annaUid])).toMatchObject({ plan: { kind: 'sync', sourceId: 'family' }, outcome: 'unchanged' });
+    expect(await syncAcrossBooks(imported[boUid])).toMatchObject({ plan: { kind: 'sync', sourceId: 'radicale' }, outcome: 'unchanged' });
+  });
+
+  it('12. changing source: and Sync moves the card; only the edited line differs', async () => {
+    const uid = 'C0FFEE00-0000-4000-8000-000000000013';
+    const href = `${BOOK}traveller.vcf`;
+    await putCard(href, readVcfFixture('appleV3.vcf').replace(JAN_UID, uid));
+    const note = await importFrom(bookList[0], href);
+    expect(note.frontmatter.source).toBe('Radicale');
+    const before = unfolded(await serverCard(href));
+
+    note.frontmatter.mobile = '06-77777777';
+    note.frontmatter.source = 'Family';
+    const result = await syncAcrossBooks(note);
+    expect(result.plan).toMatchObject({ kind: 'move', to: 'family' });
+    expect(result.move).toEqual({ ok: true, oldKept: false });
+
+    // The card is in the new book and gone from the old one.
+    expect((await request('GET', href)).status).toBe(404);
+    expect(await state.get(uid)).toBeUndefined();
+    const moved = await family.state.get(uid);
+    expect(moved?.href).toMatch(new RegExp(`^${FAMILY}[^/]+\\.vcf$`));
+    expect(moved?.etag).toBe((await serverEtag(moved!.href))?.replace(/"/g, ''));
+    expect(note.frontmatter.source).toBe('Family');
+
+    // Untouched lines are byte-identical; the edit is the TEL line (and REV).
+    const after = unfolded(await serverCard(moved!.href));
+    const oldTel = before.find((l) => l.includes('06-12345678'))!;
+    expect(minus(before, after).filter((l) => !isRev(l))).toEqual([oldTel]);
+    expect(minus(after, before).filter((l) => !isRev(l))).toEqual([oldTel.replace('06-12345678', '06-77777777')]);
+    expect(after).toContain('X-CREATED:2019-04-02T10:11:12Z');
+
+    // From now on the note syncs with the new book.
+    expect(await syncAcrossBooks(note)).toMatchObject({ plan: { kind: 'sync', sourceId: 'family' }, outcome: 'unchanged' });
+  });
+
+  it('13. a card that is already in the named book is not moved and the other copy stays', async () => {
+    const uid = 'C0FFEE00-0000-4000-8000-000000000014';
+    const card = SEM_CARD.replace(SEM_UID, uid).replace(/Sem/g, 'Twin');
+    await putCard(`${BOOK}twin.vcf`, card);
+    await putCard(`${FAMILY}twin.vcf`, card);
+    const note = await importFrom(bookList[0], `${BOOK}twin.vcf`);
+    note.frontmatter.source = 'Family';
+
+    const result = await syncAcrossBooks(note);
+    expect(result.plan).toEqual({ kind: 'sync', sourceId: 'family' });
+    expect(result.move).toBeUndefined();
+    expect(result.outcome).not.toBe('failed');
+    expect(await serverCard(`${BOOK}twin.vcf`)).toContain(`UID:${uid}`);
+    expect(await serverCard(`${FAMILY}twin.vcf`)).toContain(`UID:${uid}`);
   });
 });
