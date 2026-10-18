@@ -7,6 +7,7 @@ import {
   normalizeBookUrl,
   planSync,
   removalBlocker,
+  sourceForExport,
   sourceNameFromUrl,
   sourceWithSameUrl,
   uidAlreadyImported,
@@ -242,5 +243,26 @@ describe('sourceWithSameUrl', () => {
     expect(sourceWithSameUrl([a, b], 'https://pim.example/frank/contacts/', 'a')).toBeUndefined();
     expect(sourceWithSameUrl([a, b], 'https://pim.example/frank/Contacts/', 'b')).toBeUndefined();
     expect(sourceWithSameUrl([a, b], '  ', 'b')).toBeUndefined();
+  });
+});
+
+describe('sourceForExport', () => {
+  const settings = { sources: [source('p', 'Private'), source('f', 'Family')], defaultSource: 'p' };
+  const holds = (...ids: string[]) => async (id: string) => ids.includes(id);
+
+  it('uses the book source: names, even when another holds a base', async () => {
+    expect((await sourceForExport(' family ', settings, holds('p')))?.id).toBe('f');
+  });
+
+  it('uses the book holding a base when the note names none', async () => {
+    expect((await sourceForExport(undefined, settings, holds('f')))?.id).toBe('f');
+    expect((await sourceForExport('', settings, holds('f')))?.id).toBe('f');
+  });
+
+  it('uses the default otherwise, and a disabled book counts', async () => {
+    expect((await sourceForExport(undefined, settings, holds()))?.id).toBe('p');
+    const off = { ...settings, sources: [settings.sources[0], { ...settings.sources[1], enabled: false }] };
+    expect((await sourceForExport('Family', off, holds()))?.id).toBe('f');
+    expect(await sourceForExport(undefined, { sources: [], defaultSource: '' }, holds())).toBeUndefined();
   });
 });

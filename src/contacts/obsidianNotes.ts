@@ -21,7 +21,7 @@ import { insightQueueStore } from "src/insights/insightsQueStore";
 import { activeSources, adapterFor } from "src/sync/adapters";
 import type { VCardRaw } from "src/sync/adapters/adapter";
 import type { NoteIO } from "src/sync/syncContact";
-import { defaultSourceOf } from "src/sync/sources";
+import { sourceForExport } from "src/sync/sources";
 import { createSyncState, obsidianFileStore, SyncState } from "src/sync/syncState";
 import { cleanUid, generateUUID } from "src/util/vcard";
 
@@ -333,8 +333,13 @@ export async function friendlyNoteCard(
 ): Promise<string> {
   const ctx = new ObsidianRelationContext(app, file.path, lookups.contacts, lookups.remote, true);
   const uid = typeof props.uid === "string" ? props.uid.trim() : "";
-  // Export works without sync enabled: the default source's base is used even when that source is not active.
-  const source = defaultSourceOf(getSettings());
+  // Export works without sync enabled: the note's own book is used even when it is not active (see sourceForExport).
+  const noteSource = app.metadataCache.getFileCache(file)?.frontmatter?.source;
+  const source = uid === "" ? undefined : await sourceForExport(
+    noteSource === undefined || noteSource === null ? undefined : String(noteSource),
+    getSettings(),
+    async (sourceId) => (await contactSyncState(sourceId, app).get(uid)) !== undefined,
+  );
   const base = uid !== "" && source ? await contactSyncState(source.id, app).get(uid) : undefined;
   let lines;
   if (base) {

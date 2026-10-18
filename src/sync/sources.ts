@@ -158,6 +158,25 @@ export function planSync(
   };
 }
 
+/**
+ * The source whose sync base an export uses for a note: the one `source:` names, else the first holding a base
+ * for the note's UID (`holdsBase`), else the default. Unlike Sync, it also takes disabled sources and never errors.
+ */
+export async function sourceForExport(
+  noteSource: string | undefined,
+  settings: { sources: Source[]; defaultSource: string },
+  holdsBase: (sourceId: string) => Promise<boolean>,
+): Promise<Source | undefined> {
+  if (noteSource !== undefined && noteSource.trim() !== '') {
+    const named = findSourceByName(settings.sources, noteSource);
+    if (named) return named;
+  }
+  for (const source of settings.sources) {
+    if (await holdsBase(source.id)) return source;
+  }
+  return defaultSourceOf(settings);
+}
+
 /** Remote cards whose UID has no note, sorted by file name; a UID present in two sources is offered once per source. */
 export function importCandidates<T extends { uid: string; fileName: string }>(remote: T[], noteUids: string[]): T[] {
   const known = new Set(noteUids);
