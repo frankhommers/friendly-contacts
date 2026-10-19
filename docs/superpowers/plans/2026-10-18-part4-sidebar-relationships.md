@@ -37,6 +37,31 @@ picker modal and a command.
 
 ---
 
+### Task 0: Folder follow-ups from the Part 3 final review
+
+**Files:**
+- Modify: `src/contacts/layoutNotes.ts`, `src/contacts/obsidianNotes.ts` (`moveContacts`), `src/sync/syncContact.ts` or
+  `src/contacts/layoutNotes.ts` (alias after a server-side rename), `README.md`, `tests/scripts/radicale-e2e.md`
+- Test: `tests/layoutNotes.spec.ts`, `tests/relationLinks.spec.ts`
+
+Context: `.superpowers/sdd/2026-10-19-part3-folder-per-contact/progress.md` (final review lines) and
+`final-fix-report.md` in the same directory.
+
+- Gap A: in one-note layout, "Move contacts to folder…" must move contacts that still sit in folders (made with any
+  settings, recognised by `isNamedForContact` / `contactFolderOf`) as whole folders — use `moveContactFolders` for every
+  layout. Test `one-note move keeps a leftover folder with its poem`.
+- Gap B: a Sync rename of a contact whose folder was made with other settings renames the folder too (let the contact
+  folder lookup accept a folder named for the contact, with the existing `folderMoveProblem` guard). Test `rename of an
+  other-settings contact renames its folder`.
+- Item 7: after a server-side name change, the rewritten aliases use the NEW name (pass the new display name into the
+  rewrite instead of reading the cached `name`). Test `server rename refreshes aliases`. Fix README's claim if needed.
+- Take-out double rename: run the same relationship-link rewrite pass after take-out that "into" uses, so no entry
+  is left pointing at the temporary name. Test with the fake vault; add "relationships still open the contact after
+  take-out" to the checklist.
+- One-note layout with leftover fixed-name folders: `contactLinktext` writes full path + alias whenever the target's
+  note basename differs from the contact's name (not only in a fixed-name layout). Test.
+- [ ] TDD each; full suite + build + e2e; commit `fix(layout): keep leftover contact folders together`.
+
 ### Task 1: Relationship edits and the display model
 
 **Files:**
