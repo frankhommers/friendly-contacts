@@ -534,22 +534,103 @@ describe('relationships and anniversaries in the card\'s own form', () => {
       'REV:old',
     );
 
-    it('needsLegacyRewrite: a 3.0 card with RELATED lines', () => {
-      expect(needsLegacyRewrite(legacy)).toBe(true);
-      expect(needsLegacyRewrite(parseCard('BEGIN:VCARD\r\nRELATED;TYPE=child:urn:uuid:sem-uid\r\nEND:VCARD'))).toBe(true);
-      expect(needsLegacyRewrite(card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid'))).toBe(false);
-      expect(needsLegacyRewrite(davx5)).toBe(false);
-      expect(needsLegacyRewrite(card('FN:X'))).toBe(false);
+    const needs = (lines: VCardLine[]) => needsLegacyRewrite(lines, DEFAULT_MAPPING, people);
+
+    it('needsLegacyRewrite: a 3.0 card with RELATED lines the plugin wrote', () => {
+      expect(needs(legacy)).toBe(true);
+      expect(needs(parseCard('BEGIN:VCARD\r\nRELATED;TYPE=child:urn:uuid:sem-uid\r\nEND:VCARD'))).toBe(true);
+      expect(needs(card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid'))).toBe(false);
+      expect(needs(davx5)).toBe(false);
+      expect(needs(card('FN:X'))).toBe(false);
     });
 
-    it('needsLegacyRewrite with the mapping and contacts: only lines that can be rewritten count', () => {
-      expect(needsLegacyRewrite(legacy, DEFAULT_MAPPING, people)).toBe(true);
+    it('needsLegacyRewrite: only lines that can be rewritten count', () => {
       const stuck = card('FN:X', 'RELATED;TYPE=child:urn:uuid:nobody', 'RELATED;TYPE=agent;VALUE=text:Bond');
-      expect(needsLegacyRewrite(stuck)).toBe(true);
-      expect(needsLegacyRewrite(stuck, DEFAULT_MAPPING, people)).toBe(false);
+      expect(needs(stuck)).toBe(false);
     });
 
-    it('turns every RELATED line on a 3.0 card into the 3.0 form for the same row and person (review focus 5)', () => {
+    it('a name that is a urn:uuid gets the contact\'s name and the hint, in the line\'s own form (3.0)', () => {
+      const lines = card('FN:X', 'item1.X-ABRELATEDNAMES:urn:uuid:sem-uid', 'item1.X-ABLabel:_$!<Spouse>!$_', 'REV:old');
+      expect(needs(lines)).toBe(true);
+      const before = read(lines).props;
+      expect(before).toEqual({ name: 'X', spouse: '[[Sem]]' });
+      const result = go(lines, before, true);
+      expect(texts(result.lines)).toEqual([
+        'VERSION:3.0',
+        'FN:X',
+        'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'item1.X-ABLabel:_$!<Spouse>!$_',
+        'REV:20261017T080503Z',
+      ]);
+      expect(result.lines[3]).toBe(lines[3]);
+      expect(reparsed(result.lines)).toEqual(before);
+      expect(needs(parseCard(serializeCard(result.lines)))).toBe(false);
+    });
+
+    it('a name that is a urn:uuid gets the contact\'s name and the hint, in the line\'s own form (4.0)', () => {
+      const lines = card4('FN:X', 'RELATED;TYPE=spouse;VALUE=text:urn:uuid:sem-uid');
+      expect(needs(lines)).toBe(true);
+      const result = go(lines, read(lines).props, true);
+      expect(texts(result.lines)).toEqual(['VERSION:4.0', 'FN:X', 'RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries']);
+      expect(reparsed(result.lines)).toEqual({ name: 'X', spouse: '[[Sem]]' });
+      expect(needs(parseCard(serializeCard(result.lines)))).toBe(false);
+    });
+
+    it('a 3.0 RELATED text line holding a urn:uuid becomes the 3.0 form', () => {
+      const lines = card('FN:X', 'RELATED;TYPE=child;VALUE=text:urn:uuid:sem-uid');
+      expect(needs(lines)).toBe(true);
+      expect(texts(go(lines, read(lines).props, true).lines).slice(2)).toEqual([
+        'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'item1.X-ABLabel:_$!<Child>!$_',
+      ]);
+    });
+
+    it('a urn:uuid name nobody has stays as it is', () => {
+      for (const lines of [
+        card('FN:X', 'item1.X-ABRELATEDNAMES:urn:uuid:nobody', 'item1.X-ABLabel:_$!<Spouse>!$_'),
+        card4('FN:X', 'RELATED;TYPE=spouse;VALUE=text:urn:uuid:nobody'),
+      ]) {
+        expect(needs(lines)).toBe(false);
+        expect(go(lines, read(lines).props, true).lines).toEqual(lines);
+      }
+    });
+
+    it('a hinted name the contact no longer has is refreshed (a renamed contact), on 3.0 and 4.0', () => {
+      const v3 = card('FN:X', 'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem', 'item1.X-ABLabel:_$!<Child>!$_');
+      expect(needs(v3)).toBe(true);
+      expect(texts(go(v3, read(v3).props, true).lines).slice(2)).toEqual([
+        'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'item1.X-ABLabel:_$!<Child>!$_',
+      ]);
+      const v4 = card4('FN:X', 'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem');
+      expect(needs(v4)).toBe(true);
+      expect(texts(go(v4, read(v4).props, true).lines).slice(2)).toEqual([
+        'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+      ]);
+      // The current name, or a hint nobody knows: nothing to do.
+      expect(needs(card('FN:X', 'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries', 'item1.X-ABLabel:_$!<Child>!$_'))).toBe(false);
+      expect(needs(card4('FN:X', 'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=gone:Sem'))).toBe(false);
+    });
+
+    it('an old line pointed at an ambiguous name in this Apply still gets the 3.0 form', () => {
+      const lines = card('FN:X', 'RELATED;TYPE=spouse:urn:uuid:sem-uid');
+      const result = go(lines, { name: 'X', spouse: '[[Jan]]' }, true);
+      expect(texts(result.lines).slice(2)).toEqual(['item1.X-ABRELATEDNAMES:Jan', 'item1.X-ABLabel:_$!<Spouse>!$_']);
+    });
+
+    it('lines another app wrote stay on a 3.0 card: plain text names, names without a URI scheme, several types', () => {
+      const lines = card(
+        'FN:X',
+        'RELATED;TYPE=friend;VALUE=text:Opa',
+        'RELATED;TYPE=spouse:Anna',
+        'RELATED;TYPE=friend,colleague:urn:uuid:sem-uid',
+        'RELATED;TYPE=friend,colleague;VALUE=text:urn:uuid:sem-uid',
+      );
+      expect(needs(lines)).toBe(false);
+      expect(go(lines, read(lines).props, true).lines).toEqual(lines);
+    });
+
+    it('turns the plugin\'s RELATED lines on a 3.0 card into the 3.0 form for the same row and person (review focus 5)', () => {
       const before = read(legacy);
       const result = go(legacy, before.props, true);
       expect(texts(result.lines)).toEqual([
@@ -559,15 +640,15 @@ describe('relationships and anniversaries in the card\'s own form', () => {
         'item1.X-ABLabel:a',
         'item2.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
         'item2.X-ABLabel:_$!<Child>!$_',
-        'item3.X-ABRELATEDNAMES:Opa',
-        'item3.X-ABLabel:_$!<Friend>!$_',
+        // Another app's text name stays as it is.
+        'RELATED;TYPE=friend;VALUE=text:Opa',
         'NOTE:n',
         'REV:20261017T080503Z',
       ]);
-      for (const i of [0, 1, 2, 3, 6]) expect(result.lines.indexOf(legacy[i])).toBeGreaterThanOrEqual(0);
+      for (const i of [0, 1, 2, 3, 5, 6]) expect(result.lines.indexOf(legacy[i])).toBeGreaterThanOrEqual(0);
       expect(reparsed(result.lines)).toEqual(before.props);
       expect(read(result.lines).props).toEqual(before.props);
-      expect(needsLegacyRewrite(parseCard(serializeCard(result.lines)))).toBe(false);
+      expect(needs(parseCard(serializeCard(result.lines)))).toBe(false);
     });
 
     it('without the option the RELATED lines stay', () => {

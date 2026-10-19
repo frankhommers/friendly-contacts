@@ -6,10 +6,10 @@
 
 import { cleanUid, generateUUID } from '../../util/vcard';
 import { normalizeNoteDate, writeDate } from './dates';
-import { escapeText, getParam, joinStructured, serializeLine, splitStructured, unescapeText, VCardLine } from './lines';
+import { escapeText, getParam, joinStructured, serializeLine, splitStructured, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeLabel } from './mapping';
-import { linkTarget, RelationContext } from './relations';
+import { HINT_PARAM, linkTarget, RelationContext, relationValue } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
 
 export interface PatchResult {
@@ -18,7 +18,7 @@ export interface PatchResult {
 }
 
 export interface PatchOptions {
-  /** On a vCard 3.0 card, write every `RELATED` line (the plugin's old form) as `X-ABRELATEDNAMES` with its label. */
+  /** Put right the relationship lines the plugin wrote that phones show wrongly (see `needsLegacyRewrite`). */
   rewriteLegacyRelations?: boolean;
 }
 
@@ -288,9 +288,6 @@ function finishComponents(s: State): void {
   for (const { line, parts } of s.newParts.values()) line.value = joinStructured(parts);
 }
 
-/** The parameter naming the contact a relationship points to, next to its name. */
-const HINT_PARAM = 'X-FRIENDLY-UID';
-
 /** Who a relationship line is about: the name written on the card, and the contact's UID (clean) when known. */
 type Person = { name: string; uid?: string };
 
@@ -336,7 +333,7 @@ function addRelated(s: State, row: RelationRow, name: string, ctx: RelationConte
 
 /** An existing relationship line pointed at someone else, in place: group, label and other params stay. */
 function replaceRelated(s: State, index: number, person: Person): void {
-  const line = s.base[index];
+  const line = s.lines[index];
   const names = line.name === 'X-ABRELATEDNAMES';
   const params = line.params.filter(([k]) => k !== HINT_PARAM && (names || k !== 'VALUE'));
   // X-ABRELATEDNAMES always holds a name; RELATED gets the vCard 4.0 text form.
@@ -385,49 +382,70 @@ function patchRelation(
 
 const unquote = (value: string): string => value.replace(/^"(.*)"$/, '$1').trim();
 
+/** How a relationship line the plugin wrote is put right: in the 3.0 form for `row`, or in place (`row` absent). */
+type LegacyFix = { person: Person; row?: RelationRow };
+
 /**
- * The row and person of a `RELATED` line as the 3.0 form needs them: the row by its type (it needs a label), the
- * name from the text value (the hinted contact's display name when it resolves), or for a `urn:uuid:` value the contact's display name. Undefined when either is missing.
+ * What Apply does with a relationship line the plugin wrote, undefined when nothing (or nothing it can do):
+ * - a `RELATED` line on a 3.0 card (a `urn:uuid:` value, or a name with the hint) becomes the 3.0 form of the row
+ *   its type maps to (it needs a label);
+ * - a name that is a `urn:uuid:` (a phone kept the plugin's old link as the name), and a hinted name the contact no
+ *   longer has (renamed), get the contact's display name and the hint in place, whatever the version.
+ * The hint wins when it names a contact, as in the reader. Lines another app wrote (a name without the hint, a
+ * `RELATED` line with several types) are left alone, and so is a `urn:uuid:` value on a 4.0 card (its own form).
+ * `edited`: the line was just written by this patch (a name without the hint when the person is ambiguous).
  */
-function legacyTarget(line: VCardLine, rows: MappingRow[], ctx: RelationContext): { row: RelationRow; person: Person } | undefined {
-  if (line.name !== 'RELATED') return undefined;
-  const row = rowForLine(line, rows)[0];
-  if (row?.kind !== 'relation' || ((row.labels ?? [])[0] ?? '').trim() === '') return undefined;
+function legacyFix(line: VCardLine, v4: boolean, rows: MappingRow[], ctx: RelationContext, edited = false): LegacyFix | undefined {
+  if (line.name !== 'RELATED' && line.name !== 'X-ABRELATEDNAMES') return undefined;
+  if (line.name === 'RELATED' && typesOf(line).length > 1) return undefined;
   const hint = cleanUid(unquote(getParam(line, HINT_PARAM) ?? ''));
-  if ((getParam(line, 'VALUE') ?? '').toLowerCase() === 'text') {
-    const text = unescapeText(line.value).trim();
-    if (text === '') return undefined;
-    if (hint === '') return { row, person: { name: text } };
+  const value = relationValue(line);
+  let person: Person | undefined;
+  if ('uid' in value) {
+    for (const uid of [hint, cleanUid(value.uid)]) {
+      const name = uid === '' ? undefined : ctx.displayName(uid)?.trim();
+      if (name) {
+        person = { name, uid };
+        break;
+      }
+    }
+  } else if (hint !== '' && value.name !== '') {
     // The contact's current name beats the text the card was last written with.
-    return { row, person: { name: ctx.displayName(hint)?.trim() || text, uid: hint } };
+    person = { name: ctx.displayName(hint)?.trim() || value.name, uid: hint };
+  } else if (edited && value.name !== '') {
+    person = { name: value.name };
   }
-  // As the reader: the hint wins when it names a contact, else the value is the contact's UID.
-  for (const uid of [hint, cleanUid(line.value)]) {
-    const name = uid === '' ? undefined : ctx.displayName(uid)?.trim();
-    if (name) return { row, person: { name, uid } };
+  if (!person) return undefined;
+  if (!v4 && line.name === 'RELATED') {
+    const row = rowForLine(line, rows)[0];
+    if (row?.kind === 'relation' && ((row.labels ?? [])[0] ?? '').trim() !== '') return { person, row };
   }
-  return undefined;
+  const shown = 'name' in value ? value.name : value.asName ? undefined : person.name;
+  return shown !== person.name ? { person } : undefined;
 }
 
 /**
- * True when a vCard 3.0 card holds `RELATED` lines (which phones show as codes, or not at all). With the mapping and
- * the contacts, only the lines `patch(…, { rewriteLegacyRelations: true })` can rewrite count: a line without a
- * labelled row or a name stays as it is, and must not ask for a rewrite again and again.
+ * True when the card holds relationship lines the plugin wrote that phones show wrongly: `RELATED` on a 3.0 card
+ * (a code, or nothing), a "urn:uuid:…" name, or an old name of a renamed contact. Only the lines
+ * `patch(…, { rewriteLegacyRelations: true })` can rewrite count (decided with the same mapping and contacts): a line
+ * it cannot rewrite stays as it is, and must not ask for a rewrite again and again.
  */
-export function needsLegacyRewrite(lines: VCardLine[], rows?: MappingRow[], ctx?: RelationContext): boolean {
-  if (versionOf(lines).trim() === '4.0') return false;
-  return lines.some((line) => line.name === 'RELATED' && (!rows || !ctx || legacyTarget(line, rows, ctx) !== undefined));
+export function needsLegacyRewrite(lines: VCardLine[], rows: MappingRow[], ctx: RelationContext): boolean {
+  const v4 = versionOf(lines).trim() === '4.0';
+  return lines.some((line) => legacyFix(line, v4, rows, ctx) !== undefined);
 }
 
-/** Every `RELATED` line still on a 3.0 card (as edited here) becomes the labelled 3.0 form, where it was. */
+/** Every relationship line `legacyFix` names (on the card as edited here) is put right, where it was. */
 function rewriteLegacy(s: State, rows: MappingRow[], ctx: RelationContext): void {
-  if (isV4(s)) return;
+  const v4 = isV4(s);
   s.base.forEach((_, i) => {
     if (s.removed.has(i)) return;
-    const found = legacyTarget(s.lines[i], rows, ctx);
-    if (!found) return;
-    removeLine(s, i);
-    s.after.set(i, relationLines(s, found.row, found.person));
+    const fix = legacyFix(s.lines[i], v4, rows, ctx, s.lines[i] !== s.base[i]);
+    if (!fix) return;
+    if (fix.row) {
+      removeLine(s, i);
+      s.after.set(i, relationLines(s, fix.row, fix.person));
+    } else replaceRelated(s, i, fix.person);
   });
 }
 

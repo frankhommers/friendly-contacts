@@ -1,6 +1,34 @@
 /** Relationship helpers shared by the translators. No obsidian / src/context imports. */
 
+import { getParam, unescapeText, VCardLine } from './lines';
 import { MappingRow } from './mapping';
+
+const UUID_URN = /^urn:uuid:/i;
+const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/** The parameter the plugin writes next to a relationship's name: the UID of the contact it points to. */
+export const HINT_PARAM = 'X-FRIENDLY-UID';
+
+/** True for a line holding a name: `X-ABRELATEDNAMES`, or `RELATED` with `VALUE=text`. */
+export const isNameLine = (line: VCardLine): boolean =>
+  line.name === 'X-ABRELATEDNAMES' || (getParam(line, 'VALUE') ?? '').toLowerCase() === 'text';
+
+/**
+ * What a relationship line holds (its hint aside): `{ uid }` for a `urn:uuid:` value, also when a name holds one
+ * (`asName`: a phone kept the plugin's old link as the person's name, so it shows "urn:uuid:…"); `{ name }` for a
+ * name (`X-ABRELATEDNAMES`, `RELATED` as text, or `RELATED` without a URI scheme); another URI is `{ uid }` with
+ * the whole value, looked up as a UID as before.
+ */
+export function relationValue(line: VCardLine): { name: string } | { uid: string; asName: boolean } {
+  const uri = !isNameLine(line) && URI_SCHEME.test(line.value);
+  const text = uri ? line.value : unescapeText(line.value).trim();
+  if (UUID_URN.test(text)) return { uid: text.replace(UUID_URN, '').trim(), asName: !uri };
+  return uri ? { uid: text, asName: false } : { name: text };
+}
+
+/** The UID of a link target written as `urn:uuid:<uid>` (the way a phone may have stored it as a name). */
+export const uuidTarget = (target: string): string | undefined =>
+  UUID_URN.test(target.trim()) ? target.trim().replace(UUID_URN, '').trim() : undefined;
 
 export interface RelationContext {
   /** Link text (without brackets) to the contact with this vCard UID, if known; may be a path with an alias. */

@@ -213,6 +213,25 @@ describe('reading every form', () => {
     });
   });
 
+  it('a name that is a urn:uuid (a phone kept the plugin\'s old link as the name) links that contact', () => {
+    // alpha.6 wrote `RELATED;TYPE=spouse:urn:uuid:anna-uid`; DAVx5 stored it as a name, on 3.0 and on 4.0.
+    expect(translate(card('item1.X-ABRELATEDNAMES:urn:uuid:anna-uid', 'item1.X-ABLabel:_$!<Spouse>!$_')).props).toEqual({
+      spouse: '[[Anna de Vries]]',
+    });
+    expect(translate(card('RELATED;TYPE=spouse;VALUE=text:urn:uuid:anna-uid')).props).toEqual({ spouse: '[[Anna de Vries]]' });
+    expect(translate(card('RELATED;TYPE=spouse;VALUE=text:URN:UUID:anna-uid')).props).toEqual({ spouse: '[[Anna de Vries]]' });
+    // Like a urn:uuid value: nobody with that UID, no link (never a link named "urn:uuid:…").
+    expect(translate(card('item1.X-ABRELATEDNAMES:urn:uuid:nobody', 'item1.X-ABLabel:_$!<Spouse>!$_')).props).toEqual({});
+    expect(translate(card('RELATED;TYPE=friend;VALUE=text:urn:uuid:nobody')).props).toEqual({});
+  });
+
+  it('RELATED without VALUE=text and without a URI scheme is a name', () => {
+    expect(translate(card('RELATED;TYPE=spouse:Anna')).props).toEqual({ spouse: '[[Anna]]' });
+    expect(translate(card('RELATED;TYPE=friend:Jan de Vries\\, Jr')).props).toEqual({ friends: ['[[Jan de Vries, Jr]]'] });
+    expect(translate(card('RELATED;TYPE=friend:urn:uuid:anna-uid')).props).toEqual({ friends: ['[[Anna de Vries]]'] });
+    expect(translate(card('RELATED;TYPE=friend:http://example.com/anna')).props).toEqual({});
+  });
+
   // The label table of the spec (Part 6, "Reading"), written out so a change to the defaults shows here.
   const LABEL_TABLE: [string, string[]][] = [
     ['spouse', ['Spouse']],

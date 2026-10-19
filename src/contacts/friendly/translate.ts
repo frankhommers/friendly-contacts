@@ -6,7 +6,7 @@
 import { readDate } from './dates';
 import { getParam, splitStructured, unescapeText, VCardLine } from './lines';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine } from './mapping';
-import { RelationContext, toLink } from './relations';
+import { HINT_PARAM, RelationContext, relationValue, toLink } from './relations';
 
 export type FriendlyValue = string | string[];
 
@@ -65,23 +65,18 @@ function componentValue(row: ComponentRow, line: VCardLine): string | undefined 
   return text === '' ? undefined : text;
 }
 
-/** The parameter the plugin writes next to a relationship's name: the UID of the contact it points to. */
-const HINT_PARAM = 'X-FRIENDLY-UID';
-
 /**
  * The link for a relationship line: the contact named by the `X-FRIENDLY-UID` hint when it resolves, else the value
- * as a name (`X-ABRELATEDNAMES`, `RELATED;VALUE=text`) or the contact of a `urn:uuid:` value.
+ * as a name (see `relationValue`) or the contact of a `urn:uuid:` value. A name that is a `urn:uuid:` (a phone kept
+ * the plugin's old link as the name) is that contact too, never a link named "urn:uuid:…".
  */
 function relationLink(line: VCardLine, ctx: RelationContext, reader: Reader): string | undefined {
   if (reader === 1) return relationLinkV1(line, ctx);
   const hint = getParam(line, HINT_PARAM)?.replace(/^"(.*)"$/, '$1').trim();
   const hinted = hint ? ctx.uidToName(hint) : undefined;
   if (hinted !== undefined && hinted !== '') return toLink(hinted);
-  if (line.name === 'X-ABRELATEDNAMES' || (getParam(line, 'VALUE') ?? '').toLowerCase() === 'text') {
-    const name = unescapeText(line.value).trim();
-    return name === '' ? undefined : toLink(name);
-  }
-  const name = ctx.uidToName(line.value.replace(UUID_URN, ''));
+  const value = relationValue(line);
+  const name = 'name' in value ? value.name : ctx.uidToName(value.uid);
   return name === undefined || name === '' ? undefined : toLink(name);
 }
 
