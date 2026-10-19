@@ -1,6 +1,6 @@
 import { App, Modal, Notice } from 'obsidian';
 import * as React from 'react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { canApply, Choice, ReviewRow, Side } from 'src/sync/review';
 import { displayValue, DisplayValue, linkDisplayName, NONE } from 'src/sync/reviewDisplay';
@@ -11,14 +11,16 @@ export interface SyncReviewInput {
   /** The "card moves from ... to ..." line of a source change. */
   moveLine?: string;
   prepared: PreparedSync;
-  /** Mirror writes the result will trigger on other notes, already worded ("Sem: parents gets [[Jan]]"). */
-  also: string[];
-  /** The note would be renamed to `to`; `blocked` is the reason it cannot be. */
-  rename?: { to: string; blocked?: string };
+  /** Mirror writes the result of these choices will trigger on other notes, worded ("Sem: parents gets [[Jan]]"). */
+  also: (choices: Map<string, Choice>) => string[];
+  /** The result of these choices renames the note to `to`; `blocked` is the reason it cannot be. */
+  rename: (choices: Map<string, Choice>) => { to: string; blocked?: string } | undefined;
   /** Relation targets of this row that exist only on the server; `import` makes them a note. */
   serverOnly: (row: ReviewRow) => { name: string; import(): Promise<void> }[];
   /** Called after an Import: the modal has closed and the caller should prepare and open the review again. */
   onReopen?: () => void;
+  /** Called when the modal closes without Apply or Import (Cancel, Escape). */
+  onCancel?: () => void;
 }
 
 const SIDE_LABEL: Record<Side, string> = { server: 'Radicale', local: 'Obsidian' };
@@ -67,7 +69,14 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
   const visible = rows.filter((r) => r.changed || showAll);
   const hiddenCount = rows.filter((r) => !r.changed).length;
   const ok = canApply(rows, choices) && !importing;
-  const canRename = !!input.rename && !input.rename.blocked;
+  // Both follow the current picks.
+  const also = useMemo(() => input.also(choices), [input, choices]);
+  const renameTo = useMemo(() => input.rename(choices), [input, choices]);
+  const canRename = !!renameTo && !renameTo.blocked;
+  const serverOnly = useMemo(
+    () => new Map(rows.map((row) => [row.property, row.changed ? input.serverOnly(row) : []])),
+    [input, rows],
+  );
 
   const resultOf = (row: ReviewRow): DisplayValue | undefined => {
     const choice = effective(row);
@@ -95,7 +104,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
     if (!row.changed) classes.push('is-unchanged');
     if (conflict) classes.push('is-conflict');
     const result = resultOf(row);
-    const entries = row.changed ? input.serverOnly(row) : [];
+    const entries = serverOnly.get(row.property) ?? [];
     const custom = typeof choice === 'object' ? choice.custom : undefined;
     const editText = custom ?? (result?.text !== undefined && result.text !== NONE ? result.text : '');
 
@@ -180,17 +189,17 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
           <tbody>{visible.map(renderRow)}</tbody>
         </table>
       </div>
-      {input.also.length > 0 ? (
+      {also.length > 0 ? (
         <div className="friendly-review-also">
           <h4>Also changes</h4>
           <ul>
-            {input.also.map((line, i) => (
+            {also.map((line, i) => (
               <li key={i}>{line}</li>
             ))}
           </ul>
         </div>
       ) : null}
-      {input.rename ? (
+      {renameTo ? (
         <div className="friendly-review-rename">
           <label>
             <input
@@ -199,9 +208,9 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
               disabled={!canRename}
               onChange={(e) => setRename(e.target.checked)}
             />{' '}
-            Rename note to {input.rename.to}
+            Rename note to {renameTo.to}
           </label>
-          {input.rename.blocked ? <div className="friendly-review-blocked">{input.rename.blocked}</div> : null}
+          {renameTo.blocked ? <div className="friendly-review-blocked">{renameTo.blocked}</div> : null}
         </div>
       ) : null}
       <div className="friendly-review-buttons">
@@ -216,7 +225,10 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
 
 export class SyncReviewModal extends Modal {
   private reactRoot: Root | null = null;
-  private reopening = false;
+  /** How the modal ends: Apply, or an Import that asks for a fresh review; undefined = cancelled. */
+  private outcome: 'apply' | 'reopen' | undefined;
+  /** Set once closed: an Import finishing after Escape must not reopen anything. */
+  private closed = false;
 
   constructor(
     app: App,
@@ -235,12 +247,15 @@ export class SyncReviewModal extends Modal {
         input={this.input}
         linkName={linkDisplayName}
         onApply={(choices, rename) => {
+          if (this.closed) return;
+          this.outcome = 'apply';
           this.close();
           this.onApply(choices, rename);
         }}
         onCancel={() => this.close()}
         onImported={() => {
-          this.reopening = true;
+          if (this.closed) return;
+          this.outcome = 'reopen';
           this.close();
         }}
       />,
@@ -248,12 +263,12 @@ export class SyncReviewModal extends Modal {
   }
 
   onClose() {
+    if (this.closed) return;
+    this.closed = true;
     this.reactRoot?.unmount();
     this.reactRoot = null;
     this.contentEl.empty();
-    if (this.reopening) {
-      this.reopening = false;
-      this.input.onReopen?.();
-    }
+    if (this.outcome === 'reopen') this.input.onReopen?.();
+    else if (this.outcome === undefined) this.input.onCancel?.();
   }
 }

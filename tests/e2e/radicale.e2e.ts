@@ -1,5 +1,5 @@
 /**
- * End-to-end: the real Sync core (prepareSync/applySync + CardDAV adapter + PlatformHttpClient) against a real
+ * End-to-end: the real Sync (syncFlow -> prepareSync/applySync + CardDAV adapter + PlatformHttpClient) against a real
  * Radicale 3.8.3 started by this suite. Run with `npm run test:e2e`; see tests/scripts/radicale-e2e.md.
  *
  * The note side is in memory (frontmatter + body); the server card is checked with plain HTTP GETs,
@@ -26,9 +26,10 @@ import { VCardMeta } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { carddavAdapter } from 'src/sync/adapters/carddavGeneric';
 import { moveCard } from 'src/sync/moveCard';
-import { canApply, Choice, resultProps } from 'src/sync/review';
-import { CardLocation, importCandidates, noteSourceId, planSync, SyncPlan } from 'src/sync/sources';
-import { applySync, locateCard, NoteIO, prepareSync, SyncDeps, SyncOutcome } from 'src/sync/syncContact';
+import { canApply, Choice } from 'src/sync/review';
+import { importCandidates, SyncPlan } from 'src/sync/sources';
+import { NoteIO, SyncOutcome } from 'src/sync/syncContact';
+import { FlowResult, syncFlow } from 'src/sync/syncFlow';
 import { createSyncState, FileStore, SyncState } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -284,74 +285,67 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   /** What the user picks in the review screen: per property, or the same side for every row that needs a decision. */
   type Choices = Record<string, Choice> | 'server' | 'local';
 
+  const bookOf = (id: string) => {
+    const book = bookList.find((b) => b.source.id === id);
+    if (!book) throw new Error(`no book ${id}`);
+    return book;
+  };
+
   /**
-   * One Sync as the review screen runs it: prepare, then Apply with the preselections plus `choices`.
-   * 'unchanged' when prepare finds the note up to date.
+   * One Sync through the real orchestration (src/sync/syncFlow.ts): the source choice, prepare, the review and
+   * Apply. The review screen is a fake that applies the preselections plus `choices`.
    */
-  async function syncWith(
-    note: Note,
-    book: Book,
-    choices: Choices = {},
-    move?: { from: CardLocation; book: Book },
-  ): Promise<{ outcome: SyncOutcome; oldKept?: boolean }> {
+  async function syncNote(note: Note, choices: Choices = {}): Promise<FlowResult> {
     pushes.length = 0;
     notices.length = 0;
     const lookups = await relationContext(adapter, notes);
-    const deps: SyncDeps = {
-      adapter: book.adapter === adapter ? counting : book.adapter,
-      state: book.state,
+    const sources = bookList.map((b) => b.source);
+    return syncFlow({
+      note: note.io,
+      path: `Contacts/${String(note.frontmatter.name)}.md`,
+      name: String(note.frontmatter.name),
       rows: DEFAULT_MAPPING,
-      ctx: lookups,
-      readOnlyCtx: lookups, // these lookups never write
-      notify: (msg) => notices.push(msg),
-    };
-    const where = { sourceId: book.source.id, move: move && { from: move.from, adapter: move.book.adapter, state: move.book.state } };
-    const prepared = await prepareSync(note.io, deps, where);
-    if (prepared.kind === 'failed') throw new Error(prepared.message);
-    if (prepared.kind === 'upToDate') return { outcome: 'unchanged' };
-    const { rows, server } = prepared.prepared;
-    const picked =
-      typeof choices === 'string'
-        ? new Map(rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, choices as Choice]))
-        : new Map(Object.entries(choices));
-    expect(canApply(rows, picked), `undecided: ${rows.filter((r) => r.changed && r.preselect === undefined).map((r) => r.property)}`).toBe(true);
-    const R = resultProps(rows, picked, server?.friendly.props ?? {});
-    const result = await applySync(prepared.prepared, R, note.io, deps, { sourceName: book.source.name });
-    if (result.kind !== 'done') throw new Error(`apply: ${JSON.stringify(result)}`);
-    return { outcome: result.outcome, oldKept: result.oldKept };
+      sources,
+      active: sources,
+      defaultSource: 'radicale',
+      adapterFor: (source) => (source.id === 'radicale' ? counting : bookOf(source.id).adapter),
+      stateFor: (id) => bookOf(id).state,
+      contexts: async () => ({ ctx: lookups, readOnlyCtx: lookups, settle: async () => {} }), // these lookups never write
+      review: async (request) => {
+        const { rows } = request.prepared;
+        const picked =
+          typeof choices === 'string'
+            ? new Map(rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, choices as Choice]))
+            : new Map(Object.entries(choices));
+        expect(canApply(rows, picked), `undecided: ${rows.filter((r) => r.changed && r.preselect === undefined).map((r) => r.property)}`).toBe(true);
+        return { kind: 'apply', choices: picked, rename: false };
+      },
+      notify: (msg) => void notices.push(msg),
+      nameTaken: () => false,
+    });
   }
 
-  const sync = async (note: Note, choices: Choices = {}) => (await syncWith(note, bookList[0], choices)).outcome;
+  /** The outcome of one Sync; 'unchanged' when the note is up to date. */
+  async function sync(note: Note, choices: Choices = {}): Promise<SyncOutcome> {
+    const result = await syncNote(note, choices);
+    if (result.kind === 'upToDate') return 'unchanged';
+    if (result.kind !== 'done') throw new Error(`sync: ${JSON.stringify(result)} ${notices.join(' / ')}`);
+    return result.outcome;
+  }
 
-  /**
-   * Sync's source choice as runSync in src/sync/sync.ts makes it (the same pure functions, no Obsidian):
-   * the note's `source:` or the book holding its base, a search of every book for the UID, then sync, adopt or move.
-   * The move confirmation is taken as given; the move is applied with the reviewed card.
-   */
+  /** One Sync with the book choice it made (sync, adopt, move or refuse). */
   async function syncAcrossBooks(note: Note): Promise<{ plan: SyncPlan; outcome?: SyncOutcome; oldKept?: boolean }> {
-    const uid = cleanUid(String(note.frontmatter.uid));
-    const baseIn: string[] = [];
-    for (const book of bookList) if (await book.state.get(uid)) baseIn.push(book.source.id);
-    const named = typeof note.frontmatter.source === 'string' ? note.frontmatter.source : undefined;
-    const sources = bookList.map((b) => b.source);
-    const chosen = noteSourceId(named, sources, baseIn, 'radicale');
-    if ('error' in chosen) return { plan: { kind: 'refuse', message: chosen.error } };
-    const byId = (id: string) => bookList.find((b) => b.source.id === id)!;
-    const nameOf = (id: string) => byId(id).source.name;
-
-    const { found, failed } = await locateCard(bookList.map((b) => ({ sourceId: b.source.id, adapter: b.adapter })), uid);
-    expect(failed).toEqual([]);
-    const plan = planSync({ id: chosen.id, explicit: named !== undefined }, found, nameOf);
-
-    if (plan.kind === 'sync' || plan.kind === 'adopt') {
-      const { outcome } = await syncWith(note, byId(plan.sourceId));
-      return { plan, outcome };
+    const result = await syncNote(note);
+    switch (result.kind) {
+      case 'upToDate':
+        return { plan: result.plan, outcome: 'unchanged' };
+      case 'done':
+        return { plan: result.plan, outcome: result.outcome, ...(result.oldKept === undefined ? {} : { oldKept: result.oldKept }) };
+      case 'refused':
+        return { plan: { kind: 'refuse', message: result.message } };
+      default:
+        throw new Error(`sync: ${JSON.stringify(result)} ${notices.join(' / ')}`);
     }
-    if (plan.kind === 'move') {
-      const { outcome, oldKept } = await syncWith(note, byId(plan.to), {}, { from: plan.from, book: byId(plan.from.sourceId) });
-      return { plan, outcome, oldKept };
-    }
-    return { plan };
   }
 
   /** Like importRemoteCard: pull, translate to friendly properties (plus `source:`), store the pulled card as base. */

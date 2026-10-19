@@ -18,6 +18,7 @@ import { isContactFrontmatter } from "./contacts/friendlyNotes";
 import { isFileInFolder } from "src/file/file";
 import { openImportContactModal } from "src/ui/modals/importContactModal";
 import { isSyncAvailable } from "src/sync/adapters";
+import { sync } from "src/sync";
 import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
@@ -117,6 +118,19 @@ export default class ContactsPlugin extends Plugin {
           return;
         }
         await openImportContactModal(this.app);
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-sync-contact",
+      name: "Sync this contact",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const frontmatter = file ? this.app.metadataCache.getFileCache(file)?.frontmatter : undefined;
+        const ok = !!file && file.extension === "md" && !!frontmatter && isContactFrontmatter(frontmatter) && isFileInFolder(file) && isSyncAvailable();
+        if (!ok || checking) return ok;
+        void sync.syncContact(file);
+        return true;
       },
     });
 

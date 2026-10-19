@@ -172,7 +172,7 @@ export const ContactView = (props: ContactProps) => {
       const menu = new Menu();
       menu.addItem((item:MenuItem) =>
         item.setSection("vcf-sync-main").setTitle("Sync").setIcon("refresh-cw").onClick(() =>{
-          sync.syncContact(myContact);
+          void sync.syncContact(myContact.file);
         })
       );
       menu.addItem((item:MenuItem) =>
