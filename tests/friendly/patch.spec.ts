@@ -563,7 +563,9 @@ describe('relationships and anniversaries in the card\'s own form', () => {
     it('needsLegacyRewrite: a 3.0 card with RELATED lines the plugin wrote', () => {
       expect(needs(legacy)).toBe(true);
       expect(needs(parseCard('BEGIN:VCARD\r\nRELATED;TYPE=child:urn:uuid:sem-uid\r\nEND:VCARD'))).toBe(true);
-      expect(needs(card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid'))).toBe(false);
+      // a urn:uuid URI on 4.0 that names a contact gets the name (see below)
+      expect(needs(card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid'))).toBe(true);
+      expect(needs(card4('FN:X', 'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries'))).toBe(false);
       expect(needs(davx5)).toBe(false);
       expect(needs(card('FN:X'))).toBe(false);
     });
@@ -680,8 +682,62 @@ describe('relationships and anniversaries in the card\'s own form', () => {
       expect(result.lines).toEqual(legacy);
     });
 
-    it('a 4.0 card is not rewritten', () => {
-      const lines = card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid');
+    it('4.0: a urn:uuid URI that names a contact gets the name and the hint in place; the types stay', () => {
+      const lines = card4(
+        'FN:X',
+        'RELATED;TYPE=child:urn:uuid:sem-uid',
+        'NOTE:n',
+        'RELATED;TYPE=spouse;VALUE=uri:URN:UUID:sem-uid',
+        'RELATED;TYPE=friend;VALUE=text:Opa',
+      );
+      expect(needs(lines)).toBe(true);
+      const before = read(lines).props;
+      expect(before).toMatchObject({ children: ['[[Sem]]'], spouse: '[[Sem]]', friends: ['[[Opa]]'] });
+      const result = go(lines, before, true);
+      expect(texts(result.lines)).toEqual([
+        'VERSION:4.0',
+        'FN:X',
+        'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'NOTE:n',
+        'RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'RELATED;TYPE=friend;VALUE=text:Opa',
+      ]);
+      // untouched lines are the same objects (byte-identical)
+      for (const i of [0, 1, 3, 5]) expect(result.lines[i]).toBe(lines[i]);
+      expect(reparsed(result.lines)).toEqual(before);
+      // done once: no review loop
+      expect(needs(parseCard(serializeCard(result.lines)))).toBe(false);
+    });
+
+    it('4.0: a urn:uuid line with several types (URI or name) keeps all its types; only the value and params change', () => {
+      const lines = card4(
+        'FN:X',
+        'RELATED;TYPE=friend,colleague:urn:uuid:sem-uid',
+        'RELATED;TYPE=friend;TYPE=neighbor;VALUE=text:urn:uuid:sem-uid',
+      );
+      expect(needs(lines)).toBe(true);
+      const before = read(lines).props;
+      const result = go(lines, before, true);
+      expect(texts(result.lines).slice(2)).toEqual([
+        'RELATED;TYPE=friend,colleague;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'RELATED;TYPE=friend;TYPE=neighbor;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+      ]);
+      expect(reparsed(result.lines)).toEqual(before);
+      expect(needs(parseCard(serializeCard(result.lines)))).toBe(false);
+    });
+
+    it('4.0: lines it cannot put right stay as they are and ask for nothing', () => {
+      const lines = card4(
+        'FN:X',
+        'RELATED;TYPE=child:urn:uuid:nobody',
+        'RELATED;TYPE=friend,colleague:urn:uuid:nobody',
+        'RELATED;TYPE=friend,colleague;VALUE=text:urn:uuid:nobody',
+        'RELATED;TYPE=child:http://example.com/sem',
+        // several types: only a urn:uuid value is put right, not another app's (or a renamed) name
+        'RELATED;TYPE=friend,colleague;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem',
+        'RELATED;TYPE=friend,colleague;VALUE=text:Opa',
+      );
+      expect(needs(lines)).toBe(false);
       expect(go(lines, read(lines).props, true).lines).toEqual(lines);
     });
 

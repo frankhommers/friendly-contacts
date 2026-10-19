@@ -66,7 +66,7 @@ export interface PreparedSync {
   server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string };
   base?: Props;
   rows: ReviewRow[];
-  /** The card is vCard 3.0 and holds `RELATED` lines Apply rewrites into the form phones understand. */
+  /** The card holds relationship lines the plugin wrote that Apply puts right (`needsLegacyRewrite`), 3.0 or 4.0. */
   rewriteRelations: boolean;
   /** Where the card will live. */
   target: { sourceId: string };

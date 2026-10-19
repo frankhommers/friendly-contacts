@@ -405,9 +405,9 @@ describe('prepareSync', () => {
       resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
     };
     const server = edit(
-      edit(V1, 'VERSION:3.0', 'VERSION:4.0'), // on a 3.0 card this line would open the review for its rewrite
+      edit(V1, 'VERSION:3.0', 'VERSION:4.0'), // the plugin's 4.0 form: no rewrite
       'TITLE:Baker\r\n',
-      'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n',
+      'TITLE:Baker\r\nRELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries\r\n',
     );
     const t = setup({ server, base: server, local: { ...friendlyOf(server), spouse: '[[06 People/Sem de Vries|Sem]]' }, ctx: sem });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
@@ -421,9 +421,9 @@ describe('prepareSync', () => {
       resolveLink: (name) => (name === 'Contacts/Sem/index' || name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
     };
     const server = edit(
-      edit(V1, 'VERSION:3.0', 'VERSION:4.0'), // on a 3.0 card this line would open the review for its rewrite
+      edit(V1, 'VERSION:3.0', 'VERSION:4.0'), // the plugin's 4.0 form: no rewrite
       'TITLE:Baker\r\n',
-      'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n',
+      'TITLE:Baker\r\nRELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem\r\n',
     );
     for (const spouse of ['[[Contacts/Sem/index|Sem]]', '[[Contacts/Sem/index]]', '[[Contacts/Sem/index|Sem Jr]]']) {
       const t = setup({ server, base: server, local: { ...friendlyOf(server), spouse }, ctx: sem });
@@ -975,13 +975,39 @@ describe('old relationship lines on a 3.0 card', () => {
     expect(t.cards.get(HREF)!.raw).toBe(LEGACY);
   });
 
-  it('a 4.0 card never needs the rewrite', async () => {
+  it('a 4.0 card: the urn:uuid URI gets the name and the hint in place, its own form; the next Sync is up to date', async () => {
     const t = setup({ server: V4, base: V4, local: local(V4), ctx: people });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteRelations).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(rewritten(raw)).toEqual([`RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=${SEM}:Sem de Vries`]);
+    expect(raw).toContain('VERSION:4.0');
+    // only that line changed
+    expect(lineTexts(raw).filter((l) => !lineTexts(V4).includes(l) && !l.startsWith('REV:'))).toEqual(rewritten(raw));
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-    const changed = setup({ server: V4, base: V4, local: { ...local(V4), title: 'Chef' }, ctx: people });
-    expect((await reviewOf(changed)).rewriteRelations).toBe(false);
-    await changed.sync();
-    expect(changed.cards.get(HREF)!.raw).toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
+  });
+
+  it('a 4.0 card: a urn:uuid line with several types keeps them all; the next Sync is up to date', async () => {
+    for (const line of [`RELATED;TYPE=friend,colleague:urn:uuid:${SEM}`, `RELATED;TYPE=friend;TYPE=colleague;VALUE=text:urn:uuid:${SEM}`]) {
+      const server = edit(V4, `RELATED;TYPE=child:urn:uuid:${SEM}`, line);
+      const t = setup({ server, base: server, reader: 2, local: local(server), ctx: people });
+      const prepared = await reviewOf(t);
+      expect(prepared.rewriteRelations).toBe(true);
+      expect(changedRows(prepared)).toEqual([]);
+      expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+      const types = line.slice('RELATED;'.length, line.indexOf(line.includes('VALUE=') ? ';VALUE=' : ':'));
+      expect(rewritten(t.cards.get(HREF)!.raw)).toEqual([`RELATED;${types};VALUE=text;X-FRIENDLY-UID=${SEM}:Sem de Vries`]);
+      // the note keeps its relationships (only `source:` is written: the note had none)
+      expect(t.note.writes.flatMap((w) => [...Object.keys(w.set), ...w.remove])).toEqual(['source']);
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    }
+  });
+
+  it('a 4.0 card: a urn:uuid URI nobody has stays and asks for nothing', async () => {
+    const t = setup({ server: V4, base: V4, local: friendlyOf(V4) });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
   it('a RELATED line that cannot be rewritten does not ask for a review', async () => {

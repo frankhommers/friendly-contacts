@@ -9,7 +9,7 @@ import { normalizeNoteDate, noteDateFor, writeDate } from './dates';
 import { escapeText, getParam, joinStructured, serializeLine, splitStructured, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeLabel } from './mapping';
-import { HINT_PARAM, linkTarget, RelationContext, relationValue } from './relations';
+import { HINT_PARAM, linkTarget, RelationContext, relationValue, uuidTarget } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
 
 export interface PatchResult {
@@ -391,16 +391,20 @@ type LegacyFix = { person: Person; row?: RelationRow };
  * - a `RELATED` line on a 3.0 card (a `urn:uuid:` value, or a name with the hint) becomes the 3.0 form of the row
  *   its type maps to (it needs a label);
  * - a name that is a `urn:uuid:` (a phone kept the plugin's old link as the name), and a hinted name the contact no
- *   longer has (renamed), get the contact's display name and the hint in place, whatever the version.
+ *   longer has (renamed), get the contact's display name and the hint in place, whatever the version;
+ * - on a 4.0 card a `urn:uuid:` value (a URI the plugin wrote before, or such a name) gets them in place too, as
+ *   `RELATED;TYPE=…;VALUE=text;X-FRIENDLY-UID=<uid>:<name>`, also on a line with several types (all its types stay).
  * The hint wins when it names a contact, as in the reader. Lines another app wrote (a name without the hint, a
- * `RELATED` line with several types) are left alone, and so is a `urn:uuid:` value on a 4.0 card (its own form).
+ * `RELATED` line with several types that holds no `urn:uuid:`) are left alone, and so is a `urn:uuid:` nobody has.
  * `edited`: the line was just written by this patch (a name without the hint when the person is ambiguous).
  */
 function legacyFix(line: VCardLine, v4: boolean, rows: MappingRow[], ctx: RelationContext, edited = false): LegacyFix | undefined {
   if (line.name !== 'RELATED' && line.name !== 'X-ABRELATEDNAMES') return undefined;
-  if (line.name === 'RELATED' && typesOf(line).length > 1) return undefined;
-  const hint = cleanUid(unquote(getParam(line, HINT_PARAM) ?? ''));
   const value = relationValue(line);
+  // A `urn:uuid:` held as a name, or (on 4.0, where only the value changes) as a URI.
+  const uuid = 'uid' in value && (value.asName || (v4 && uuidTarget(line.value) !== undefined));
+  if (line.name === 'RELATED' && typesOf(line).length > 1 && !(v4 && uuid)) return undefined;
+  const hint = cleanUid(unquote(getParam(line, HINT_PARAM) ?? ''));
   let person: Person | undefined;
   if ('uid' in value) {
     for (const uid of [hint, cleanUid(value.uid)]) {
@@ -421,13 +425,13 @@ function legacyFix(line: VCardLine, v4: boolean, rows: MappingRow[], ctx: Relati
     const row = rowForLine(line, rows)[0];
     if (row?.kind === 'relation' && ((row.labels ?? [])[0] ?? '').trim() !== '') return { person, row };
   }
-  const shown = 'name' in value ? value.name : value.asName ? undefined : person.name;
+  const shown = 'name' in value ? value.name : uuid ? undefined : person.name;
   return shown !== person.name ? { person } : undefined;
 }
 
 /**
  * True when the card holds relationship lines the plugin wrote that phones show wrongly: `RELATED` on a 3.0 card
- * (a code, or nothing), a "urn:uuid:…" name, or an old name of a renamed contact. Only the lines
+ * (a code, or nothing), a "urn:uuid:…" name or (4.0) URI, or an old name of a renamed contact. Only the lines
  * `patch(…, { rewriteLegacyRelations: true })` can rewrite count (decided with the same mapping and contacts): a line
  * it cannot rewrite stays as it is, and must not ask for a rewrite again and again.
  */

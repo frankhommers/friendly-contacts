@@ -983,4 +983,30 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await sync(rik)).toBe('unchanged');
     expect(rewriteLine).toBeUndefined();
   });
+
+  it.each([
+    ['a URI', `RELATED;TYPE=spouse:urn:uuid:${SEM_UID}`, `RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=${SEM_UID}:Sem`, '1'],
+    ['a URI with several types', `RELATED;TYPE=spouse,friend:urn:uuid:${SEM_UID}`, `RELATED;TYPE=spouse,friend;VALUE=text;X-FRIENDLY-UID=${SEM_UID}:Sem`, '2'],
+  ])('19. 4.0: %s holding urn:uuid gets Sem\'s name and the hint in place; the types stay', async (_what, line, fixed, n) => {
+    const uid = `C0FFEE00-0000-4000-8000-00000000019${n}`;
+    const href = `${BOOK}urn-uri-${n}.vcf`;
+    await putCard(href, ['BEGIN:VCARD', 'VERSION:4.0', `UID:${uid}`, 'FN:Roos Oud', 'N:Oud;Roos;;;', line, 'END:VCARD', ''].join('\r\n'));
+    const roos = await importCard(href);
+    expect(roos.frontmatter.spouse).toBe('[[Sem]]');
+    const before = unfolded(await serverCard(href));
+
+    // Only the rewrite is reviewed; Apply changes only that line, and the card stays 4.0.
+    expect(await sync(roos)).toBe('pushed');
+    expect(rewriteLine).toBe('Relationships on this card are rewritten in the form phones understand.');
+    const after = unfolded(await serverCard(href));
+    expect(after.join('\n')).not.toContain('urn:uuid');
+    expect(after).toContain('VERSION:4.0');
+    expect(upper(changed(minus(after, before)))).toEqual(upper([fixed]));
+    expect(changed(minus(before, after))).toEqual([expect.stringMatching(/urn:uuid:/i)]);
+    expect(roos.frontmatter.spouse).toBe('[[Sem]]');
+
+    // Done once: no review loop.
+    expect(await sync(roos)).toBe('unchanged');
+    expect(rewriteLine).toBeUndefined();
+  });
 });

@@ -67,6 +67,10 @@ Scenarios:
     `RELATED;TYPE=spouse;VALUE=text:urn:uuid:…` on 4.0): it is read as a link to that contact, the review shows only
     the rewrite line, and Apply writes the contact's name with the hint in the line's own form. The next Sync is
     `unchanged`.
+19. A 4.0 card with a plugin-written `RELATED;TYPE=spouse:urn:uuid:…` line, and one with several types
+    (`TYPE=spouse,friend`): the review shows only the rewrite line, Apply writes
+    `RELATED;<the same types>;VALUE=text;X-FRIENDLY-UID=<uid>:<name>` in place and only that line changes; the card
+    stays 4.0. The next Sync is `unchanged`.
 
 Note: `DOMParser` in the suite is jsdom's, with `querySelector('response')` matching prefixed elements
 (`CR:address-data`) like Chromium does. Plain jsdom does not match them; Obsidian (Chromium) does.
@@ -324,7 +328,9 @@ book's name; below that is written as **<book>**.
       `RELATED;TYPE=child:urn:uuid:<Sem's UID>` (this is what older versions wrote), import it and **Sync**. The review
       screen shows "Relationships on this card are rewritten in the form phones understand." and no property rows.
       *Cancel* leaves the card as it was. **Apply** replaces that line with the `X-ABRELATEDNAMES` line and its label;
-      a second **Sync** says "Up to date". A 4.0 card with such a line is left alone.
+      a second **Sync** says "Up to date". On a 4.0 card such a line gets the name and the hint in place
+      (`RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=…:Sem de Vries`; a line with several types keeps them all); a
+      `urn:uuid` nobody has stays as it is.
 - [ ] **Create Contact with two books:** with two address books (the first the default), click **Create Contact**:
       the dialog has an **Address book** dropdown with the default selected. Choose the second book and create
       "Test Twee": the note has `source:` with that book's name, and its first **Sync** creates the card in that book

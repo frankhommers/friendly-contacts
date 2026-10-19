@@ -628,11 +628,25 @@ describe('syncFlow: old relationship lines on a 3.0 card', () => {
     expect(t.radicale.cards.get(href)!.raw).toBe(before);
   });
 
-  it('a 4.0 card has no rewrite line', async () => {
+  it('a 4.0 card with the text form has no rewrite line', async () => {
     const t = setup({ local: { ...JAN, children: ['[[Sem]]'], source: 'Radicale', mobile: '06-2' }, ctx: people });
-    t.radicale.seed(card('06-1', ['RELATED;TYPE=child:urn:uuid:sem-uid']));
+    t.radicale.seed(card('06-1', ['RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries']));
     await t.run();
     expect(t.requests[0].rewriteLine).toBeUndefined();
+  });
+
+  it('a 4.0 card with a urn:uuid URI gets the rewrite line; Apply writes the name in place, and opens nothing after', async () => {
+    const t = setup({ local: { ...JAN, children: ['[[Sem]]'], source: 'Radicale' }, ctx: people });
+    const href = t.radicale.seed(card('06-1', ['RELATED;TYPE=child:urn:uuid:sem-uid']));
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pushed' });
+    expect(t.requests[0].rewriteLine).toBe(REWRITE_LINE);
+    const raw = t.radicale.cards.get(href)!.raw;
+    expect(raw).toContain('RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries');
+    expect(raw).not.toContain('urn:uuid:sem-uid');
+    expect(raw).toContain('VERSION:4.0');
+    t.requests.length = 0;
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
+    expect(t.requests).toEqual([]);
   });
 
   it('a card moving between address books is rewritten too', async () => {

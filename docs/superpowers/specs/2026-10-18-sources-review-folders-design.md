@@ -442,9 +442,12 @@ Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Androi
 - Legacy lines the plugin wrote before (`RELATED…:urn:uuid:…` on a 3.0 card, or `RELATED` text with the hint) are
   rewritten into the 3.0 form on the next Apply that writes that card. A `urn:uuid:` name, and a hinted name the
   contact no longer has (renamed), get the display name and the hint in place, in the line's own form, on 3.0 and 4.0.
-  When this is the only difference, the review screen opens with the line "Relationships on this card are rewritten
-  in the form phones understand." and Apply (no property rows). Lines another app wrote (a name without the hint, a
-  `RELATED` line with several types) stay as they are.
+  On a 4.0 card a `RELATED;TYPE=…:urn:uuid:…` URI (and a `VALUE=text` `urn:uuid:` name) that resolves to a known
+  contact becomes `RELATED;TYPE=<same types>;VALUE=text;X-FRIENDLY-UID=<uid>:<display name>` in place, also on a
+  line with several types (all its types stay; only the value and parameters change). A `urn:uuid:` nobody has
+  stays as it is. When this is the only difference, the review screen opens with the line "Relationships on this
+  card are rewritten in the form phones understand." and Apply (no property rows). Lines another app wrote (a name
+  without the hint, a `RELATED` line with several types that holds no `urn:uuid:`) stay as they are.
 - Relation values of the card and the base are compared in the note's link form (a name that resolves to a contact
   becomes that contact's link text), so a phone that drops the hint causes no difference. A name Obsidian does not
   resolve (a contact in its own folder, its note `index`) is matched to the one contact note with that display name
