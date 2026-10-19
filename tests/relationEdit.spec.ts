@@ -237,6 +237,14 @@ describe('linkRelationEntry', () => {
     expect(files['Jan.md'].friends).toEqual(['[[Sem]]']);
   });
 
+  it('never drops an entry that already links the contact', async () => {
+    const { env, files, calls } = makeEnv({ 'Jan.md': { friends: ['[[Sem]]'], spouse: '[[Sem]]' }, 'Sem.md': {} });
+    await linkRelationEntry(env, rows, 'Jan.md', 'friends', '[[Sem]]', 'Sem.md');
+    await addRelation(env, rows, 'Jan.md', 'spouse', 'Sem.md', '[[Sem]]');
+    expect(calls).toEqual([]);
+    expect(files['Jan.md']).toMatchObject({ friends: ['[[Sem]]'], spouse: '[[Sem]]' });
+  });
+
   it('keeps an unquoted entry and appends when the unresolved entry is gone', async () => {
     const { env, files } = makeEnv({ 'Jan.md': { friends: [[['Piet']]] }, 'Piet.md': {}, 'Sem.md': {} });
     await linkRelationEntry(env, rows, 'Jan.md', 'friends', '[[Sem de Vries]]', 'Sem.md');

@@ -134,11 +134,13 @@ export async function addRelation(
   replacing?: string,
 ): Promise<void> {
   const row = relationRow(rows, property);
+  const links = (item: unknown) => typeof item === 'string' && resolveEntry(env, item, path) === targetPath;
+  // An entry that already links the contact is never the one replaced.
   const replaced = (item: unknown) =>
-    replacing !== undefined && typeof item === 'string' && item.trim() === replacing.trim();
+    replacing !== undefined && typeof item === 'string' && item.trim() === replacing.trim() && !links(item);
   await env.updateProperty(path, property, (current) => {
     const items = relationItems(current);
-    const listed = items.some((item) => typeof item === 'string' && resolveEntry(env, item, path) === targetPath);
+    const listed = items.some(links);
     if (listed) {
       if (!items.some(replaced)) return current as string | string[] | undefined;
       const kept = items.filter((item) => !replaced(item)) as string[];
