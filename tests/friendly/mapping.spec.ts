@@ -1,16 +1,20 @@
 import { parseCard } from 'src/contacts/friendly/lines';
 import {
+  APPLE_BUILTIN_LABELS,
   DEFAULT_MAPPING,
   FIXED_PROPERTIES,
   isFixedProperty,
   isMappedProperty,
+  labelText,
   mappingRenames,
+  migrateMapping,
   matchesPattern,
   MappingRow,
   rowForLine,
   rowForProperty,
   renameRow,
   validateMapping,
+  writeLabel,
 } from 'src/contacts/friendly/mapping';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { describe, expect, it } from 'vitest';
@@ -137,8 +141,8 @@ describe('renameRow', () => {
   });
 
   it('repoints self-mirrors too', () => {
-    const rows = renameRow(DEFAULT_MAPPING, 'spouse', 'partner');
-    expect(mirrorOf(rows, 'partner')).toBe('partner');
+    const rows = renameRow(DEFAULT_MAPPING, 'spouse', 'echtgenoot');
+    expect(mirrorOf(rows, 'echtgenoot')).toBe('echtgenoot');
     expect(validateMapping(rows)).toEqual([]);
   });
 
@@ -181,5 +185,134 @@ describe('mappingRenames', () => {
       { from: 'cell', to: 'mobile' },
       { from: 'mobile', to: 'phone' },
     ]);
+  });
+});
+
+const relationRows = (rows: MappingRow[]) =>
+  rows.filter((r): r is Extract<MappingRow, { kind: 'relation' }> => r.kind === 'relation');
+const labelsOf = (rows: MappingRow[], property: string) =>
+  relationRows(rows).find((r) => r.property === property)?.labels;
+/** A mapping as stored by an older version: no labels, no partner row, no anniversary label. */
+const legacyMapping = (): MappingRow[] =>
+  DEFAULT_MAPPING.filter((r) => r.property !== 'partner').map((row) => {
+    const { labels: _labels, appleDateLabel: _date, ...rest } = row as any;
+    return rest as MappingRow;
+  });
+
+describe('relationship labels', () => {
+  it('default rows carry the labels of the spec table', () => {
+    expect(Object.fromEntries(relationRows(DEFAULT_MAPPING).map((r) => [r.property, r.labels]))).toEqual({
+      spouse: ['Spouse'],
+      partner: ['Partner'],
+      children: ['Child'],
+      parents: ['Parent', 'Mother', 'Father'],
+      siblings: ['Sibling', 'Brother', 'Sister'],
+      family: ['Kin', 'Relative'],
+      friends: ['Friend'],
+      colleagues: ['Colleague', 'Co-worker', 'Assistant', 'Manager'],
+      neighbours: ['Neighbor'],
+      housemates: ['Co-resident'],
+      acquaintances: ['Acquaintance'],
+      met: ['Met'],
+      emergency: ['Emergency'],
+    });
+  });
+
+  it('has a partner row after spouse, single and mirrored by itself', () => {
+    const order = names(DEFAULT_MAPPING);
+    expect(order.indexOf('partner')).toBe(order.indexOf('spouse') + 1);
+    const partner = relationRows(DEFAULT_MAPPING).find((r) => r.property === 'partner')!;
+    expect(partner).toMatchObject({ types: ['sweetheart'], mirror: 'partner', single: true, write: 'RELATED;TYPE=sweetheart' });
+  });
+
+  it('the anniversary row has the Apple date label', () => {
+    const row = DEFAULT_MAPPING.find((r) => r.property === 'anniversary');
+    expect(row).toMatchObject({ kind: 'field', appleDateLabel: 'Anniversary' });
+  });
+
+  it('knows the Apple built-in labels', () => {
+    expect([...APPLE_BUILTIN_LABELS].sort()).toEqual(
+      ['anniversary', 'assistant', 'brother', 'child', 'father', 'friend', 'manager', 'mother', 'parent', 'partner', 'sister', 'spouse'],
+    );
+  });
+
+  it('label text from apple and plain labels', () => {
+    expect(labelText('_$!<Spouse>!$_')).toEqual(['spouse']);
+    expect(labelText('Domestic-partner, Spouse')).toEqual(['domestic-partner', 'spouse']);
+    expect(labelText('  Co-worker ')).toEqual(['co-worker']);
+    expect(labelText('_$!<Father>!$_, Mentor')).toEqual(['father', 'mentor']);
+    expect(labelText('')).toEqual([]);
+  });
+
+  it('write label', () => {
+    expect(writeLabel('Spouse')).toBe('_$!<Spouse>!$_');
+    expect(writeLabel('Anniversary')).toBe('_$!<Anniversary>!$_');
+    expect(writeLabel('mother')).toBe('_$!<mother>!$_');
+    expect(writeLabel('Colleague')).toBe('Colleague');
+    expect(writeLabel('Co-resident')).toBe('Co-resident');
+  });
+
+  it('renaming and resetting keep the labels and the date label', () => {
+    const renamed = renameRow(DEFAULT_MAPPING, 'children', 'kids');
+    expect(labelsOf(renamed, 'kids')).toEqual(['Child']);
+    expect(renamed.find((r) => r.property === 'anniversary')).toMatchObject({ appleDateLabel: 'Anniversary' });
+  });
+});
+
+describe('mapping migration', () => {
+  it('migration adds partner and labels', () => {
+    const migrated = migrateMapping(legacyMapping());
+    expect(labelsOf(migrated, 'parents')).toEqual(['Parent', 'Mother', 'Father']);
+    expect(labelsOf(migrated, 'colleagues')).toEqual(['Colleague', 'Co-worker', 'Assistant', 'Manager']);
+    expect(labelsOf(migrated, 'partner')).toEqual(['Partner']);
+    expect(migrated.find((r) => r.property === 'anniversary')).toMatchObject({ appleDateLabel: 'Anniversary' });
+    expect(names(migrated).filter((n) => n === 'partner')).toHaveLength(1);
+    expect(migrated).toEqual(expect.arrayContaining(DEFAULT_MAPPING));
+    expect(validateMapping(migrated)).toEqual([]);
+  });
+
+  it('migration keeps renamed rows', () => {
+    let stored = renameRow(legacyMapping(), 'children', 'kinderen');
+    stored = renameRow(stored, 'parents', 'ouders');
+    stored = stored.map((r) => (r.property === 'anniversary' ? { ...r, property: 'trouwdag', write: 'ANNIVERSARY' } : r));
+    const migrated = migrateMapping(stored);
+    expect(labelsOf(migrated, 'kinderen')).toEqual(['Child']);
+    expect(labelsOf(migrated, 'ouders')).toEqual(['Parent', 'Mother', 'Father']);
+    expect(migrated.find((r) => r.property === 'trouwdag')).toMatchObject({ appleDateLabel: 'Anniversary' });
+    expect(names(migrated).slice(0, stored.length)).toEqual(names(stored));
+    expect(names(migrated)).not.toContain('children');
+    expect(relationRows(migrated).find((r) => r.property === 'ouders')!.mirror).toBe('kinderen');
+    expect(names(migrated)).toContain('partner');
+    expect(validateMapping(migrated)).toEqual([]);
+  });
+
+  it('migration keeps labels the owner already has', () => {
+    const stored = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, labels: ['Buddy'] } : r)) as MappingRow[];
+    expect(labelsOf(migrateMapping(stored), 'friends')).toEqual(['Buddy']);
+  });
+
+  it('migration is idempotent', () => {
+    const once = migrateMapping(legacyMapping());
+    expect(migrateMapping(once)).toEqual(once);
+    expect(migrateMapping(DEFAULT_MAPPING)).toEqual(DEFAULT_MAPPING);
+  });
+
+  it('migration does not change its input', () => {
+    const stored = legacyMapping();
+    const before = structuredClone(stored);
+    migrateMapping(stored);
+    expect(stored).toEqual(before);
+  });
+
+  it('migration does not add a partner row when the name is taken', () => {
+    const stored = [...legacyMapping(), { kind: 'field', property: 'partner', read: ['X-PARTNER'], write: 'X-PARTNER' } as MappingRow];
+    const migrated = migrateMapping(stored);
+    expect(names(migrated).filter((n) => n === 'partner')).toHaveLength(1);
+    expect(validateMapping(migrated)).toEqual([]);
+  });
+
+  it('validateMapping accepts the new rows', () => {
+    expect(validateMapping(DEFAULT_MAPPING)).toEqual([]);
+    expect(validateMapping(migrateMapping(legacyMapping()))).toEqual([]);
   });
 });

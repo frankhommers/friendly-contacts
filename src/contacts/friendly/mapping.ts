@@ -15,6 +15,8 @@ export type FieldRow = {
   read: Pattern[];
   write: string;
   format?: 'date' | 'list';
+  /** vCard 3.0 date written as `itemN.X-ABDATE` with this label (`Anniversary`); read with it too. */
+  appleDateLabel?: string;
 };
 export type ComponentRow = {
   kind: 'component';
@@ -28,6 +30,8 @@ export type RelationRow = {
   property: string;
   types: string[];
   write: string;
+  /** Labels of the relationship on phones; the first one is written, all are read (ignoring case). */
+  labels: string[];
   mirror?: string;
   single?: boolean;
 };
@@ -51,10 +55,11 @@ const component = (property: string, read: Pattern[], write: string, index: numb
 const relation = (
   property: string,
   types: string[],
+  labels: string[],
   mirror: string | undefined,
   single?: boolean,
 ): RelationRow => {
-  const row: RelationRow = { kind: 'relation', property, types, write: `RELATED;TYPE=${types[0]}` };
+  const row: RelationRow = { kind: 'relation', property, types, write: `RELATED;TYPE=${types[0]}`, labels };
   if (mirror !== undefined) row.mirror = mirror;
   if (single) row.single = true;
   return row;
@@ -80,7 +85,7 @@ export const DEFAULT_MAPPING: MappingRow[] = [
   field('title', ['TITLE'], 'TITLE'),
   field('role', ['ROLE'], 'ROLE'),
   field('birthday', ['BDAY'], 'BDAY', 'date'),
-  field('anniversary', ['ANNIVERSARY'], 'ANNIVERSARY', 'date'),
+  { ...field('anniversary', ['ANNIVERSARY'], 'ANNIVERSARY', 'date'), appleDateLabel: 'Anniversary' },
   component('street', HOME_ADR, 'ADR;TYPE=HOME', 2),
   component('postcode', HOME_ADR, 'ADR;TYPE=HOME', 5),
   component('city', HOME_ADR, 'ADR;TYPE=HOME', 3),
@@ -95,19 +100,45 @@ export const DEFAULT_MAPPING: MappingRow[] = [
   field('categories', ['CATEGORIES'], 'CATEGORIES', 'list'),
   field('photo', ['PHOTO[*]'], 'PHOTO'),
   field('uid', ['UID'], 'UID'),
-  relation('spouse', ['spouse'], 'spouse', true),
-  relation('children', ['child'], 'parents'),
-  relation('parents', ['parent'], 'children'),
-  relation('siblings', ['sibling'], 'siblings'),
-  relation('family', ['kin'], 'family'),
-  relation('friends', ['friend'], 'friends'),
-  relation('colleagues', ['colleague', 'co-worker'], 'colleagues'),
-  relation('neighbours', ['neighbor'], 'neighbours'),
-  relation('housemates', ['co-resident'], 'housemates'),
-  relation('acquaintances', ['acquaintance'], 'acquaintances'),
-  relation('met', ['met'], 'met'),
-  relation('emergency', ['emergency'], undefined),
+  relation('spouse', ['spouse'], ['Spouse'], 'spouse', true),
+  relation('partner', ['sweetheart'], ['Partner'], 'partner', true),
+  relation('children', ['child'], ['Child'], 'parents'),
+  relation('parents', ['parent'], ['Parent', 'Mother', 'Father'], 'children'),
+  relation('siblings', ['sibling'], ['Sibling', 'Brother', 'Sister'], 'siblings'),
+  relation('family', ['kin'], ['Kin', 'Relative'], 'family'),
+  relation('friends', ['friend'], ['Friend'], 'friends'),
+  relation('colleagues', ['colleague', 'co-worker'], ['Colleague', 'Co-worker', 'Assistant', 'Manager'], 'colleagues'),
+  relation('neighbours', ['neighbor'], ['Neighbor'], 'neighbours'),
+  relation('housemates', ['co-resident'], ['Co-resident'], 'housemates'),
+  relation('acquaintances', ['acquaintance'], ['Acquaintance'], 'acquaintances'),
+  relation('met', ['met'], ['Met'], 'met'),
+  relation('emergency', ['emergency'], ['Emergency'], undefined),
 ];
+
+/** Apple's built-in label names (lower-case); on cards they are written `_$!<Label>!$_`. */
+export const APPLE_BUILTIN_LABELS: ReadonlySet<string> = new Set([
+  'spouse', 'partner', 'child', 'parent', 'mother', 'father', 'brother', 'sister', 'friend', 'assistant',
+  'manager', 'anniversary',
+]);
+
+const APPLE_LABEL = /^_\$!<(.*)>!\$_$/;
+
+/** The lower-case label names in a raw `X-ABLabel` value: `_$!<Spouse>!$_` -> spouse; comma separated labels split. */
+export function labelText(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((part) => {
+      const text = part.trim();
+      const apple = APPLE_LABEL.exec(text);
+      return (apple ? apple[1] : text).trim().toLowerCase();
+    })
+    .filter((part) => part !== '');
+}
+
+/** The `X-ABLabel` value to write: Apple's form for a built-in label, else the label as is. */
+export function writeLabel(label: string): string {
+  return APPLE_BUILTIN_LABELS.has(label.trim().toLowerCase()) ? `_$!<${label}>!$_` : label;
+}
 
 type ParsedPattern = { name: string; types: string[] | '*' };
 
@@ -188,6 +219,44 @@ export function renameRow(rows: MappingRow[], from: string, to: string): Mapping
     if (renamed.kind === 'relation' && renamed.mirror === from) renamed.mirror = to;
     return renamed;
   });
+}
+
+const defaultRelation = (types0: string): RelationRow | undefined =>
+  DEFAULT_MAPPING.find((r): r is RelationRow => r.kind === 'relation' && r.types[0] === types0);
+
+/**
+ * Brings a stored mapping up to date: relation rows without `labels` get those of the default row with the same
+ * first type, default relation rows that are absent (by first type, e.g. `partner`) are appended, and the row that
+ * writes `ANNIVERSARY` gets its date label. Rows are never renamed or removed; running it again changes nothing.
+ * A default row is not appended when its name is already used by another row (the mapping would be invalid).
+ */
+export function migrateMapping(stored: MappingRow[]): MappingRow[] {
+  const rows: MappingRow[] = stored.map((row) => {
+    if (row.kind === 'relation') {
+      if (Array.isArray(row.labels)) return { ...row };
+      return { ...row, labels: [...(defaultRelation(row.types[0])?.labels ?? [])] };
+    }
+    if (row.kind === 'field' && row.appleDateLabel === undefined && row.write.trim().toUpperCase() === 'ANNIVERSARY') {
+      return { ...row, appleDateLabel: 'Anniversary' };
+    }
+    return { ...row };
+  });
+  const propertyOfType = (types0: string): string | undefined =>
+    rows.find((r) => r.kind === 'relation' && r.types[0] === types0)?.property;
+  for (const row of DEFAULT_MAPPING) {
+    if (row.kind !== 'relation' || propertyOfType(row.types[0]) !== undefined) continue;
+    if (rows.some((r) => r.property === row.property)) continue;
+    const added: RelationRow = { ...row, types: [...row.types], labels: [...row.labels] };
+    rows.push(added);
+    if (row.mirror !== undefined) {
+      // The mirror is named after the stored row of the mirrored type, which may have been renamed.
+      const mirrored = DEFAULT_MAPPING.find((r): r is RelationRow => r.kind === 'relation' && r.property === row.mirror);
+      const target = row.mirror === row.property ? added.property : mirrored && propertyOfType(mirrored.types[0]);
+      if (target) added.mirror = target;
+      else delete added.mirror;
+    }
+  }
+  return rows;
 }
 
 /**

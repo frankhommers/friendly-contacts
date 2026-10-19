@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals-core";
+import { migrateMapping } from "src/contacts/friendly/mapping";
 import { normalizeLayout } from "src/contacts/layout";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
@@ -47,7 +48,7 @@ export async function initSettings(
       // Only the mapping lives here; "mirror relationships" is per device (src/settings/deviceSettings.ts),
       // so an old mirrorRelations value in data.json is dropped.
       friendly: {
-        mapping: loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping
+        mapping: migrateMapping(loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping)
       },
       layout: normalizeLayout(loaded.layout),
       meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid

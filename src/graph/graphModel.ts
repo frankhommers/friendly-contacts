@@ -46,6 +46,7 @@ export const LOD_PHOTOS_ZOOM = 1.2;
 
 const KIND_BY_TYPE: Record<string, RelationKind> = {
   spouse: "partner",
+  sweetheart: "partner",
   child: "family",
   parent: "family",
   sibling: "family",

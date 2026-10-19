@@ -284,6 +284,7 @@ describe("buildGraph", () => {
 describe("relationKind", () => {
   it("spouse is partner, friend is friends, colleague is work, neighbor is other", () => {
     expect(relationKind(rowFor("spouse"))).toBe("partner");
+    expect(relationKind(rowFor("partner"))).toBe("partner");
     expect(relationKind(rowFor("friends"))).toBe("friends");
     expect(relationKind(rowFor("colleagues"))).toBe("work");
     expect(relationKind(rowFor("neighbours"))).toBe("other");

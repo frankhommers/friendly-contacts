@@ -18,6 +18,7 @@ vi.mock("src/insights/insightService", () => ({
   },
 }));
 
+import { DEFAULT_MAPPING } from "src/contacts/friendly/mapping";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import type { ContactsPluginSettings, Source } from 'src/settings/settings.d';
 import { afterEach,describe, expect, it, vi } from 'vitest';
@@ -107,8 +108,26 @@ describe('sharedSettingsContext', () => {
   });
 
   it('keeps a stored mapping and drops a stored mirrorRelations (it is per device now)', async () => {
-    await initSettings(async () => mockSettings, saveData);
-    expect(getSettings().friendly).toEqual({ mapping: [] });
+    const mapping = [{ kind: 'field', property: 'uid', read: ['UID'], write: 'UID' }];
+    await initSettings(async () => ({ ...mockSettings, friendly: { mapping, mirrorRelations: true } }), saveData);
+    expect(Object.keys(getSettings().friendly)).toEqual(['mapping']);
+    expect(getSettings().friendly.mapping.slice(0, 1)).toEqual(mapping);
+  });
+
+  it('migrates a stored mapping: labels, the partner row, renamed rows kept', async () => {
+    const stored = DEFAULT_MAPPING
+      .filter((r) => r.property !== 'partner')
+      .map((r) => {
+        const { labels: _l, appleDateLabel: _a, ...rest } = r as any;
+        return r.property === 'children' ? { ...rest, property: 'kinderen' } : rest;
+      });
+    await initSettings(async () => ({ ...mockSettings, friendly: { mapping: stored } }), saveData);
+    const mapping = getSettings().friendly.mapping;
+    expect(mapping.map((r) => r.property)).toContain('kinderen');
+    expect(mapping.map((r) => r.property)).toContain('partner');
+    expect(mapping.map((r) => r.property)).not.toContain('children');
+    expect(mapping.find((r) => r.property === 'kinderen')).toMatchObject({ labels: ['Child'] });
+    expect(mapping.find((r) => r.property === 'anniversary')).toMatchObject({ appleDateLabel: 'Anniversary' });
   });
 
   it('layout defaults to one note per contact', async () => {
