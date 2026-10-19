@@ -170,6 +170,7 @@ function setup(
     state,
     rows: DEFAULT_MAPPING,
     ctx: opts.ctx ?? ctx,
+    readOnlyCtx: opts.ctx ?? ctx,
     notify: (msg) => notices.push(msg),
   };
   const prepare = () => prepareSync(io, deps, { sourceId: 'radicale' });
@@ -275,9 +276,41 @@ describe('prepareSync', () => {
     expect(prepared.uid).toMatch(/^urn:uuid:[0-9a-f-]{36}$/);
     expect(prepared.server).toBeUndefined();
     expect(prepared.rows.filter((r) => r.changed).every((r) => r.preselect === 'local')).toBe(true);
+    // The UID is forced at Apply; it is no choice for the user.
+    expect(prepared.rows.map((r) => r.property)).toEqual(['name']);
     expect(t.note.writes).toEqual([]);
     expect(t.pushes).toEqual([]);
     expect(t.entries.size).toBe(0);
+  });
+
+  it('prepare never writes to other notes', async () => {
+    // A linked contact note without a UID: the writing context gives it one (a write to that note).
+    const linked = new Map<string, string | undefined>([['Sem de Vries', undefined]]);
+    const assigned: string[] = [];
+    const lookups = (writes: boolean): RelationContext => ({
+      uidToName: (uid) => [...linked].find(([, u]) => u === uid)?.[0],
+      resolveLink: (name) => {
+        if (!linked.has(name)) return { text: name };
+        if (linked.get(name) === undefined) {
+          if (!writes) return { text: name };
+          linked.set(name, 'sem-new');
+          assigned.push(name);
+        }
+        return { uid: linked.get(name)! };
+      },
+    });
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), children: ['[[Sem de Vries]]'] } });
+    t.deps.ctx = lookups(true);
+    t.deps.readOnlyCtx = lookups(false);
+
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['children', 'local']]);
+    expect(assigned).toEqual([]);
+
+    // Apply builds the card and may give the linked note its UID, as before.
+    expect(await t.apply(prepared)).toMatchObject({ kind: 'done' });
+    expect(assigned).toEqual(['Sem de Vries']);
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('RELATED;TYPE=child:urn:uuid:sem-new');
   });
 
   it('a urn:uuid uid in the note matches a plain server UID', async () => {
@@ -727,7 +760,7 @@ describe('moving between address books', () => {
     const toState = memoryState();
     const { note, io } = memoryNote({ ...local, source: 'Family' });
     const notices: string[] = [];
-    const deps: SyncDeps = { adapter: to.adapter, state: toState.state, rows: DEFAULT_MAPPING, ctx, notify: (m) => notices.push(m) };
+    const deps: SyncDeps = { adapter: to.adapter, state: toState.state, rows: DEFAULT_MAPPING, ctx, readOnlyCtx: ctx, notify: (m) => notices.push(m) };
     const where = { sourceId: 'family', move: { from: { sourceId: 'radicale', href: HREF, etag }, adapter: from.adapter, state: fromState.state } };
     return { from, to, fromState, toState, note, io, deps, where, notices, etag };
   }
@@ -756,6 +789,24 @@ describe('moving between address books', () => {
     expect(m.fromState.entries.size).toBe(0);
     expect(m.toState.entries.get(UID)?.raw).toBe(moved.raw);
     expect(m.note.frontmatter.source).toBe('Family');
+  });
+
+  it('a move stores the base after the note is written', async () => {
+    const m = moveSetup({ ...friendlyOf(V1), mobile: '06-77777777' });
+    const result = await prepareSync(m.io, m.deps, m.where);
+    if (result.kind !== 'review') throw new Error(result.kind);
+    m.io.writeProps = async () => {
+      throw new Error('note is read-only');
+    };
+    const R = resultProps(result.prepared.rows, new Map(), result.prepared.server!.friendly.props);
+    // Another source name than the note holds, so the note must be written.
+    expect(await applySync(result.prepared, R, m.io, m.deps, { sourceName: 'Family book' })).toEqual({
+      kind: 'failed',
+      message: 'note is read-only',
+    });
+    expect(m.to.cards.size).toBe(1);
+    expect(m.toState.sets).toEqual([]);
+    expect(m.fromState.entries.size).toBe(1);
   });
 
   it('a move without differences still opens the review', async () => {

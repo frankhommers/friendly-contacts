@@ -296,11 +296,13 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   ): Promise<{ outcome: SyncOutcome; oldKept?: boolean }> {
     pushes.length = 0;
     notices.length = 0;
+    const lookups = await relationContext(adapter, notes);
     const deps: SyncDeps = {
       adapter: book.adapter === adapter ? counting : book.adapter,
       state: book.state,
       rows: DEFAULT_MAPPING,
-      ctx: await relationContext(adapter, notes),
+      ctx: lookups,
+      readOnlyCtx: lookups, // these lookups never write
       notify: (msg) => notices.push(msg),
     };
     const where = { sourceId: book.source.id, move: move && { from: move.from, adapter: move.book.adapter, state: move.book.state } };

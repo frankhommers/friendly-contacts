@@ -305,6 +305,22 @@ export async function relationContextFor(app: App, sourcePath: string): Promise<
   return new ObsidianRelationContext(app, sourcePath, contactNotes(app), await remoteContacts());
 }
 
+/**
+ * The lookups Sync needs for one note: `ctx` may give a linked contact note its UID (used at Apply; call
+ * `settle()` afterwards), `readOnlyCtx` never writes (used to prepare the review).
+ */
+export async function syncRelationContexts(
+  app: App,
+  sourcePath: string,
+): Promise<{ ctx: ObsidianRelationContext; readOnlyCtx: ObsidianRelationContext }> {
+  const contacts = contactNotes(app);
+  const remote = await remoteContacts();
+  return {
+    ctx: new ObsidianRelationContext(app, sourcePath, contacts, remote),
+    readOnlyCtx: new ObsidianRelationContext(app, sourcePath, contacts, remote, true),
+  };
+}
+
 /** Contact notes and remote contacts, gathered once for a batch (e.g. an export of many notes). */
 export interface ContactLookups {
   contacts: ContactNote[];

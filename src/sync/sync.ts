@@ -3,7 +3,7 @@ import {App, Notice} from "obsidian";
 import {Contact} from "src/contacts";
 import {hasVCardValues} from "src/contacts/friendlyNotes";
 import {coerceNoteProps} from "src/contacts/friendly/merge";
-import {contactSyncState, noteIO, relationContextFor} from "src/contacts/obsidianNotes";
+import {contactSyncState, noteIO, syncRelationContexts} from "src/contacts/obsidianNotes";
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { Source } from "src/settings/settings";
@@ -249,47 +249,52 @@ async function syncWith(
   move?: { from: CardLocation; adapter: AdapterInterface; state: ReturnType<typeof contactSyncState> },
   fromName?: string,
 ): Promise<SyncOutcome | undefined> {
-  const ctx = await relationContextFor(app, path);
+  const { ctx, readOnlyCtx } = await syncRelationContexts(app, path);
   const deps = {
     adapter: adapterFor(target),
     state: contactSyncState(target.id, app),
     rows: getSettings().friendly.mapping,
     ctx,
+    readOnlyCtx,
     notify: (message: string) => new Notice(message),
   };
-  const prepared = await prepareSync(note, deps, { sourceId: target.id, move });
-  if (prepared.kind === 'failed') {
-    new Notice(`Sync failed: ${prepared.message}`);
-    return 'failed';
-  }
-  if (prepared.kind === 'upToDate') {
-    new Notice(`${name}: Up to date`);
-    return 'unchanged';
-  }
-  const choices = new Map<string, Choice>();
-  if (!canApply(prepared.prepared.rows, choices)) {
-    new Notice(`${name}: conflicts need the review screen; nothing was synced.`);
-    return undefined;
-  }
-  const R = resultProps(prepared.prepared.rows, choices, prepared.prepared.server?.friendly.props ?? {});
-  const result = await applySync(prepared.prepared, R, note, deps, { sourceName: target.name });
-  await ctx.settle();
-  switch (result.kind) {
-    case 'stale':
-      new Notice(result.reason === 'server' ? `${name} changed on the server meanwhile` : `${name} changed while reviewing`);
-      return undefined;
-    case 'failed':
-      new Notice(move ? `Not moved: ${name}: ${result.message}.` : `Sync failed: ${result.message}`);
+  try {
+    const prepared = await prepareSync(note, deps, { sourceId: target.id, move });
+    if (prepared.kind === 'failed') {
+      new Notice(`Sync failed: ${prepared.message}`);
       return 'failed';
-    case 'done':
-      if (move) {
-        new Notice(
-          result.oldKept
-            ? `Moved ${name} to ${target.name}, but the old copy is still in ${fromName}; delete it there by hand.`
-            : `Moved ${name} to ${target.name}.`,
-        );
-      }
-      return result.outcome;
+    }
+    if (prepared.kind === 'upToDate') {
+      new Notice(`${name}: Up to date`);
+      return 'unchanged';
+    }
+    const choices = new Map<string, Choice>();
+    if (!canApply(prepared.prepared.rows, choices)) {
+      new Notice(`${name}: conflicts need the review screen; nothing was synced.`);
+      return undefined;
+    }
+    const R = resultProps(prepared.prepared.rows, choices, prepared.prepared.server?.friendly.props ?? {});
+    const result = await applySync(prepared.prepared, R, note, deps, { sourceName: target.name });
+    switch (result.kind) {
+      case 'stale':
+        new Notice(result.reason === 'server' ? `${name} changed on the server meanwhile` : `${name} changed while reviewing`);
+        return undefined;
+      case 'failed':
+        new Notice(move ? `Not moved: ${name}: ${result.message}.` : `Sync failed: ${result.message}`);
+        return 'failed';
+      case 'done':
+        if (move) {
+          new Notice(
+            result.oldKept
+              ? `Moved ${name} to ${target.name}, but the old copy is still in ${fromName}; delete it there by hand.`
+              : `Moved ${name} to ${target.name}.`,
+          );
+        }
+        return result.outcome;
+    }
+  } finally {
+    // UIDs given to linked contact notes while Apply built the card are written (or reported) before returning.
+    await ctx.settle();
   }
 }
 

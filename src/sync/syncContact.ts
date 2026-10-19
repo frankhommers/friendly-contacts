@@ -34,7 +34,10 @@ export interface SyncDeps {
   adapter: AdapterInterface;
   state: SyncState;
   rows: MappingRow[];
+  /** Lookups for Apply: resolving a link may give a linked contact note its UID (a write to that note). */
   ctx: RelationContext;
+  /** The same lookups without any write, for prepare (nothing is written before Apply). */
+  readOnlyCtx: RelationContext;
   /** Warnings (note coercion, patch, a skipped rename); results come back as values. */
   notify(msg: string): void;
 }
@@ -134,7 +137,7 @@ export async function prepareSync(
     }
 
     const baseLines = baseEntry ? parseCard(baseEntry.raw) : undefined;
-    const baseCard = baseLines && { lines: baseLines, friendly: toFriendly(baseLines, deps.rows, deps.ctx) };
+    const baseCard = baseLines && { lines: baseLines, friendly: toFriendly(baseLines, deps.rows, deps.readOnlyCtx) };
     const base = baseCard?.friendly.props;
 
     // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
@@ -143,9 +146,11 @@ export async function prepareSync(
     if (typeof mine.uid === 'string') uid = mine.uid;
     // A legacy Apple `1604-03-12` in the note is the cards' `--03-12`: no difference.
     const aligned = alignNoteDates(mine, deps.rows, [baseCard, server && { lines: server.lines, friendly: server.friendly }]);
-    const L = canonicalRelations(aligned, deps);
+    const L = canonicalRelations(aligned, deps.readOnlyCtx, deps.rows);
 
-    const rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
+    let rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
+    // A new card's UID is no choice: Apply always writes the prepared one.
+    if (!server) rows = rows.filter((r) => r.property !== 'uid');
     if (server && !where.move && isUpToDate(rows)) {
       // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
       if (!baseEntry) await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href });
@@ -162,7 +167,7 @@ export async function prepareSync(
 
 function serverCard(pulled: VCardRaw, href: string, etag: string | undefined, deps: SyncDeps): NonNullable<PreparedSync['server']> {
   const lines = parseCard(pulled.raw);
-  return { lines, friendly: toFriendly(lines, deps.rows, deps.ctx), href, etag: etag ?? '', raw: pulled.raw };
+  return { lines, friendly: toFriendly(lines, deps.rows, deps.readOnlyCtx), href, etag: etag ?? '', raw: pulled.raw };
 }
 
 export async function applySync(
@@ -184,7 +189,7 @@ export async function applySync(
     // 2. The card.
     let final: Props;
     let warnings: string[];
-    let stored: SyncStateEntry | undefined;
+    let stored: SyncStateEntry;
     let serverChanged: boolean;
     let oldKept: boolean | undefined;
     if (!server) {
@@ -209,7 +214,7 @@ export async function applySync(
         if (moved.kind !== 'done') return moved;
         oldKept = moved.oldKept;
         serverChanged = true;
-        stored = undefined; // moveCard stored the base in the target.
+        stored = moved.base;
       } else if (serverChanged) {
         if (!server.etag) {
           return { kind: 'failed', message: `the server sent no ETag for ${server.href}; not writing without If-Match.` };
@@ -236,8 +241,9 @@ export async function applySync(
       }
     }
 
-    // 4. The base, under the target source.
-    if (stored) await deps.state.set(prepared.uid, stored);
+    // 4. The base, under the target source (a move also forgets the old source's base).
+    await deps.state.set(prepared.uid, stored);
+    if (prepared.move) await prepared.move.state.remove(prepared.uid);
 
     const outcome: SyncOutcome = !server ? 'created' : serverChanged ? (noteChanged ? 'both' : 'pushed') : noteChanged ? 'pulled' : 'unchanged';
     return oldKept === undefined ? { kind: 'done', outcome } : { kind: 'done', outcome, oldKept };
@@ -247,15 +253,15 @@ export async function applySync(
 }
 
 /**
- * Moves the (patched) card from `move.from` to the target: create there, delete the old one, move the base.
- * The old card must still be the one reviewed; otherwise nothing is written.
+ * Moves the (patched) card from `move.from` to the target: create there, delete the old one. The new base is
+ * returned, not stored. The old card must still be the one reviewed; otherwise nothing is written.
  */
 async function applyMove(
   prepared: PreparedSync,
   move: NonNullable<PreparedSync['move']>,
   raw: string,
   deps: SyncDeps,
-): Promise<{ kind: 'done'; oldKept: boolean } | Extract<ApplyResult, { kind: 'stale' | 'failed' }>> {
+): Promise<{ kind: 'done'; oldKept: boolean; base: SyncStateEntry } | Extract<ApplyResult, { kind: 'stale' | 'failed' }>> {
   const server = prepared.server as NonNullable<PreparedSync['server']>;
   const current = await move.adapter.pull(move.from.href);
   if (isResponse(current) || !current || current.raw !== server.raw || (current.etag && current.etag !== server.etag)) {
@@ -266,24 +272,26 @@ async function applyMove(
     prepared.uid,
     { adapter: move.adapter, state: move.state, location: { ...move.from, etag: server.etag } },
     { adapter: deps.adapter, state: deps.state },
+    { deferBase: true }, // applySync stores the base after the note (card, note, base).
   );
   if (!result.ok) return { kind: 'failed', message: result.message };
-  return { kind: 'done', oldKept: result.oldKept };
+  if (!result.base) throw new SyncError('the move returned no base.');
+  return { kind: 'done', oldKept: result.oldKept, base: result.base };
 }
 
 /**
  * Relation links as the card would show them: a link that resolves to a known contact becomes `[[<its name>]]`,
  * so `[[06 People/Sem de Vries]]` and the server's `[[Sem de Vries]]` are not seen as a change.
  */
-function canonicalRelations(props: Props, deps: SyncDeps): Props {
+function canonicalRelations(props: Props, ctx: RelationContext, rows: MappingRow[]): Props {
   const canonical = (item: string): string => {
-    const resolved = deps.ctx.resolveLink(linkTarget(item.trim()));
-    const name = 'uid' in resolved ? deps.ctx.uidToName(resolved.uid) : undefined;
+    const resolved = ctx.resolveLink(linkTarget(item.trim()));
+    const name = 'uid' in resolved ? ctx.uidToName(resolved.uid) : undefined;
     return name !== undefined && name !== '' ? toLink(name) : item;
   };
   const result: Props = { ...props };
   for (const [property, value] of Object.entries(props)) {
-    if (rowForProperty(property, deps.rows)?.row.kind !== 'relation') continue;
+    if (rowForProperty(property, rows)?.row.kind !== 'relation') continue;
     result[property] = Array.isArray(value) ? value.map(canonical) : canonical(value);
   }
   return result;

@@ -1,15 +1,17 @@
 /**
  * Moves a card from one address book to another: create in the new one (never overwriting), then delete the
- * old one (only if it is unchanged), then move the sync base. Nothing from obsidian or src/context.
+ * old one (only if it is unchanged), then move the sync base. With `deferBase` the sync states are left alone and
+ * the new base is returned, for a caller that stores it later (Sync: card, then note, then base).
+ * Nothing from obsidian or src/context.
  */
 
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import type { CardLocation } from 'src/sync/sources';
 import { createdBase, describeResponse, succeeded } from 'src/sync/syncContact';
-import type { SyncState } from 'src/sync/syncState';
+import type { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
 
-export type MoveResult = { ok: true; oldKept: boolean } | { ok: false; message: string };
+export type MoveResult = { ok: true; oldKept: boolean; base?: SyncStateEntry } | { ok: false; message: string };
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -18,6 +20,7 @@ export async function moveCard(
   uid: string,
   from: { adapter: AdapterInterface; state: SyncState; location: CardLocation },
   to: { adapter: AdapterInterface; state: SyncState },
+  opts: { deferBase?: boolean } = {},
 ): Promise<MoveResult> {
   if (!from.location.etag) {
     // Without an ETag the old card cannot be deleted safely; refuse before anything is written.
@@ -46,7 +49,9 @@ export async function moveCard(
     oldKept = true;
   }
 
-  await to.state.set(uid, await createdBase(to.adapter, id, raw, created));
+  const base = await createdBase(to.adapter, id, raw, created);
+  if (opts.deferBase) return { ok: true, oldKept, base };
+  await to.state.set(uid, base);
   await from.state.remove(uid);
   return { ok: true, oldKept };
 }
