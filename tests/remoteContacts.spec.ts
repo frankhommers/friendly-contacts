@@ -149,4 +149,11 @@ describe('ObsidianRelationContext', () => {
     const ctx = context([entry('1', 'Anna', 'a'), entry('1', 'Anna', 'b')]);
     expect(ctx.uidToName('1')).toBe('Anna');
   });
+
+  it('displayName gives the name of a contact known only on the server, never one of two names', () => {
+    const ctx = context([entry('1', 'Anna', 'a'), entry('1', 'Anna Jansen', 'b'), entry('2', 'Piet', 'a')]);
+    expect(ctx.displayName('1')).toBeUndefined();
+    expect(ctx.displayName('urn:uuid:2')).toBe('Piet');
+    expect(ctx.displayName('3')).toBeUndefined();
+  });
 });

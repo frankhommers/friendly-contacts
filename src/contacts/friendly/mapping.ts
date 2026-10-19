@@ -166,18 +166,33 @@ export function matchesPattern(line: VCardLine, pattern: Pattern): boolean {
   return actual.length === parsed.types.length && actual.every((t, i) => t === (parsed.types as string[])[i]);
 }
 
-function rowMatchesLine(row: MappingRow, line: VCardLine): boolean {
+/** True when one of `names` (lower-case, from `labelText`) is `label`, ignoring case. */
+const hasLabel = (names: string[], label: string): boolean => names.includes(label.trim().toLowerCase());
+
+/**
+ * `RELATED` matches a relation row by its type, `X-ABRELATEDNAMES` by its group's label (any of the row's labels);
+ * `X-ABDATE` matches the field row whose `appleDateLabel` is its group's label.
+ */
+function rowMatchesLine(row: MappingRow, line: VCardLine, labels: string[]): boolean {
   if (row.kind === 'relation') {
+    if (line.name === 'X-ABRELATEDNAMES') return (row.labels ?? []).some((label) => hasLabel(labels, label));
     if (line.name !== 'RELATED') return false;
     const lineTypes = typesOf(line);
     return row.types.some((t) => lineTypes.includes(t.toUpperCase()));
   }
+  if (row.kind === 'field' && line.name === 'X-ABDATE' && row.appleDateLabel !== undefined) {
+    if (hasLabel(labels, row.appleDateLabel)) return true;
+  }
   return row.read.some((p) => matchesPattern(line, p));
 }
 
-/** Rows for a line: all matching component rows for a structured line, else the first matching row (if any). */
-export function rowForLine(line: VCardLine, rows: MappingRow[]): MappingRow[] {
-  const matching = rows.filter((row) => rowMatchesLine(row, line));
+/**
+ * Rows for a line: all matching component rows for a structured line, else the first matching row (if any).
+ * `label` is the raw `X-ABLabel` value of the line's group, if it has one.
+ */
+export function rowForLine(line: VCardLine, rows: MappingRow[], label?: string): MappingRow[] {
+  const labels = label === undefined ? [] : labelText(label);
+  const matching = rows.filter((row) => rowMatchesLine(row, line, labels));
   if (matching.length === 0) return [];
   if (matching[0].kind === 'component') return matching.filter((r) => r.kind === 'component');
   return [matching[0]];

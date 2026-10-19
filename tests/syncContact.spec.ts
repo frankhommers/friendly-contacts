@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 const ctx: RelationContext = {
   uidToName: () => undefined,
+  displayName: () => undefined,
   resolveLink: (name) => ({ text: name }),
 };
 
@@ -299,6 +300,7 @@ describe('prepareSync', () => {
     const assigned: string[] = [];
     const lookups = (writes: boolean): RelationContext => ({
       uidToName: (uid) => [...linked].find(([, u]) => u === uid)?.[0],
+      displayName: (uid) => [...linked].find(([, u]) => u === uid)?.[0],
       resolveLink: (name) => {
         if (!linked.has(name)) return { text: name };
         if (linked.get(name) === undefined) {
@@ -343,6 +345,7 @@ describe('prepareSync', () => {
   it('a relation written as a path is no difference', async () => {
     const sem: RelationContext = {
       uidToName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+      displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
       resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
     };
     const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
@@ -354,6 +357,7 @@ describe('prepareSync', () => {
     // What ObsidianRelationContext gives for a contact whose note is `Contacts/Sem/index.md` (see relationLinks.spec.ts).
     const sem: RelationContext = {
       uidToName: (uid) => (uid === 'sem-uid' ? 'Contacts/Sem/index|Sem' : undefined),
+      displayName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
       resolveLink: (name) => (name === 'Contacts/Sem/index' || name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
     };
     const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
@@ -709,6 +713,7 @@ describe('applySync', () => {
   it('a relation written as a path settles to the canonical link text', async () => {
     const sem: RelationContext = {
       uidToName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+      displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
       resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
     };
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), children: ['[[06 People/Sem de Vries]]'], source: 'Radicale' }, ctx: sem });

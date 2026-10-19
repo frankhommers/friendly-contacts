@@ -104,7 +104,11 @@ function fakeBook(id: string, name: string) {
 
 type Book = ReturnType<typeof fakeBook>;
 
-const noRelations: RelationContext = { uidToName: () => undefined, resolveLink: (name) => ({ text: name }) };
+const noRelations: RelationContext = {
+  uidToName: () => undefined,
+  displayName: () => undefined,
+  resolveLink: (name) => ({ text: name }),
+};
 
 /** Apply with the preselections. */
 const preselected = (): ReviewDecision => ({ kind: 'apply', choices: new Map(), rename: true });

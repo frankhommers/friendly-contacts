@@ -3,8 +3,10 @@
 import { MappingRow } from './mapping';
 
 export interface RelationContext {
-  /** Display name of the contact with this vCard UID, if known. */
+  /** Link text (without brackets) to the contact with this vCard UID, if known; may be a path with an alias. */
   uidToName(uid: string): string | undefined;
+  /** The name of the contact with this vCard UID as written on cards: its `name`, else its contact name; never a path or alias. */
+  displayName(uid: string): string | undefined;
   /** Resolves a link target (a name) to a contact UID, plain text, or "ambiguous". */
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true };
 }

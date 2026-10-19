@@ -235,11 +235,14 @@ async function relationContext(adapter: AdapterInterface, notes: { name: string;
     const fileName = contactFileName(meta.n, meta.fn);
     return meta.uid && fileName ? [{ uid: cleanUid(meta.uid), fileName }] : [];
   });
+  // The notes are named for their contacts, so a link text is also the display name.
+  const nameOf = (uid: string) => {
+    const id = cleanUid(uid);
+    return notes.find((n) => cleanUid(n.uid) === id)?.name ?? remote.find((r) => r.uid === id)?.fileName;
+  };
   return {
-    uidToName(uid) {
-      const id = cleanUid(uid);
-      return notes.find((n) => cleanUid(n.uid) === id)?.name ?? remote.find((r) => r.uid === id)?.fileName;
-    },
+    uidToName: nameOf,
+    displayName: nameOf,
     resolveLink(name) {
       const note = notes.find((n) => n.name === name);
       return note ? { uid: cleanUid(note.uid) } : resolveRemoteName(name, remote);

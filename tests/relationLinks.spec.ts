@@ -191,6 +191,9 @@ describe("link text with an alias", () => {
     expect(ctx.uidToName("jan-uid")).toBe("Contacts/Jan de Vries/index|Jan de Vries");
     // no `name` property: the folder's name
     expect(ctx.uidToName("sem-uid")).toBe("Contacts/Sem/index|Sem");
+    // the name written on cards is the display name, never the path or the alias syntax
+    expect(ctx.displayName("jan-uid")).toBe("Jan de Vries");
+    expect(ctx.displayName("sem-uid")).toBe("Sem");
     expect(obsidianMirrorEnv(v.app).linkTo("Contacts/Jan de Vries/index.md", "Contacts/Piet/index.md")).toBe(
       "[[Contacts/Jan de Vries/index|Jan de Vries]]",
     );
@@ -206,6 +209,8 @@ describe("link text with an alias", () => {
       const jan = v.note("Contacts/Jan de Vries/Jan de Vries.md", { name: "Jan", uid: "jan-uid" });
       const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: jan as never, uid: "jan-uid" }], []);
       expect(ctx.uidToName("jan-uid")).toBe("Jan de Vries");
+      // the `name` property wins over the file name
+      expect(ctx.displayName("jan-uid")).toBe("Jan");
       expect(obsidianMirrorEnv(v.app).linkTo("Contacts/Jan de Vries/Jan de Vries.md", "Contacts/Piet.md")).toBe("[[Jan de Vries]]");
     }
   });

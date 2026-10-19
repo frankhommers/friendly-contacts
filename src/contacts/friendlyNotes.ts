@@ -19,6 +19,7 @@ import { StructuredFields } from 'src/contacts/vcard/shared/structuredFields';
 /** The legacy record has no relations, so links never need resolving here. */
 const NO_RELATIONS: RelationContext = {
   uidToName: () => undefined,
+  displayName: () => undefined,
   resolveLink: (name) => ({ text: name }),
 };
 

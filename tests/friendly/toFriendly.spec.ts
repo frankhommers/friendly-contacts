@@ -1,12 +1,13 @@
-import { parseCard } from 'src/contacts/friendly/lines';
+import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
-import { toFriendly } from 'src/contacts/friendly/translate';
+import { patch, toFriendly } from 'src/contacts/friendly/translate';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { describe, expect, it } from 'vitest';
 
 const ctx: RelationContext = {
   uidToName: (uid) => (uid === 'anna-uid' ? 'Anna de Vries' : undefined),
+  displayName: (uid) => (uid === 'anna-uid' ? 'Anna de Vries' : undefined),
   resolveLink: () => ({ text: '' }),
 };
 const lines = parseCard(readVcfFixture('appleV3.vcf'));
@@ -113,5 +114,163 @@ describe('relation links', () => {
     expect(linkTarget('[[Anna de Vries|Anna]]')).toBe('Anna de Vries');
     expect(linkTarget('[[Anna#Heading]]')).toBe('Anna');
     expect(linkTarget('Anna')).toBe('Anna');
+  });
+});
+
+describe('reading every form', () => {
+  const davx5 = readVcfFixture('davx5V3.vcf');
+  const davx5Lines = parseCard(davx5);
+  const at = (group: string, name: string) => davx5Lines.findIndex((l) => l.group === group && l.name === name);
+
+  it('reads a DAVx5 vCard 3.0 card', () => {
+    const f = toFriendly(davx5Lines, DEFAULT_MAPPING, ctx);
+    expect(f.props).toEqual({
+      uid: '5f0c3a1e-8b2d-4c47-9e61-7a2b9d4c1e08',
+      name: 'Frank Hommers',
+      firstname: 'Frank',
+      lastname: 'Hommers',
+      mobile: '+31 6 12345678',
+      email: 'frank@example.nl',
+      parents: ['[[Ger Verhallen]]', '[[Truus Verhallen]]'],
+      spouse: '[[Sanne Hommers]]',
+      children: ['[[Lotte Hommers]]'],
+      colleagues: ['[[Pieter Jansen]]', '[[Marieke Bos]]'],
+      anniversary: '2012-06-21',
+      birthday: '1975-03-12',
+    });
+  });
+
+  it('points provenance at the value line, not at its label', () => {
+    const f = toFriendly(davx5Lines, DEFAULT_MAPPING, ctx);
+    expect(f.source.parents).toEqual([{ line: at('item1', 'X-ABRELATEDNAMES') }, { line: at('item2', 'X-ABRELATEDNAMES') }]);
+    expect(f.source.spouse).toEqual({ line: at('item3', 'X-ABRELATEDNAMES') });
+    expect(f.source.anniversary).toEqual({ line: at('item8', 'X-ABDATE') });
+  });
+
+  it('an untouched DAVx5 card is written back byte-identical', () => {
+    const f = toFriendly(davx5Lines, DEFAULT_MAPPING, ctx);
+    const result = patch(davx5Lines, f, { ...f.props }, DEFAULT_MAPPING, ctx);
+    expect(serializeCard(result.lines)).toBe(davx5);
+  });
+
+  it('reads X-ABRELATEDNAMES with its Apple label (Review Focus 1)', () => {
+    const text = card('FN:Frank', 'item3.X-ABRELATEDNAMES:Ger Verhallen', 'item3.X-ABLabel:_$!<Father>!$_');
+    const cardLines = parseCard(text);
+    const f = toFriendly(cardLines, DEFAULT_MAPPING, ctx);
+    expect(f.props).toEqual({ name: 'Frank', parents: ['[[Ger Verhallen]]'] });
+    expect(f.source.parents).toEqual([{ line: 2 }]); // VERSION, FN, then the value line (not its label)
+    const result = patch(cardLines, f, { ...f.props }, DEFAULT_MAPPING, ctx);
+    expect(serializeCard(result.lines)).toBe(text + '\r\n');
+  });
+
+  it('finds the label wherever it is in the card, and only in its own group', () => {
+    expect(translate(card('ITEM2.X-ABLABEL:_$!<Father>!$_', 'item2.X-ABRELATEDNAMES:Ger')).props).toEqual({
+      parents: ['[[Ger]]'],
+    });
+    expect(translate(card('item1.X-ABLabel:_$!<Father>!$_', 'item2.X-ABRELATEDNAMES:Ger')).props).toEqual({});
+  });
+
+  it('a hint picks the right one of two people with the same name (Review Focus 2)', () => {
+    const twoJans: RelationContext = {
+      uidToName: (uid) =>
+        ({ 'jan-work': 'Contacts/Work/Jan Jansen', 'jan-family': 'Contacts/Family/Jan Jansen' })[uid],
+      displayName: (uid) => (uid === 'jan-work' || uid === 'jan-family' ? 'Jan Jansen' : undefined),
+      resolveLink: () => ({ ambiguous: true }),
+    };
+    const read = (...body: string[]) => toFriendly(parseCard(card(...body)), DEFAULT_MAPPING, twoJans).props;
+    expect(read('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=jan-family:Jan Jansen', 'item1.X-ABLabel:_$!<Friend>!$_')).toEqual({
+      friends: ['[[Contacts/Family/Jan Jansen]]'],
+    });
+    expect(read('RELATED;TYPE=friend;VALUE=text;X-FRIENDLY-UID=jan-work:Jan Jansen')).toEqual({
+      friends: ['[[Contacts/Work/Jan Jansen]]'],
+    });
+    // Without a hint the name is ambiguous: it stays the name the card holds.
+    expect(read('item1.X-ABRELATEDNAMES:Jan Jansen', 'item1.X-ABLabel:_$!<Friend>!$_')).toEqual({
+      friends: ['[[Jan Jansen]]'],
+    });
+    expect(read('RELATED;TYPE=friend;VALUE=text:Jan Jansen')).toEqual({ friends: ['[[Jan Jansen]]'] });
+  });
+
+  it('a hint that does not resolve falls back to the value', () => {
+    expect(translate(card('RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=gone:Anna')).props).toEqual({
+      spouse: '[[Anna]]',
+    });
+    expect(translate(card('RELATED;TYPE=spouse;X-FRIENDLY-UID=gone:urn:uuid:anna-uid')).props).toEqual({
+      spouse: '[[Anna de Vries]]',
+    });
+    expect(
+      translate(card('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID="gone":Sem', 'item1.X-ABLabel:_$!<Child>!$_')).props,
+    ).toEqual({ children: ['[[Sem]]'] });
+    expect(
+      translate(card('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID="anna-uid":Anna', 'item1.X-ABLabel:_$!<Spouse>!$_')).props,
+    ).toEqual({ spouse: '[[Anna de Vries]]' });
+  });
+
+  it('reads vCard 4.0 RELATED text values with and without a hint', () => {
+    expect(translate(card('RELATED;TYPE=sweetheart;VALUE=text:Sanne')).props).toEqual({ partner: '[[Sanne]]' });
+    expect(translate(card('RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=anna-uid:Anna')).props).toEqual({
+      children: ['[[Anna de Vries]]'],
+    });
+  });
+
+  // The label table of the spec (Part 6, "Reading"), written out so a change to the defaults shows here.
+  const LABEL_TABLE: [string, string[]][] = [
+    ['spouse', ['Spouse']],
+    ['partner', ['Partner']],
+    ['children', ['Child']],
+    ['parents', ['Parent', 'Mother', 'Father']],
+    ['siblings', ['Sibling', 'Brother', 'Sister']],
+    ['family', ['Kin', 'Relative']],
+    ['friends', ['Friend']],
+    ['colleagues', ['Colleague', 'Co-worker', 'Assistant', 'Manager']],
+    ['neighbours', ['Neighbor']],
+    ['housemates', ['Co-resident']],
+    ['acquaintances', ['Acquaintance']],
+    ['met', ['Met']],
+    ['emergency', ['Emergency']],
+  ];
+  const SINGLE = ['spouse', 'partner'];
+
+  it.each(LABEL_TABLE)('reads every label of %s, Apple and plain, in any case', (property, labels) => {
+    for (const label of labels) {
+      for (const raw of [`_$!<${label}>!$_`, label, label.toUpperCase(), label.toLowerCase()]) {
+        const props = translate(card('item1.X-ABRELATEDNAMES:Kim', `item1.X-ABLabel:${raw}`)).props;
+        expect(props, raw).toEqual({ [property]: SINGLE.includes(property) ? '[[Kim]]' : ['[[Kim]]'] });
+      }
+    }
+  });
+
+  it('a comma-separated label matches when any part matches', () => {
+    expect(translate(card('item1.X-ABRELATEDNAMES:Sanne', 'item1.X-ABLabel:Domestic-partner, Spouse')).props).toEqual({
+      spouse: '[[Sanne]]',
+    });
+    expect(translate(card('item1.X-ABRELATEDNAMES:Sanne', 'item1.X-ABLabel:Domestic-partner\\, Spouse')).props).toEqual({
+      spouse: '[[Sanne]]',
+    });
+  });
+
+  it('leaves unlabeled and unknown labels unmapped', () => {
+    expect(translate(card('X-ABRELATEDNAMES;TYPE=other:Oom Kees')).props).toEqual({});
+    expect(translate(card('item1.X-ABRELATEDNAMES:Klaas', 'item1.X-ABLabel:Godfather')).props).toEqual({});
+    expect(translate(card('item1.X-ABRELATEDNAMES:Klaas', 'item1.X-ABLabel:_$!<Other>!$_')).props).toEqual({});
+    expect(translate(card('item1.X-ABRELATEDNAMES:Klaas', 'item1.X-ABLabel:')).props).toEqual({});
+    expect(translate(card('item1.X-ABRELATEDNAMES:', 'item1.X-ABLabel:_$!<Friend>!$_')).props).toEqual({});
+  });
+
+  it('reads the anniversary from X-ABDATE with its label', () => {
+    const date = (...body: string[]) => translate(card(...body)).props.anniversary;
+    expect(date('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Anniversary>!$_')).toBe('2012-06-21');
+    expect(date('item1.X-ABDATE:20120621', 'item1.X-ABLabel:anniversary')).toBe('2012-06-21');
+    expect(date('item1.X-ABDATE;X-APPLE-OMIT-YEAR=1604:1604-06-21', 'item1.X-ABLabel:_$!<Anniversary>!$_')).toBe(
+      '--06-21',
+    );
+    expect(date('item1.X-ABDATE:--0621', 'item1.X-ABLabel:Anniversary')).toBe('--06-21');
+    expect(date('ANNIVERSARY:20120621')).toBe('2012-06-21');
+  });
+
+  it('leaves other X-ABDATE lines unmapped', () => {
+    expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Other>!$_')).props).toEqual({});
+    expect(translate(card('X-ABDATE:2012-06-21')).props).toEqual({});
+    expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:Wedding')).props).toEqual({});
   });
 });

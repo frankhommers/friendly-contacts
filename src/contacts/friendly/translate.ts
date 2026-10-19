@@ -51,13 +51,35 @@ function componentValue(row: ComponentRow, line: VCardLine): string | undefined 
   return text === '' ? undefined : text;
 }
 
+/** The parameter the plugin writes next to a relationship's name: the UID of the contact it points to. */
+const HINT_PARAM = 'X-FRIENDLY-UID';
+
+/**
+ * The link for a relationship line: the contact named by the `X-FRIENDLY-UID` hint when it resolves, else the value
+ * as a name (`X-ABRELATEDNAMES`, `RELATED;VALUE=text`) or the contact of a `urn:uuid:` value.
+ */
 function relationLink(line: VCardLine, ctx: RelationContext): string | undefined {
-  if ((getParam(line, 'VALUE') ?? '').toLowerCase() === 'text') {
-    const name = unescapeText(line.value);
+  const hint = getParam(line, HINT_PARAM)?.replace(/^"(.*)"$/, '$1').trim();
+  const hinted = hint ? ctx.uidToName(hint) : undefined;
+  if (hinted !== undefined && hinted !== '') return toLink(hinted);
+  if (line.name === 'X-ABRELATEDNAMES' || (getParam(line, 'VALUE') ?? '').toLowerCase() === 'text') {
+    const name = unescapeText(line.value).trim();
     return name === '' ? undefined : toLink(name);
   }
   const name = ctx.uidToName(line.value.replace(UUID_URN, ''));
   return name === undefined || name === '' ? undefined : toLink(name);
+}
+
+/** Group (lower-case) -> its raw `X-ABLabel` value; the first label of a group counts. */
+function groupLabels(lines: VCardLine[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const line of lines) {
+    const group = line.group?.toLowerCase();
+    if (line.name === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
+      labels.set(group, unescapeText(line.value));
+    }
+  }
+  return labels;
 }
 
 export function toFriendly(lines: VCardLine[], rows: MappingRow[], ctx: RelationContext): Friendly {
@@ -85,8 +107,11 @@ export function toFriendly(lines: VCardLine[], rows: MappingRow[], ctx: Relation
     prov.push({ line: index });
   };
 
+  const labels = groupLabels(lines);
+
   lines.forEach((line, index) => {
-    for (const row of rowForLine(line, rows)) {
+    const label = line.group === undefined ? undefined : labels.get(line.group.toLowerCase());
+    for (const row of rowForLine(line, rows, label)) {
       if (row.kind === 'relation') {
         const link = relationLink(line, ctx);
         if (link !== undefined) addRelation(row, link, index);

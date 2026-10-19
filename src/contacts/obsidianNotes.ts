@@ -15,6 +15,7 @@ import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly
 import { contactFileName, hasVCardValues, isContactFrontmatter, isContactNote, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
 import {
+  contactDisplayName,
   contactLinktext,
   contactNameFor,
   effectiveLayout,
@@ -288,7 +289,17 @@ export class ObsidianRelationContext implements RelationContext {
     const id = cleanUid(uid);
     const note = this.contacts.find((c) => c.uid !== undefined && cleanUid(c.uid) === id);
     if (note) return contactLinktext(this.app, note.file, this.sourcePath, true);
-    // A contact in several address books under different names has no one name to show.
+    return this.remoteName(id);
+  }
+
+  displayName(uid: string): string | undefined {
+    const id = cleanUid(uid);
+    const note = this.contacts.find((c) => c.uid !== undefined && cleanUid(c.uid) === id);
+    return note ? contactDisplayName(this.app, note.file) : this.remoteName(id);
+  }
+
+  /** The name of a contact known only on the server; a contact in several address books under different names has none. */
+  private remoteName(id: string): string | undefined {
     const names = new Set(this.remote.filter((r) => r.uid === id).map((r) => r.fileName));
     return names.size === 1 ? [...names][0] : undefined;
   }

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ctx: RelationContext = {
   uidToName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
+  displayName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
   resolveLink: (name) => {
     if (name === 'Sem') return { uid: 'sem-uid' };
     if (name === 'Jan') return { ambiguous: true };

@@ -92,6 +92,27 @@ describe('friendly mapping', () => {
     expect(rowForProperty('children', DEFAULT_MAPPING)!.row).toMatchObject({ mirror: 'parents', types: ['child'] });
   });
 
+  it('relation rows match X-ABRELATEDNAMES by the label of its group', () => {
+    const labelled = (text: string, label?: string) => names(rowForLine(line(text), DEFAULT_MAPPING, label));
+    expect(labelled('item1.X-ABRELATEDNAMES:Ger', '_$!<Father>!$_')).toEqual(['parents']);
+    expect(labelled('item1.X-ABRELATEDNAMES:Pim', 'co-worker')).toEqual(['colleagues']);
+    expect(labelled('item1.X-ABRELATEDNAMES:Sanne', 'Domestic-partner, Spouse')).toEqual(['spouse']);
+    expect(labelled('item1.X-ABRELATEDNAMES:Kees', 'Godfather')).toEqual([]);
+    expect(labelled('X-ABRELATEDNAMES;TYPE=other:Kees')).toEqual([]);
+    // RELATED is still matched by its type; a label never makes another line a relation.
+    expect(labelled('item1.RELATED;TYPE=friend:urn:uuid:x', '_$!<Father>!$_')).toEqual(['friends']);
+    expect(labelled('item1.NOTE:x', '_$!<Father>!$_')).toEqual(['note']);
+  });
+
+  it('the anniversary row matches X-ABDATE with its date label only', () => {
+    const labelled = (text: string, label?: string) => names(rowForLine(line(text), DEFAULT_MAPPING, label));
+    expect(labelled('item1.X-ABDATE:2012-06-21', '_$!<Anniversary>!$_')).toEqual(['anniversary']);
+    expect(labelled('item1.X-ABDATE:2012-06-21', 'ANNIVERSARY')).toEqual(['anniversary']);
+    expect(labelled('item1.X-ABDATE:2012-06-21', '_$!<Other>!$_')).toEqual([]);
+    expect(labelled('X-ABDATE:2012-06-21')).toEqual([]);
+    expect(labelled('ANNIVERSARY:20120621')).toEqual(['anniversary']);
+  });
+
   it('default mapping is valid', () => {
     expect(validateMapping(DEFAULT_MAPPING)).toEqual([]);
   });

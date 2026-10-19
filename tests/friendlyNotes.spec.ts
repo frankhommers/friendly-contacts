@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 
 const ctx: RelationContext = {
   uidToName: () => undefined,
+  displayName: () => undefined,
   resolveLink: (name) => ({ text: name }),
 };
 

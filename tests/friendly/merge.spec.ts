@@ -63,7 +63,7 @@ describe('coerceNoteProps', () => {
 });
 
 describe('alignNoteDates', () => {
-  const ctx = { uidToName: () => undefined, resolveLink: (name: string) => ({ text: name }) };
+  const ctx = { uidToName: () => undefined, displayName: () => undefined, resolveLink: (name: string) => ({ text: name }) };
   const cardOf = (...body: string[]) => {
     const lines = parseCard(['BEGIN:VCARD', 'VERSION:3.0', ...body, 'END:VCARD'].join('\r\n'));
     return { lines, friendly: toFriendly(lines, DEFAULT_MAPPING, ctx) };

@@ -46,7 +46,11 @@ export function alsoChanges(
 }
 
 /** No relationship lookups: only the name lines matter here. */
-const NO_RELATIONS = { uidToName: () => undefined, resolveLink: (name: string) => ({ text: name }) };
+const NO_RELATIONS = {
+  uidToName: () => undefined,
+  displayName: () => undefined,
+  resolveLink: (name: string) => ({ text: name }),
+};
 
 /** The file name a contact with these properties gets (`contactFileName` from its N parts, else FN). */
 function computedName(props: Props, rows: MappingRow[]): string | undefined {

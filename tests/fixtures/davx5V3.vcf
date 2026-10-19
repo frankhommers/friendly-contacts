@@ -1,0 +1,28 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:ez-vcard 0.12.1
+UID:5f0c3a1e-8b2d-4c47-9e61-7a2b9d4c1e08
+FN:Frank Hommers
+N:Hommers;Frank;;;
+TEL;TYPE=cell:+31 6 12345678
+EMAIL;TYPE=home:frank@example.nl
+item1.X-ABRELATEDNAMES:Ger Verhallen
+item1.X-ABLabel:_$!<Father>!$_
+item2.X-ABRELATEDNAMES:Truus Verhallen
+item2.X-ABLabel:_$!<Mother>!$_
+item3.X-ABRELATEDNAMES:Sanne Hommers
+item3.X-ABLabel:Domestic-partner, Spouse
+item4.X-ABRELATEDNAMES:Lotte Hommers
+item4.X-ABLabel:_$!<Child>!$_
+item5.X-ABRELATEDNAMES:Pieter Jansen
+item5.X-ABLabel:Colleague
+item6.X-ABRELATEDNAMES:Marieke Bos
+item6.X-ABLabel:_$!<Assistant>!$_
+item7.X-ABRELATEDNAMES:Klaas de Wit
+item7.X-ABLabel:Godfather
+X-ABRELATEDNAMES;TYPE=other:Oom Kees
+item8.X-ABDATE:2012-06-21
+item8.X-ABLabel:_$!<Anniversary>!$_
+BDAY:1975-03-12
+REV:20261019T081500Z
+END:VCARD
