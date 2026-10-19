@@ -13,7 +13,7 @@ import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relati
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
-import { ensureFolder, newContactLocation, renameContact } from "src/contacts/layoutNotes";
+import { effectiveLayout, ensureFolder, moveContactFolders, newContactLocation, renameContact } from "src/contacts/layoutNotes";
 import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import type { Source } from "src/settings/settings";
@@ -425,7 +425,10 @@ export async function importRemoteCard(
   return imported.written ? "imported" : "skipped";
 }
 
-/** Moves every contact note in the contacts folder to `toFolder`, then points the setting at it. */
+/**
+ * Moves every contact in the contacts folder to `toFolder`, then points the setting at it. In folder layout a contact
+ * moves with its whole folder (see `moveContactFolders`); in one-note layout note by note.
+ */
 export async function moveContacts(
   app: App,
   toFolder: string,
@@ -433,6 +436,19 @@ export async function moveContacts(
 ): Promise<{ moved: number; skipped: SkippedMove[] }> {
   const from = normalizeFolder(fromFolder);
   const to = normalizeFolder(toFolder);
+  const { moved, skipped } =
+    effectiveLayout().layout === "folder"
+      ? await moveContactFolders(app, contactNotes(app, from).map(({ file }) => file), from, to)
+      : await moveNotes(app, from, to);
+  // Only follow the contacts when some actually moved; otherwise the plugin would look in an empty folder.
+  if (moved > 0) {
+    await updateSetting("contactsFolder", to);
+    insightQueueStore.clear();
+  }
+  return { moved, skipped };
+}
+
+async function moveNotes(app: App, from: string, to: string): Promise<{ moved: number; skipped: SkippedMove[] }> {
   const files = new Map(contactNotes(app, from).map(({ file }) => [file.path, file]));
   const plan = planMoves([...files.keys()], from, to, (path) => app.vault.getAbstractFileByPath(path) !== null);
   const skipped = [...plan.skipped];
@@ -447,11 +463,6 @@ export async function moveContacts(
     } catch (error) {
       skipped.push({ from: move.from, reason: error instanceof Error ? error.message : String(error) });
     }
-  }
-  // Only follow the contacts when some actually moved; otherwise the plugin would look in an empty folder.
-  if (moved > 0) {
-    await updateSetting("contactsFolder", to);
-    insightQueueStore.clear();
   }
   return { moved, skipped };
 }

@@ -50,6 +50,15 @@ vi.mock("obsidian", async (importOriginal) => {
     TAbstractFile: h.TAbstractFile,
     TFolder: h.TFolder,
     TFile: h.TFile,
+    Vault: {
+      recurseChildren(folder: InstanceType<typeof h.TFolder>, callback: (node: InstanceType<typeof h.TAbstractFile>) => void) {
+        const walk = (node: InstanceType<typeof h.TAbstractFile>) => {
+          callback(node);
+          if (node instanceof h.TFolder) node.children.forEach(walk);
+        };
+        walk(folder);
+      },
+    },
   };
 });
 
@@ -77,8 +86,17 @@ vi.mock("src/context/sharedSettingsContext", () => ({
 
 import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { createContactFile } from "src/file/file";
-import { newContactLocation, renameBlocked, renameContact, resetLayoutWarning, runSteps } from "src/contacts/layoutNotes";
-import { noteIO } from "src/contacts/obsidianNotes";
+import {
+  changeLayout,
+  layoutChangeCount,
+  layoutNotice,
+  newContactLocation,
+  renameBlocked,
+  renameContact,
+  resetLayoutWarning,
+  runSteps,
+} from "src/contacts/layoutNotes";
+import { moveContacts, noteIO } from "src/contacts/obsidianNotes";
 
 type Folder = InstanceType<typeof h.TFolder>;
 type File = InstanceType<typeof h.TFile>;
@@ -465,7 +483,7 @@ describe("runSteps", () => {
   it("a missing source whose target exists counts as done", async () => {
     const v = fakeApp();
     v.note("Contacts/B/B.md");
-    expect(await runSteps(v.app, [{ kind: "move", from: "Contacts/A", to: "Contacts/B" }])).toEqual({ done: 1, failed: [] });
+    expect(await runSteps(v.app, [{ kind: "move", from: "Contacts/A", to: "Contacts/B" }])).toEqual({ done: 1, failed: [], kept: [] });
   });
 
   it("a failed step stops the rest of that contact; other contacts still run", async () => {
@@ -496,6 +514,7 @@ describe("runSteps", () => {
     ]);
     expect(result).toEqual({
       done: 0,
+      kept: [],
       failed: [
         { step: { kind: "move", from: "Contacts/Jan", to: "Contacts/Jan 2" }, reason: "missing: Contacts/Jan" },
         { step: { kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan 2.md" }, reason: "an earlier step failed" },
@@ -513,7 +532,7 @@ describe("runSteps", () => {
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md", "Contacts/Sem.md"]);
   });
 
-  it("deletes only empty folders and never the contacts folder", async () => {
+  it("deletes only empty folders; a folder with files is kept, not failed; never the contacts folder", async () => {
     const v = fakeApp();
     v.folder("Contacts/Empty");
     v.note("Contacts/Full/Poem.md", null);
@@ -523,7 +542,254 @@ describe("runSteps", () => {
       [{ kind: "move", from: "Contacts", to: "Other" }],
     ]);
     expect(result.done).toBe(1);
-    expect(result.failed.map((f) => f.reason)).toEqual(["not empty: Contacts/Full", "refused: Contacts is the contacts folder"]);
+    expect(result.kept).toEqual(["Contacts/Full"]);
+    expect(result.failed.map((f) => f.reason)).toEqual(["refused: Contacts is the contacts folder"]);
     expect(v.paths()).toEqual(["Contacts", "Contacts/Full", "Contacts/Full/Poem.md"]);
+  });
+});
+
+describe("layout commands", () => {
+  it("take out keeps folders with other files", async () => {
+    useLayout({ ...inside, layout: "note" }); // switched to one note per contact; the folder settings stay stored
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Jan/Poem.md", null, "roses");
+    v.note("Contacts/Sem/Sem.md");
+    v.note("Contacts/Anna.md");
+    expect(layoutChangeCount(v.app, "out")).toBe(2);
+
+    const result = await changeLayout(v.app, "out");
+
+    expect(result.moved).toBe(2);
+    expect(result.kept).toEqual(["Contacts/Jan"]);
+    expect(result.skipped).toEqual([{ path: "Contacts/Anna.md", reason: "not in its own folder" }]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Anna.md", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Poem.md", "Contacts/Sem.md"]);
+    expect((v.nodes.get("Contacts/Jan/Poem.md") as File).content).toBe("roses");
+    expect(layoutNotice(result)).toBe("Moved 2, skipped 1, kept 1 folders with other files (see console)");
+  });
+
+  it("take out leaves a folder that gained a file after planning, and does not count it as failed", async () => {
+    useLayout({ ...inside, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    // A sync tool drops a file into the folder while the note is being moved.
+    v.onRename(async () => {
+      v.note("Contacts/Jan/Late.pdf", null);
+    });
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(1);
+    expect(result.kept).toEqual(["Contacts/Jan"]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Late.pdf"]);
+  });
+
+  it("take out in next to layout deletes an empty sibling folder and keeps one with files", async () => {
+    useLayout({ ...next, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    v.folder("Contacts/Jan");
+    v.note("Contacts/Sem.md");
+    v.note("Contacts/Sem/Photo.md", null);
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(1);
+    expect(result.kept).toEqual(["Contacts/Sem"]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md", "Contacts/Sem", "Contacts/Sem.md", "Contacts/Sem/Photo.md"]);
+  });
+
+  it("take out never moves a note out of the contacts folder itself", async () => {
+    useLayout({ ...inside, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Contacts.md");
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(0);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Contacts.md"]);
+  });
+
+  it("take out skips a target that exists", async () => {
+    useLayout({ ...inside, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Jan.md", null);
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(0);
+    expect(result.skipped).toEqual([{ path: "Contacts/Jan/Jan.md", reason: "target exists: Contacts/Jan.md" }]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Jan.md"]);
+  });
+
+  it("take out with a fixed note name uses the folder's name", async () => {
+    useLayout({ ...insideIndex, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan de Vries/index.md");
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(1);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan de Vries.md"]);
+  });
+
+  it("into folders skips notes already in their folder", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Sem.md");
+    v.note("Contacts/Family/Anna.md");
+    expect(layoutChangeCount(v.app, "into")).toBe(2);
+
+    const result = await changeLayout(v.app, "into");
+
+    expect(result.moved).toBe(2);
+    expect(result.kept).toEqual([]);
+    expect(result.skipped).toEqual([{ path: "Contacts/Jan/Jan.md", reason: "already in its folder" }]);
+    expect(v.paths()).toEqual([
+      "Contacts",
+      "Contacts/Family",
+      "Contacts/Family/Anna",
+      "Contacts/Family/Anna/Anna.md",
+      "Contacts/Jan",
+      "Contacts/Jan/Jan.md",
+      "Contacts/Sem",
+      "Contacts/Sem/Sem.md",
+    ]);
+    expect(layoutNotice(result)).toBe("Moved 2, skipped 1, kept 0 folders with other files (see console)");
+  });
+
+  it("into folders: a failing contact does not stop the others, and a taken folder is skipped", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    v.note("Contacts/Sem.md");
+    v.note("Contacts/Anna.md");
+    v.note("Contacts/Anna/Poem.md", null);
+    const original = v.nodes.get("Contacts/Jan.md") as File;
+    const rename = (v.app as unknown as { fileManager: { renameFile: (n: unknown, to: string) => Promise<void> } }).fileManager;
+    const renameFile = rename.renameFile;
+    rename.renameFile = async (node, to) => {
+      if (node === original) throw new Error("locked");
+      await renameFile(node, to);
+    };
+    const result = await changeLayout(v.app, "into");
+    expect(result.moved).toBe(1);
+    expect(result.skipped.map((s) => [s.path, s.reason])).toEqual([
+      ["Contacts/Anna.md", "folder exists: Contacts/Anna"],
+      ["Contacts/Jan.md", "locked"],
+    ]);
+    expect(v.nodes.has("Contacts/Sem/Sem.md")).toBe(true);
+    expect(v.nodes.has("Contacts/Jan.md")).toBe(true);
+  });
+
+  it("into folders leaves a second contact note inside someone's folder alone", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Jan/Sem.md");
+    const result = await changeLayout(v.app, "into");
+    expect(result.moved).toBe(0);
+    expect(result.skipped.map((s) => s.path).sort()).toEqual(["Contacts/Jan/Jan.md", "Contacts/Jan/Sem.md"]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md", "Contacts/Jan/Sem.md"]);
+  });
+
+  it("into folders needs the folder layout and usable settings", async () => {
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    await expect(changeLayout(v.app, "into")).rejects.toThrow("Folder per contact");
+    expect(layoutChangeCount(v.app, "into")).toBe(0);
+    useLayout({ layout: "folder", noteName: "", location: "inside" });
+    await expect(changeLayout(v.app, "into")).rejects.toThrow("folder note name is empty");
+  });
+
+  it("into folders next to: creates the folder beside the note", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    const result = await changeLayout(v.app, "into");
+    expect(result.moved).toBe(1);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md"]);
+  });
+});
+
+describe("move contacts", () => {
+  it("move contacts moves whole folders in folder layout", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Jan/Poem.md", null, "roses");
+    v.note("Contacts/Jan/Photos/Beach.md", null);
+    v.note("Contacts/Family/Sem/Sem.md");
+    v.note("Contacts/Anna.md");
+
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+
+    expect(result).toEqual({ moved: 3, skipped: [] });
+    expect(v.paths()).toEqual([
+      "Areas",
+      "Areas/Anna.md",
+      "Areas/Family",
+      "Areas/Family/Sem",
+      "Areas/Family/Sem/Sem.md",
+      "Areas/Jan",
+      "Areas/Jan/Jan.md",
+      "Areas/Jan/Photos",
+      "Areas/Jan/Photos/Beach.md",
+      "Areas/Jan/Poem.md",
+      "Contacts",
+      "Contacts/Family",
+    ]);
+    expect((v.nodes.get("Areas/Jan/Poem.md") as File).content).toBe("roses");
+  });
+
+  it("a second contact note in someone's folder travels with that folder", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Jan/Sem.md");
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result).toEqual({ moved: 2, skipped: [] });
+    expect(v.paths()).toEqual(["Areas", "Areas/Jan", "Areas/Jan/Jan.md", "Areas/Jan/Sem.md", "Contacts"]);
+  });
+
+  it("next to: the folder and its note move together; an existing target skips both", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan.md");
+    v.note("Contacts/Jan/Poem.md", null);
+    v.note("Contacts/Sem.md");
+    v.folder("Contacts/Sem");
+    v.note("Areas/Sem.md", null);
+
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+
+    expect(result.moved).toBe(1);
+    expect(result.skipped.map((s) => s.from).sort()).toEqual(["Contacts/Sem", "Contacts/Sem.md"]);
+    expect(v.paths()).toEqual([
+      "Areas",
+      "Areas/Jan",
+      "Areas/Jan.md",
+      "Areas/Jan/Poem.md",
+      "Areas/Sem.md",
+      "Contacts",
+      "Contacts/Sem",
+      "Contacts/Sem.md",
+    ]);
+  });
+
+  it("an existing target folder is skipped, never merged", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Areas/Jan/Other.md", null);
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result.moved).toBe(0);
+    expect(result.skipped.map((s) => s.from)).toEqual(["Contacts/Jan"]);
+    expect(v.paths()).toEqual(["Areas", "Areas/Jan", "Areas/Jan/Other.md", "Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md"]);
+  });
+
+  it("one-note layout moves notes one by one as before", async () => {
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan.md");
+    v.note("Contacts/Family/Sem.md");
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result).toEqual({ moved: 2, skipped: [] });
+    expect(v.paths()).toEqual(["Areas", "Areas/Family", "Areas/Family/Sem.md", "Areas/Jan.md", "Contacts", "Contacts/Family"]);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { moveNotice, planMoves } from "src/contacts/moveContacts";
+import { moveNotice, planMoves, planUnitMoves } from "src/contacts/moveContacts";
 
 const none = () => false;
 
@@ -51,6 +51,31 @@ describe("planMoves", () => {
   it("allows moving out of the vault root into a sub-folder when the root has no contacts there", () => {
     const plan = planMoves(["Jan.md"], "", "People", none);
     expect(plan.moves).toEqual([{ from: "Jan.md", to: "People/Jan.md" }]);
+  });
+});
+
+describe("planUnitMoves", () => {
+  it("moves the paths of a unit together and keeps relative paths", () => {
+    const plan = planUnitMoves([["People/Jan"], ["People/Family/Sem", "People/Family/Sem.md"]], "People", "Areas", none);
+    expect(plan.groups).toEqual([
+      { unit: 0, moves: [{ from: "People/Jan", to: "Areas/Jan" }] },
+      {
+        unit: 1,
+        moves: [
+          { from: "People/Family/Sem", to: "Areas/Family/Sem" },
+          { from: "People/Family/Sem.md", to: "Areas/Family/Sem.md" },
+        ],
+      },
+    ]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  it("skips the whole unit when one of its targets exists", () => {
+    const plan = planUnitMoves([["People/Sem", "People/Sem.md"], ["People/Jan"]], "People", "Areas", (p) => p === "Areas/Sem.md");
+    expect(plan.groups).toEqual([{ unit: 1, moves: [{ from: "People/Jan", to: "Areas/Jan" }] }]);
+    expect(plan.skipped.map((s) => s.from)).toEqual(["People/Sem", "People/Sem.md"]);
+    expect(plan.skipped[0].reason).toContain("People/Sem.md");
+    expect(plan.skipped[1].reason).toContain("exists");
   });
 });
 

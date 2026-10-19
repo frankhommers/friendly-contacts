@@ -20,6 +20,7 @@ import { openImportContactModal } from "src/ui/modals/importContactModal";
 import { isSyncAvailable } from "src/sync/adapters";
 import { sync } from "src/sync";
 import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
+import { runLayoutCommand } from "src/ui/modals/layoutChangeModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -107,6 +108,18 @@ export default class ContactsPlugin extends Plugin {
         }
         new MoveContactsModal(this.app, () => contactNotes(this.app, folder).length, () => folder).open();
       },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-into-folders",
+      name: "Put each contact in its own folder",
+      callback: () => runLayoutCommand(this.app, "into"),
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-out-of-folders",
+      name: "Take contacts out of their folders",
+      callback: () => runLayoutCommand(this.app, "out"),
     });
 
     this.addCommand({

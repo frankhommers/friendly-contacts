@@ -9,15 +9,18 @@ import {
   contactNameOf,
   contactPaths,
   DEFAULT_LAYOUT,
+  folderNotePath,
   FsStep,
   isInsideOrAt,
   LayoutSettings,
   newContactFolder,
+  planIntoFolders,
+  planOutOfFolders,
   planRename,
   validateLayout,
 } from "src/contacts/layout";
 import { isContactFrontmatter } from "src/contacts/friendlyNotes";
-import { normalizeFolder } from "src/contacts/moveContacts";
+import { normalizeFolder, planUnitMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings } from "src/context/sharedSettingsContext";
 
 let warnedAbout: string | undefined;
@@ -179,18 +182,20 @@ export async function renameContact(app: App, file: TFile, newName: string): Pro
   return "renamed";
 }
 
-type StepResult = { done: number; failed: { step: FsStep; reason: string }[] };
+/** `kept`: folders a `deleteFolderIfEmpty` step found with other things in them; they stay and are no failure. */
+type StepResult = { done: number; failed: { step: FsStep; reason: string }[]; kept: string[] };
 
 /**
  * Applies the steps in order. `steps` is one contact's steps, or a list of them per contact. Before each move the
  * source is looked up again (another plugin may have moved it already): a missing source whose target exists counts
  * as done. A failed step is reported and the rest of that contact's steps are skipped (`an earlier step failed`);
- * other contacts still run.
+ * other contacts still run. A folder that is not empty when its `deleteFolderIfEmpty` runs is left alone and listed
+ * in `kept`.
  */
 export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<StepResult> {
   const groups = (steps.length > 0 && Array.isArray(steps[0]) ? steps : [steps]) as FsStep[][];
   const base = contactsBase();
-  const result: StepResult = { done: 0, failed: [] };
+  const result: StepResult = { done: 0, failed: [], kept: [] };
   for (const group of groups) {
     let stopped = false;
     for (const step of group) {
@@ -198,11 +203,13 @@ export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<
         result.failed.push({ step, reason: "an earlier step failed" });
         continue;
       }
-      const reason = await runStep(app, step, base);
-      if (reason === undefined) {
+      const outcome = await runStep(app, step, base);
+      if (outcome === undefined) {
         result.done++;
+      } else if (typeof outcome === "object") {
+        result.kept.push(outcome.kept);
       } else {
-        result.failed.push({ step, reason });
+        result.failed.push({ step, reason: outcome });
         stopped = true;
       }
     }
@@ -210,8 +217,8 @@ export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<
   return result;
 }
 
-/** Runs one step; a reason when it could not. */
-async function runStep(app: App, step: FsStep, base: string): Promise<string | undefined> {
+/** Runs one step; undefined when done, a reason when it could not, `{ kept }` for a folder left in place. */
+async function runStep(app: App, step: FsStep, base: string): Promise<string | { kept: string } | undefined> {
   try {
     switch (step.kind) {
       case "createFolder": {
@@ -238,7 +245,7 @@ async function runStep(app: App, step: FsStep, base: string): Promise<string | u
         const folder = byPath(app, step.to);
         if (!folder) return undefined;
         if (!(folder instanceof TFolder)) return `not a folder: ${step.to}`;
-        if (folder.children.length > 0) return `not empty: ${step.to}`;
+        if (folder.children.length > 0) return { kept: step.to };
         await app.vault.delete(folder);
         return undefined;
       }
@@ -246,4 +253,224 @@ async function runStep(app: App, step: FsStep, base: string): Promise<string | u
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
+}
+
+// ---------- layout commands ----------
+
+export type LayoutDirection = "into" | "out";
+
+export interface LayoutChangeResult {
+  /** Contacts that are now in the other layout. */
+  moved: number;
+  skipped: { path: string; reason: string }[];
+  /** Folders that stay because other files are in them. */
+  kept: string[];
+}
+
+function dirnameOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
+}
+
+/**
+ * The folder layout the commands work with, or why there is none. It comes from the stored settings, not from
+ * `effectiveLayout`: after switching to one-note layout "take out" still needs the folder note name and location the
+ * contacts were created with. "Put in folders" needs the folder layout to be selected.
+ */
+function commandLayout(direction: LayoutDirection): { s: LayoutSettings } | { problem: string } {
+  const stored = getSettings().layout ?? DEFAULT_LAYOUT;
+  if (direction === "into" && stored.layout !== "folder") return { problem: "Set the layout to Folder per contact first" };
+  const s: LayoutSettings = { ...stored, layout: "folder" };
+  const problem = validateLayout(s);
+  return problem === undefined ? { s } : { problem: `The folder settings cannot be used: ${problem}` };
+}
+
+/** Everything in `folder` and its sub-folders, as paths. */
+function descendants(app: App, folder: string): string[] {
+  const found: string[] = [];
+  const walk = (node: TAbstractFile) => {
+    if (!(node instanceof TFolder)) return;
+    for (const child of node.children) {
+      found.push(child.path);
+      walk(child);
+    }
+  };
+  const node = byPath(app, folder);
+  if (node) walk(node);
+  return found;
+}
+
+/** The folder of another contact that `path` lies in (a contact note in someone's folder is its own contact). */
+function insideContactFolder(app: App, path: string, s: LayoutSettings, base: string): string | undefined {
+  for (let dir = dirnameOf(path); strictlyInside(dir, base); dir = dirnameOf(dir)) {
+    const note = folderNotePath(dir, s);
+    if (note !== undefined && isContactFile(app, byPath(app, note))) return dir;
+  }
+  return undefined;
+}
+
+interface LayoutPlan {
+  /** One group of steps per contact. */
+  groups: FsStep[][];
+  skipped: { path: string; reason: string }[];
+  kept: string[];
+}
+
+/**
+ * Plans moving every contact note in the contacts folder into (`into`) or out of (`out`) its own folder. The name of a
+ * contact is derived like everywhere else (`contactNameOf`): the folder's name for a note in its folder, the note's
+ * own name otherwise, so "put in folders" uses the note's current name and "take out" the folder's name.
+ */
+function planLayoutChange(app: App, direction: LayoutDirection): LayoutPlan | { problem: string } {
+  const target = commandLayout(direction);
+  if ("problem" in target) return target;
+  const { s } = target;
+  const base = contactsBase();
+  const isFolder = folderExists(app);
+  const exists = (path: string) => byPath(app, path) !== null;
+  const files = contactsInFolder(app, base).sort((a, b) => (a.path < b.path ? -1 : 1));
+  const skipped: LayoutPlan["skipped"] = [];
+  const notes: { path: string; name: string }[] = [];
+
+  for (const file of files) {
+    const folder = contactFolderOf(file.path, s, isFolder);
+    if (direction === "into" && folder === undefined) {
+      const inside = insideContactFolder(app, file.path, s, base);
+      if (inside !== undefined) {
+        skipped.push({ path: file.path, reason: `inside the folder of another contact: ${inside}` });
+        continue;
+      }
+    }
+    // The contacts folder, or a folder holding it, is no contact's folder: its note stays where it is.
+    if (direction === "out" && folder !== undefined && !strictlyInside(folder, base)) {
+      skipped.push({ path: file.path, reason: "not in its own folder below the contacts folder" });
+      continue;
+    }
+    notes.push({ path: file.path, name: contactNameOf(file.path, base, s, isFolder) });
+  }
+
+  if (direction === "into") {
+    const plan = planIntoFolders(notes, s, exists);
+    const groups: FsStep[][] = [];
+    for (const step of plan.steps) {
+      if (step.kind === "createFolder") groups.push([step]);
+      else groups[groups.length - 1].push(step);
+    }
+    return { groups, skipped: [...skipped, ...plan.skipped], kept: [] };
+  }
+
+  const plan = planOutOfFolders(notes, s, exists, (folder) => descendants(app, folder));
+  const groups: FsStep[][] = [];
+  const groupOfNote = new Map<string, FsStep[]>();
+  for (const step of plan.steps) {
+    if (step.kind === "move" && step.from !== undefined) {
+      const group = [step];
+      groups.push(group);
+      groupOfNote.set(step.from, group);
+    } else if (step.kind === "deleteFolderIfEmpty") {
+      // The delete goes with the note of that folder, so it is skipped when that note could not be moved.
+      const note = notes.find((n) => contactFolderOf(n.path, s, isFolder) === step.to && groupOfNote.has(n.path));
+      if (note) groupOfNote.get(note.path)?.push(step);
+      else groups.push([step]);
+    }
+  }
+  return { groups, skipped: [...skipped, ...plan.skipped], kept: plan.kept };
+}
+
+/** Why the command cannot run, or undefined. */
+export function layoutCommandProblem(direction: LayoutDirection): string | undefined {
+  const target = commandLayout(direction);
+  return "problem" in target ? target.problem : undefined;
+}
+
+/** How many contacts the command would move now (0 when it cannot run). */
+export function layoutChangeCount(app: App, direction: LayoutDirection): number {
+  const plan = planLayoutChange(app, direction);
+  return "problem" in plan ? 0 : plan.groups.length;
+}
+
+/**
+ * "Put each contact in its own folder" (`into`) / "Take contacts out of their folders" (`out`). Per contact the
+ * steps stop at the first failure. Folders that still hold other files stay, with those files, and are listed in
+ * `kept`. Throws with the reason when the layout settings cannot be used.
+ */
+export async function changeLayout(app: App, direction: LayoutDirection): Promise<LayoutChangeResult> {
+  const plan = planLayoutChange(app, direction);
+  if ("problem" in plan) throw new Error(plan.problem);
+  const result = await runSteps(app, plan.groups);
+  const skipped = [...plan.skipped];
+  let moved = 0;
+  for (const group of plan.groups) {
+    const failure = result.failed.find((f) => group.includes(f.step));
+    if (failure) {
+      // The note's path: the source of the group's move (a group of only a folder step names the folder).
+      skipped.push({ path: group.find((step) => step.from !== undefined)?.from ?? group[0].to, reason: failure.reason });
+    } else if (!group.every((step) => step.kind === "deleteFolderIfEmpty" && result.kept.includes(step.to))) {
+      moved++;
+    }
+  }
+  return { moved, skipped, kept: [...new Set([...plan.kept, ...result.kept])] };
+}
+
+/** The Notice after a layout command. */
+export function layoutNotice(result: LayoutChangeResult): string {
+  return `Moved ${result.moved}, skipped ${result.skipped.length}, kept ${result.kept.length} folders with other files (see console)`;
+}
+
+/**
+ * Moves the contacts in `files` (all in `from`) to `to`, keeping paths relative to the folder. A contact in its
+ * folder moves as a whole with the folder and everything in it; "next to" layout moves the folder and its note
+ * together. A contact whose target exists is skipped, never merged. `moved` counts contact notes.
+ */
+export async function moveContactFolders(
+  app: App,
+  files: TFile[],
+  from: string,
+  to: string,
+): Promise<{ moved: number; skipped: SkippedMove[] }> {
+  const s = effectiveLayout();
+  const isFolder = folderExists(app);
+  const ownFolder = new Map<string, string>();
+  for (const file of files) {
+    const folder = contactFolderOf(file.path, s, isFolder);
+    if (folder !== undefined && strictlyInside(folder, from)) ownFolder.set(file.path, folder);
+  }
+  const folders = new Set(ownFolder.values());
+  // A folder inside another contact folder travels with it.
+  const roots = [...folders].filter((f) => ![...folders].some((other) => other !== f && strictlyInside(f, other)));
+
+  const units = new Map<string, { paths: string[]; count: number }>(roots.map((r) => [r, { paths: [r], count: 0 }]));
+  for (const file of files) {
+    const root = roots.find((r) => strictlyInside(file.path, r));
+    if (root !== undefined) {
+      (units.get(root) as { count: number }).count++;
+      continue;
+    }
+    const own = ownFolder.get(file.path);
+    const unit = own === undefined ? undefined : units.get(own);
+    if (unit) {
+      unit.paths.push(file.path); // "next to": the note lies beside its folder
+      unit.count++;
+    } else {
+      units.set(file.path, { paths: [file.path], count: 1 });
+    }
+  }
+
+  const list = [...units.values()];
+  const plan = planUnitMoves(list.map((u) => u.paths), from, to, (path) => byPath(app, path) !== null);
+  const groups = plan.groups.map((g) =>
+    g.moves.flatMap((move): FsStep[] => [
+      { kind: "createFolder", to: dirnameOf(move.to) },
+      { kind: "move", from: move.from, to: move.to },
+    ]),
+  );
+  const result = await runSteps(app, groups);
+  const skipped = [...plan.skipped];
+  let moved = 0;
+  plan.groups.forEach((g, i) => {
+    const failure = result.failed.find((f) => groups[i].includes(f.step));
+    if (failure) skipped.push({ from: failure.step.from ?? failure.step.to, reason: failure.reason });
+    else moved += list[g.unit].count;
+  });
+  return { moved, skipped };
 }

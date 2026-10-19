@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import ContactsPlugin from "src/main";
 import { CardFieldSettings } from "src/ui/settings/components/cardFieldSettings";
 import { InsightSettings } from "src/ui/settings/components/insightsSettings";
+import { offerLayoutChange } from "src/ui/modals/layoutChangeModal";
 import { LayoutSettingsSection } from "src/ui/settings/components/layoutSettings";
 import { MasterSetting } from "src/ui/settings/components/masterSettings";
 import { PropertyNamesSettings } from "src/ui/settings/components/propertyNamesSettings";
@@ -30,7 +31,7 @@ export class ContactsSettingTab extends PluginSettingTab {
         <MasterSetting
           app={this.app}
         />
-        <LayoutSettingsSection app={this.app} />
+        <LayoutSettingsSection app={this.app} onLayoutChanged={(_from, to) => offerLayoutChange(this.app, to)} />
         <CardFieldSettings />
         <PropertyNamesSettings app={this.app} />
         <InsightSettings />

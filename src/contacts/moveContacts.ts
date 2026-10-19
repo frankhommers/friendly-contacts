@@ -65,6 +65,35 @@ export function planMoves(
   return plan;
 }
 
+/**
+ * Like `planMoves`, for contacts that consist of several paths (a contact's folder and, next to it, its note): every
+ * path of a unit moves, or none does. `groups[i].unit` is the index in `units`; a unit with a skipped path is skipped
+ * as a whole, the paths that would have moved are reported with the reason.
+ */
+export function planUnitMoves(
+  units: string[][],
+  fromFolder: string,
+  toFolder: string,
+  exists: (path: string) => boolean,
+): { groups: { unit: number; moves: PlannedMove[] }[]; skipped: SkippedMove[] } {
+  const plan = planMoves(units.flat(), fromFolder, toFolder, exists);
+  const moveOf = new Map(plan.moves.map((move) => [move.from, move]));
+  const skipOf = new Map(plan.skipped.map((skip) => [skip.from, skip]));
+  const groups: { unit: number; moves: PlannedMove[] }[] = [];
+  const skipped: SkippedMove[] = [];
+  units.forEach((paths, unit) => {
+    const blocked = paths.find((path) => skipOf.has(path));
+    if (blocked === undefined) {
+      groups.push({ unit, moves: paths.flatMap((path) => moveOf.get(path) ?? []) });
+      return;
+    }
+    for (const path of paths) {
+      skipped.push(skipOf.get(path) ?? { from: path, reason: `kept with ${blocked}: ${skipOf.get(blocked)?.reason}` });
+    }
+  });
+  return { groups, skipped };
+}
+
 /** The Notice text after a move; when nothing moved the contacts folder setting is left alone. */
 export function moveNotice(moved: number, skipped: number, toFolder: string): string {
   const target = toFolder === "" ? "the vault root" : toFolder;
