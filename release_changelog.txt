@@ -1,6 +1,16 @@
-## Friendly Contacts 3.0.0-alpha.6
+## Friendly Contacts 3.0.0-alpha.7
 
-- **Sync button on an open contact note:** a sync icon (two arrows in a circle) at the top right of a contact note starts Sync for that contact. Also as **Sync contact** in the note's ⋯ menu and the file explorer's right-click menu. Only shown on contact notes when an address book is set up.
-- From alpha.5: the Import panel with search per address book.
+**Relationships your phone understands.** Every card keeps its own vCard version, and relationships are written the way that version stores them:
+
+- **vCard 3.0** (iPhone, and Android with DAVx5): the person's name with a label such as Spouse, Partner, Child, Parent, Brother, Sister or Friend, so your phone shows "Ger Verhallen" as a parent instead of a code.
+- **vCard 4.0:** `RELATED` with the name as text.
+- **Reading:** relationships entered on your phone now appear in Obsidian after Sync, with the server side preselected.
+- **Older relationship lines** this plugin wrote (with a `urn:uuid:` code, also when your phone turned that code into a name) are rewritten once. The review screen says "Relationships on this card are rewritten in the form phones understand."
+- **New relationship type `partner`,** next to `spouse` (married or registered partnership).
+- **Anniversaries** are written as the phone expects them on vCard 3.0 cards.
+- **Create Contact** lets you choose the address book.
+- **New cards follow the version most cards in that address book use.** Each address book has a "New contacts: Automatic / vCard 3.0 / vCard 4.0" setting and a "Count card versions" button.
+
+Also since alpha.5: the Import panel with search per address book, and a Sync button on an open contact note.
 
 Back up your vault before installing.
