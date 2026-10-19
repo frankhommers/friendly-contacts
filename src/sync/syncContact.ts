@@ -4,8 +4,8 @@
  * `prepareSync` reads the note (L), the base (B) and the server card (S) and returns either "up to date" or the
  * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists.
  * `applySync` takes the result R built from the user's choices, checks nothing moved underneath, patches the card
- * line by line and writes it with If-Match, then writes the note and stores the base. Nothing from obsidian or
- * src/context: the note, the server and the base store all come in through `deps`.
+ * line by line and writes it with If-Match, then renames the note (when asked), writes it and stores the base.
+ * Nothing from obsidian or src/context: the note, the server and the base store all come in through `deps`.
  */
 
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
@@ -100,10 +100,15 @@ function representable(props: Props, rows: MappingRow[]): Props {
 export async function prepareSync(
   note: NoteIO,
   deps: SyncDeps,
-  where: { sourceId: string; move?: { from: CardLocation; adapter: AdapterInterface; state: SyncState } },
+  where: {
+    sourceId: string;
+    move?: { from: CardLocation; adapter: AdapterInterface; state: SyncState };
+    /** The note's frontmatter as already read (by the book choice); read from the note when absent. */
+    frontmatter?: Record<string, unknown>;
+  },
 ): Promise<PrepareResult> {
   try {
-    const frontmatter = await note.readFrontmatter();
+    const frontmatter = where.frontmatter ?? (await note.readFrontmatter());
     const noteSnapshot = snapshotOf(frontmatter, deps.rows);
     const { props: coerced, warnings } = coerceNoteProps(frontmatter, deps.rows);
     for (const warning of warnings) deps.notify(warning);
@@ -229,17 +234,18 @@ export async function applySync(
       }
     }
 
-    // 3. The note takes the card as it now is, so numbering (`mobile-2` -> `mobile`) and link text are canonical.
-    const noteChanged = await writeNote(note, deps, frontmatter, final, opts.sourceName);
-    for (const warning of warnings) deps.notify(warning);
+    // 3. The note: renamed first, so the relationship mirror sees the property change under the final path.
     if (opts.rename !== undefined) {
-      // The card and the note are written by now: a rename problem is a warning, the base is still stored.
+      // The card is written by now: a rename problem is a warning, and the note and the base are still written.
       try {
         if ((await note.rename(opts.rename)) === 'exists') deps.notify(`Not renamed: a note named "${opts.rename}" already exists.`);
       } catch (e) {
         deps.notify(`Not renamed to "${opts.rename}": ${errorText(e)}`);
       }
     }
+    // It takes the card as it now is, so numbering (`mobile-2` -> `mobile`) and link text are canonical.
+    const noteChanged = await writeNote(note, deps, frontmatter, final, opts.sourceName);
+    for (const warning of warnings) deps.notify(warning);
 
     // 4. The base, under the target source (a move also forgets the old source's base).
     await deps.state.set(prepared.uid, stored);

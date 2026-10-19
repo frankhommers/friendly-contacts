@@ -135,16 +135,23 @@ function memoryNote(frontmatter: Record<string, unknown>) {
     renames: [] as string[],
     /** Basenames that already exist next to the note. */
     taken: new Set<string>(),
+    /** Reads, writes and renames in the order they happened. */
+    log: [] as string[],
   };
   const io: NoteIO = {
-    readFrontmatter: async () => ({ ...note.frontmatter }),
+    readFrontmatter: async () => {
+      note.log.push('read');
+      return { ...note.frontmatter };
+    },
     writeProps: async (set, remove) => {
+      note.log.push(`write:${note.basename}`);
       note.writes.push({ set, remove });
       for (const key of remove) delete note.frontmatter[key];
       Object.assign(note.frontmatter, set);
     },
     rename: async (newBasename) => {
       if (note.taken.has(newBasename)) return 'exists';
+      note.log.push(`rename:${newBasename}`);
       note.renames.push(newBasename);
       note.basename = newBasename;
       return 'renamed';
@@ -388,6 +395,21 @@ describe('prepareSync', () => {
     expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'created' });
     expect(t.cards.get('/frank/contacts/other.vcf')!.raw).toBe(other);
     expect(t.pushes[0].opts).toEqual({ ifNoneMatch: true });
+  });
+});
+
+describe('prepareSync with the frontmatter already read', () => {
+  it('works from the given frontmatter without reading the note; Apply sees a later change as stale', async () => {
+    const v2 = edit(V1, 'TITLE:Baker', 'TITLE:Master baker');
+    const t = setup({ server: v2, base: V1 });
+    const given = { ...t.note.frontmatter };
+    t.note.frontmatter.source = 'Family'; // changed after the book was chosen
+    const prepared = await prepareSync(t.io, t.deps, { sourceId: 'radicale', frontmatter: given });
+    expect(t.note.log).toEqual([]);
+    if (prepared.kind !== 'review') throw new Error(`expected a review, got ${prepared.kind}`);
+    expect(await t.apply(prepared.prepared)).toEqual({ kind: 'stale', reason: 'note' });
+    expect(t.note.writes).toEqual([]);
+    expect(t.note.frontmatter.source).toBe('Family');
   });
 });
 
@@ -723,11 +745,14 @@ describe('applySync', () => {
     const t = setup({ server: v2, base: V1 });
     expect(await t.sync({}, { sourceName: 'Radicale', rename: 'Jan Bakker' })).toMatchObject({ kind: 'done' });
     expect(t.note.renames).toEqual(['Jan Bakker']);
+    // Renamed before the properties are written: the relationship mirror sees the write under the final path.
+    expect(t.note.log.filter((e) => e !== 'read')).toEqual(['rename:Jan Bakker', 'write:Jan Bakker']);
 
     const taken = setup({ server: v2, base: V1 });
     taken.note.taken.add('Jan Bakker');
     expect(await taken.sync({}, { sourceName: 'Radicale', rename: 'Jan Bakker' })).toMatchObject({ kind: 'done' });
     expect(taken.note.renames).toEqual([]);
+    expect(taken.note.log.filter((e) => e !== 'read')).toEqual(['write:Jan de Vries']);
     expect(taken.notices).toEqual([expect.stringContaining('Jan Bakker')]);
     expect(taken.note.frontmatter.title).toBe('Master baker');
     expect(taken.entries.get(UID)?.raw).toBe(v2);
