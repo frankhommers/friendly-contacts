@@ -9,12 +9,20 @@ import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, techn
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
-import { linkTarget, linkWithAlias, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
+import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
-import { contactNameFor, effectiveLayout, ensureFolder, moveContactFolders, newContactLocation, renameContact } from "src/contacts/layoutNotes";
+import {
+  contactLinktext,
+  contactNameFor,
+  effectiveLayout,
+  ensureFolder,
+  moveContactFolders,
+  newContactLocation,
+  renameContact,
+} from "src/contacts/layoutNotes";
 import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import type { Source } from "src/settings/settings";
@@ -75,18 +83,6 @@ export function contactNotes(app: App, folderPath: string = getSettings().contac
     const uid: unknown = frontmatter.uid ?? frontmatter.UID;
     return [{ file, uid: typeof uid === "string" && uid.trim() !== "" ? uid.trim() : undefined }];
   });
-}
-
-/**
- * Link text to a contact note as written into a relationship property, without the brackets. With a fixed note
- * name (`index`) the path alone says nothing, so the contact's name is the alias:
- * `Contacts/Jan de Vries/index|Jan de Vries`. Links are compared by `linkTarget`, which drops the alias.
- */
-function contactLinktext(app: App, file: TFile, fromPath: string, omitMdExtension?: boolean): string {
-  const linktext = app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
-  if (!hasFixedNoteName(effectiveLayout())) return linktext;
-  const name: unknown = app.metadataCache.getFileCache(file)?.frontmatter?.name;
-  return linkWithAlias(linktext, typeof name === "string" && name.trim() !== "" ? name.trim() : contactNameFor(app, file));
 }
 
 /** Relationship mirroring against the vault: contact notes, link resolution and property writes. */

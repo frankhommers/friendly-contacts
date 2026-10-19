@@ -262,3 +262,26 @@ describe("relinking after an import", () => {
     expect(v.processed).toEqual([]);
   });
 });
+
+describe("links to a fixed note name are never short", () => {
+  it("a single index contact still gets the full path", () => {
+    useLayout(indexLayout);
+    const v = fakeApp();
+    v.folder("Contacts");
+    const jan = v.note("Contacts/Jan de Vries/index.md", { name: "Jan de Vries", uid: "jan-uid" });
+    const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: jan as never, uid: "jan-uid" }], []);
+    expect(ctx.uidToName("jan-uid")).toBe("Contacts/Jan de Vries/index|Jan de Vries");
+    expect(obsidianMirrorEnv(v.app).linkTo("Contacts/Jan de Vries/index.md", "Contacts/Piet.md")).toBe(
+      "[[Contacts/Jan de Vries/index|Jan de Vries]]",
+    );
+  });
+
+  it("a one-note contact in a fixed-name layout gets its full path too", () => {
+    useLayout(indexLayout);
+    const v = fakeApp();
+    v.folder("Contacts");
+    const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "a" });
+    const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: anna as never, uid: "a" }], []);
+    expect(ctx.uidToName("a")).toBe("Contacts/Anna");
+  });
+});

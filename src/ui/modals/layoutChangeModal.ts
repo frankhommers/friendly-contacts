@@ -17,6 +17,7 @@ export async function runLayoutCommand(app: App, direction: LayoutDirection): Pr
       ...(result.alreadyDone > 0 ? [`${result.alreadyDone} contacts were in this layout already`] : []),
       ...result.skipped.map((s) => `skipped ${s.path}: ${s.reason}`),
       ...result.kept.map((folder) => `kept ${folder}: other files are in it`),
+      ...(result.relinked > 0 ? [`${result.relinked} relationship links now name the contact's folder`] : []),
     ];
     if (lines.length > 0) console.log("Friendly Contacts: layout change:\n" + lines.join("\n"));
     if (result.moved > 0) insightQueueStore.clear();

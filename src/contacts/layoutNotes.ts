@@ -11,6 +11,7 @@ import {
   DEFAULT_LAYOUT,
   folderNotePath,
   FsStep,
+  hasFixedNoteName,
   isInsideOrAt,
   LayoutSettings,
   newContactFolder,
@@ -19,6 +20,7 @@ import {
   planRename,
   validateLayout,
 } from "src/contacts/layout";
+import { linkTarget, linkWithAlias } from "src/contacts/friendly/relations";
 import { isContactFrontmatter } from "src/contacts/friendlyNotes";
 import { normalizeFolder, planUnitMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings } from "src/context/sharedSettingsContext";
@@ -120,6 +122,109 @@ export function contactNameFor(app: App, file: TFile): string {
   return contactNameOf(file.path, contactsBase(), effectiveLayout(), folderExists(app));
 }
 
+/** The name a link to the contact shows: its `name` property, else its contact name in the layout. */
+export function contactDisplayName(app: App, file: TFile): string {
+  const name: unknown = app.metadataCache.getFileCache(file)?.frontmatter?.name;
+  return typeof name === "string" && name.trim() !== "" ? name.trim() : contactNameFor(app, file);
+}
+
+/**
+ * Link text to a contact note as written into a relationship property, without the brackets. With a fixed note
+ * name (`index`) the file name says nothing and is not unique, so the link is always the full path with the contact's
+ * name as the alias: `Contacts/Jan de Vries/index|Jan de Vries` (never Obsidian's short `index`, which points at
+ * another contact as soon as a second `index.md` exists). Links are compared by `linkTarget`, which drops the alias.
+ */
+export function contactLinktext(app: App, file: TFile, fromPath: string, omitMdExtension?: boolean): string {
+  if (!hasFixedNoteName(effectiveLayout())) return app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
+  return linkWithAlias(file.path.replace(/\.md$/i, ""), contactDisplayName(app, file));
+}
+
+/** A relationship entry that points to a contact about to move, found before the move. */
+interface RecordedLink {
+  note: TFile;
+  property: string;
+  /** Position in a list property; -1 for a single value. */
+  index: number;
+  /** The list's length when recorded: a list that changed meanwhile is left alone. */
+  length: number;
+  target: TFile;
+  /** The alias the entry has, when it is not one of the target's names (the user wrote it). */
+  userAlias?: string;
+}
+
+function relationProperties(): string[] {
+  return getSettings().friendly.mapping.flatMap((row) => (row.kind === "relation" ? [row.property] : []));
+}
+
+function aliasOf(entry: string): string | undefined {
+  return /^\[\[[^|\]]*\|([^\]]+)\]\]$/.exec(entry)?.[1] ?? /^\[([^\]]*)\]\(/.exec(entry)?.[1];
+}
+
+/**
+ * Before contacts move (with a fixed note name): every relationship entry in a contact note that points to one of
+ * `targets`. Recorded up front because after the move Obsidian may have written the ambiguous short form (`[[index]]`).
+ */
+export function recordRelationLinks(app: App, targets: TFile[]): RecordedLink[] {
+  const wanted = new Set(targets);
+  if (wanted.size === 0) return [];
+  const names = new Map(
+    targets.map((t) => {
+      const name: unknown = app.metadataCache.getFileCache(t)?.frontmatter?.name;
+      const known = [contactDisplayName(app, t), contactNameFor(app, t), t.basename, typeof name === "string" ? name : ""];
+      return [t, new Set(known.map((n) => n.trim().toLowerCase()))] as const;
+    }),
+  );
+  const records: RecordedLink[] = [];
+  for (const note of contactsInFolder(app, contactsBase())) {
+    const frontmatter = app.metadataCache.getFileCache(note)?.frontmatter ?? {};
+    for (const property of relationProperties()) {
+      const value: unknown = frontmatter[property];
+      const entries = Array.isArray(value) ? value : [value];
+      entries.forEach((entry: unknown, i) => {
+        if (typeof entry !== "string") return;
+        const linkpath = linkTarget(entry.trim()).trim();
+        const target = linkpath === "" ? null : app.metadataCache.getFirstLinkpathDest(linkpath, note.path);
+        if (!(target instanceof TFile) || !wanted.has(target)) return;
+        const alias = aliasOf(entry.trim())?.trim();
+        const userAlias = alias !== undefined && !names.get(target)?.has(alias.toLowerCase()) ? alias : undefined;
+        records.push({ note, property, index: Array.isArray(value) ? i : -1, length: entries.length, target, userAlias });
+      });
+    }
+  }
+  return records;
+}
+
+/**
+ * After the move: the recorded entries become `[[full/path/index|name]]` with the contact's current name (an alias
+ * the user wrote stays). Only relationship properties of contact notes change. Returns the number of entries changed.
+ */
+export async function rewriteRelationLinks(app: App, records: RecordedLink[]): Promise<number> {
+  let count = 0;
+  for (const note of new Set(records.map((r) => r.note))) {
+    try {
+      await app.fileManager.processFrontMatter(note, (fm: Record<string, unknown>) => {
+        for (const record of records.filter((r) => r.note === note)) {
+          const stem = record.target.path.replace(/\.md$/i, "");
+          const link = `[[${linkWithAlias(stem, record.userAlias ?? contactDisplayName(app, record.target))}]]`;
+          const value = fm[record.property];
+          if (record.index < 0) {
+            if (typeof value !== "string" || value === link) continue;
+            fm[record.property] = link;
+          } else {
+            if (!Array.isArray(value) || value.length !== record.length || typeof value[record.index] !== "string") continue;
+            if (value[record.index] === link) continue;
+            value[record.index] = link;
+          }
+          count++;
+        }
+      });
+    } catch (error) {
+      console.error(`Friendly Contacts: could not update relationship links in ${note.path}`, error);
+    }
+  }
+  return count;
+}
+
 /**
  * Why renaming `file`'s contact to `newName` cannot be done, or undefined when it can: a target exists, or the
  * contact's folder holds other contacts (then it is a category, not this person's folder).
@@ -177,8 +282,13 @@ export async function renameContact(app: App, file: TFile, newName: string): Pro
   if (plan.skipped !== undefined) return "exists";
   const problem = folderMoveProblem(app, file, plan.steps);
   if (problem !== undefined) throw new Error(problem);
-  const result = await runSteps(app, plan.steps);
-  if (result.failed.length > 0) throw new Error(result.failed.map((f) => f.reason).join("; "));
+  const links = hasFixedNoteName(effectiveLayout()) ? recordRelationLinks(app, [file]) : [];
+  try {
+    const result = await runSteps(app, plan.steps);
+    if (result.failed.length > 0) throw new Error(result.failed.map((f) => f.reason).join("; "));
+  } finally {
+    await rewriteRelationLinks(app, links);
+  }
   return "renamed";
 }
 
@@ -267,6 +377,8 @@ export interface LayoutChangeResult {
   kept: string[];
   /** Contacts that were in the wanted layout already (a re-run); not counted as skipped. */
   alreadyDone: number;
+  /** Relationship entries rewritten to full links (fixed note name only). */
+  relinked: number;
 }
 
 function dirnameOf(path: string): string {
@@ -411,7 +523,15 @@ export function layoutChangeCount(app: App, direction: LayoutDirection): number 
 export async function changeLayout(app: App, direction: LayoutDirection): Promise<LayoutChangeResult> {
   const plan = planLayoutChange(app, direction);
   if ("problem" in plan) throw new Error(plan.problem);
+  // With a fixed note name Obsidian writes the moved notes' links as `[[index]]`: record them now, rewrite after.
+  const moving = plan.groups.flat().flatMap((step) => {
+    const node = step.kind === "move" && step.from !== undefined ? byPath(app, step.from) : null;
+    return node instanceof TFile ? [node] : [];
+  });
+  const fixed = direction === "into" && hasFixedNoteName(getSettings().layout ?? DEFAULT_LAYOUT);
+  const links = fixed ? recordRelationLinks(app, moving) : [];
   const result = await runSteps(app, plan.groups);
+  const relinked = await rewriteRelationLinks(app, links);
   const skipped = [...plan.skipped];
   let moved = 0;
   const leftovers: FsStep[][] = [];
@@ -428,7 +548,7 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
     }
   }
   if (leftovers.length > 0) await runSteps(app, leftovers);
-  return { moved, skipped, kept: [...new Set([...plan.kept, ...result.kept])], alreadyDone: plan.alreadyDone };
+  return { moved, skipped, kept: [...new Set([...plan.kept, ...result.kept])], alreadyDone: plan.alreadyDone, relinked };
 }
 
 /** The Notice after a layout command. */
@@ -483,6 +603,7 @@ export async function moveContactFolders(
     return { moved: 0, skipped: list.map((u) => ({ from: u.paths[0], reason })) };
   }
 
+  const links = hasFixedNoteName(s) ? recordRelationLinks(app, files) : [];
   const plan = planUnitMoves(list.map((u) => u.paths), from, to, (path) => byPath(app, path) !== null);
   const groups = plan.groups.map((g) =>
     g.moves.flatMap((move): FsStep[] => [
@@ -513,5 +634,6 @@ export async function moveContactFolders(
       skipped.push({ from: name, reason: `SPLIT: ${detail} (${reason}); put them together by hand` });
     }
   }
+  await rewriteRelationLinks(app, links);
   return { moved, skipped };
 }

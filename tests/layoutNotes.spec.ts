@@ -164,6 +164,38 @@ function fakeApp() {
     parent.children.push(node);
   };
 
+  // Links like Obsidian's metadata cache: by path (without .md), or by file name when that is unique enough.
+  const files = () => [...nodes.values()].filter((n): n is File => n instanceof h.TFile);
+  const stem = (f: File) => f.path.replace(/\.md$/, "");
+  const resolve = (link: string): File | null =>
+    files().find((f) => stem(f) === link || f.path === link) ?? files().find((f) => f.basename === link) ?? null;
+  /** Obsidian's "shortest path when possible". */
+  const linktext = (f: File) => (files().filter((o) => o.basename === f.basename).length === 1 ? f.basename : stem(f));
+  const WIKI = /^\[\[([^|\]#]*)((?:\|[^\]]*)?)\]\]$/;
+  /** Like Obsidian after a rename: links in properties that pointed into the moved files get the new (shortest) link text. */
+  const updateLinks = (moved: Node, apply: () => void) => {
+    const inMoved = (f: File) => f === moved || f.path.startsWith(`${moved.path}/`);
+    const updates: (() => void)[] = [];
+    for (const file of files()) {
+      for (const [key, value] of Object.entries(file.frontmatter ?? {})) {
+        const entries = Array.isArray(value) ? value : [value];
+        entries.forEach((entry: unknown, i: number) => {
+          const m = typeof entry === "string" ? WIKI.exec(entry) : null;
+          const target = m ? resolve(m[1]) : null;
+          if (!m || !target || !inMoved(target)) return;
+          updates.push(() => {
+            const text = `[[${linktext(target)}${m[2]}]]`;
+            const fm = file.frontmatter as Record<string, unknown>;
+            if (Array.isArray(fm[key])) (fm[key] as unknown[])[i] = text;
+            else fm[key] = text;
+          });
+        });
+      }
+    }
+    apply();
+    updates.forEach((u) => u());
+  };
+
   const app = {
     vault: {
       getAbstractFileByPath: (p: string) => nodes.get(p === "/" ? "" : p) ?? null,
@@ -194,14 +226,18 @@ function fakeApp() {
     fileManager: {
       renameFile: async (node: Node, to: string) => {
         const from = node.path;
-        move(node, to);
+        updateLinks(node, () => move(node, to));
         await afterRename?.(node, from);
+      },
+      processFrontMatter: async (file: File, fn: (fm: Record<string, unknown>) => void) => {
+        file.frontmatter ??= {};
+        fn(file.frontmatter);
       },
     },
     metadataCache: {
       getFileCache: (file: File) => (file.frontmatter ? { frontmatter: file.frontmatter } : null),
-      getFirstLinkpathDest: () => null,
-      fileToLinktext: () => "",
+      getFirstLinkpathDest: (link: string) => resolve(link),
+      fileToLinktext: (file: File) => linktext(file),
     },
     workspace: {
       getActiveFile: () => active,
@@ -715,10 +751,10 @@ describe("layout commands", () => {
     v.note("Contacts/Jan.md");
     await changeLayout(v.app, "into");
     const again = await changeLayout(v.app, "into");
-    expect(again).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1 });
+    expect(again).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1, relinked: 0 });
     useLayout({ ...inside, layout: "note" });
     await changeLayout(v.app, "out");
-    expect(await changeLayout(v.app, "out")).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1 });
+    expect(await changeLayout(v.app, "out")).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1, relinked: 0 });
   });
 
   it("take out in next to layout counts removing an empty sibling folder", async () => {
@@ -907,5 +943,66 @@ describe("move contacts", () => {
     const result = await moveContacts(v.app, "Areas", "Contacts");
     expect(result).toEqual({ moved: 2, skipped: [] });
     expect(v.paths()).toEqual(["Areas", "Areas/Family", "Areas/Family/Sem.md", "Areas/Jan.md", "Contacts", "Contacts/Family"]);
+  });
+});
+
+describe("links with a fixed note name", () => {
+  it("into folders rewrites relationship links to the full path with the contact's name", async () => {
+    useLayout(insideIndex);
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan.md", { name: "Jan", uid: "jan", friends: ["[[Sem]]"] });
+    const sem = v.note("Contacts/Sem.md", { name: "Sem de Vries", uid: "sem", parents: "[[Jan]]" });
+    const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "anna", friends: ["[[Sem|buddy]]", "[[Piet]]"], title: "[[Sem]]" });
+
+    const result = await changeLayout(v.app, "into");
+
+    expect(result.moved).toBe(3);
+    expect(v.paths()).toContain("Contacts/Sem/index.md");
+    expect(jan.frontmatter?.friends).toEqual(["[[Contacts/Sem/index|Sem de Vries]]"]);
+    expect(sem.frontmatter?.parents).toBe("[[Contacts/Jan/index|Jan]]");
+    // an alias the user wrote stays; entries pointing to no note and other properties are left alone
+    expect(anna.frontmatter?.friends).toEqual(["[[Contacts/Sem/index|buddy]]", "[[Piet]]"]);
+    // not a relationship property: only Obsidian's own link update touched it
+    expect(anna.frontmatter?.title).toBe("[[Contacts/Sem/index]]");
+    // Anna's entry was already right after Obsidian's own update (Sem moved last, so its path was not unique)
+    expect(result.relinked).toBe(2);
+  });
+
+  it("rename refreshes the name in links to the contact", async () => {
+    useLayout(insideIndex);
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan/index.md", { name: "Johan", uid: "jan" });
+    const anna = v.note("Contacts/Anna/index.md", { name: "Anna", uid: "anna", friends: ["[[Contacts/Jan/index|Jan]]"], parents: "[[Contacts/Jan/index|Dad]]" });
+    v.note("Contacts/Sem/index.md", { name: "Sem", uid: "sem", friends: ["[[Contacts/Jan/index]]"] });
+
+    expect(await renameContact(v.app, jan as never, "Johan")).toBe("renamed");
+
+    expect(v.paths()).toContain("Contacts/Johan/index.md");
+    expect(anna.frontmatter?.friends).toEqual(["[[Contacts/Johan/index|Johan]]"]);
+    expect(anna.frontmatter?.parents).toBe("[[Contacts/Johan/index|Dad]]");
+    expect((v.nodes.get("Contacts/Sem/index.md") as File).frontmatter?.friends).toEqual(["[[Contacts/Johan/index|Johan]]"]);
+  });
+
+  it("moving the contacts keeps links full", async () => {
+    useLayout(insideIndex);
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan/index.md", { name: "Jan", uid: "jan" });
+    const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "anna", friends: ["[[Contacts/Jan/index|Jan]]"] });
+
+    await moveContacts(v.app, "Areas", "Contacts");
+
+    expect(anna.path).toBe("Areas/Anna.md");
+    expect(anna.frontmatter?.friends).toEqual(["[[Areas/Jan/index|Jan]]"]);
+  });
+
+  it("names in links stay as they are when the note is named for the contact", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan.md", { name: "Jan", uid: "jan", friends: ["[[Sem]]"] });
+    v.note("Contacts/Sem.md", { name: "Sem", uid: "sem" });
+    const result = await changeLayout(v.app, "into");
+    expect(jan.frontmatter?.friends).toEqual(["[[Sem]]"]);
+    expect(result.relinked).toBe(0);
   });
 });
