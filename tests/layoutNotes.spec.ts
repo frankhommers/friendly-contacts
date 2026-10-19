@@ -562,10 +562,11 @@ describe("layout commands", () => {
 
     expect(result.moved).toBe(2);
     expect(result.kept).toEqual(["Contacts/Jan"]);
-    expect(result.skipped).toEqual([{ path: "Contacts/Anna.md", reason: "not in its own folder" }]);
+    expect(result.skipped).toEqual([]);
+    expect(result.alreadyDone).toBe(1);
     expect(v.paths()).toEqual(["Contacts", "Contacts/Anna.md", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Poem.md", "Contacts/Sem.md"]);
     expect((v.nodes.get("Contacts/Jan/Poem.md") as File).content).toBe("roses");
-    expect(layoutNotice(result)).toBe("Moved 2, skipped 1, kept 1 folders with other files (see console)");
+    expect(layoutNotice(result)).toBe("Moved 2, skipped 0, kept 1 folders with other files (see console)");
   });
 
   it("take out leaves a folder that gained a file after planning, and does not count it as failed", async () => {
@@ -636,7 +637,8 @@ describe("layout commands", () => {
 
     expect(result.moved).toBe(2);
     expect(result.kept).toEqual([]);
-    expect(result.skipped).toEqual([{ path: "Contacts/Jan/Jan.md", reason: "already in its folder" }]);
+    expect(result.skipped).toEqual([]);
+    expect(result.alreadyDone).toBe(1);
     expect(v.paths()).toEqual([
       "Contacts",
       "Contacts/Family",
@@ -647,7 +649,7 @@ describe("layout commands", () => {
       "Contacts/Sem",
       "Contacts/Sem/Sem.md",
     ]);
-    expect(layoutNotice(result)).toBe("Moved 2, skipped 1, kept 0 folders with other files (see console)");
+    expect(layoutNotice(result)).toBe("Moved 2, skipped 0, kept 0 folders with other files (see console)");
   });
 
   it("into folders: a failing contact does not stop the others, and a taken folder is skipped", async () => {
@@ -674,6 +676,62 @@ describe("layout commands", () => {
     expect(v.nodes.has("Contacts/Jan.md")).toBe(true);
   });
 
+  it("into folders: a failed contact leaves no empty folder, and a re-run finishes it", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    const rename = (v.app as unknown as { fileManager: { renameFile: (n: unknown, to: string) => Promise<void> } }).fileManager;
+    const renameFile = rename.renameFile;
+    rename.renameFile = async () => {
+      throw new Error("locked");
+    };
+    const failed = await changeLayout(v.app, "into");
+    expect(failed.moved).toBe(0);
+    expect(failed.skipped).toEqual([{ path: "Contacts/Jan.md", reason: "locked" }]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md"]);
+
+    rename.renameFile = renameFile;
+    const again = await changeLayout(v.app, "into");
+    expect(again.moved).toBe(1);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md"]);
+  });
+
+  it("into folders uses an existing empty folder but never one with files", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    v.folder("Contacts/Jan");
+    v.note("Contacts/Sem.md");
+    v.note("Contacts/Sem/Poem.md", null);
+    const result = await changeLayout(v.app, "into");
+    expect(result.moved).toBe(1);
+    expect(result.skipped).toEqual([{ path: "Contacts/Sem.md", reason: "folder exists: Contacts/Sem" }]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md", "Contacts/Sem", "Contacts/Sem.md", "Contacts/Sem/Poem.md"]);
+  });
+
+  it("running a command again moves nothing and skips nothing", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    await changeLayout(v.app, "into");
+    const again = await changeLayout(v.app, "into");
+    expect(again).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1 });
+    useLayout({ ...inside, layout: "note" });
+    await changeLayout(v.app, "out");
+    expect(await changeLayout(v.app, "out")).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1 });
+  });
+
+  it("take out in next to layout counts removing an empty sibling folder", async () => {
+    useLayout({ ...next, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    v.folder("Contacts/Jan");
+    expect(layoutChangeCount(v.app, "out")).toBe(1);
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(1);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md"]);
+  });
+
   it("into folders leaves a second contact note inside someone's folder alone", async () => {
     useLayout(inside);
     const v = fakeApp();
@@ -681,7 +739,8 @@ describe("layout commands", () => {
     v.note("Contacts/Jan/Sem.md");
     const result = await changeLayout(v.app, "into");
     expect(result.moved).toBe(0);
-    expect(result.skipped.map((s) => s.path).sort()).toEqual(["Contacts/Jan/Jan.md", "Contacts/Jan/Sem.md"]);
+    expect(result.alreadyDone).toBe(1);
+    expect(result.skipped.map((s) => s.path)).toEqual(["Contacts/Jan/Sem.md"]);
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md", "Contacts/Jan/Sem.md"]);
   });
 
@@ -759,7 +818,7 @@ describe("move contacts", () => {
     const result = await moveContacts(v.app, "Areas", "Contacts");
 
     expect(result.moved).toBe(1);
-    expect(result.skipped.map((s) => s.from).sort()).toEqual(["Contacts/Sem", "Contacts/Sem.md"]);
+    expect(result.skipped.map((s) => s.from)).toEqual(["Contacts/Sem"]);
     expect(v.paths()).toEqual([
       "Areas",
       "Areas/Jan",
@@ -781,6 +840,63 @@ describe("move contacts", () => {
     expect(result.moved).toBe(0);
     expect(result.skipped.map((s) => s.from)).toEqual(["Contacts/Jan"]);
     expect(v.paths()).toEqual(["Areas", "Areas/Jan", "Areas/Jan/Other.md", "Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md"]);
+  });
+
+  it("refuses moving into a contact's folder", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Sem/Sem.md");
+    v.note("Contacts/Anna.md");
+    const before = v.paths();
+    for (const target of ["Contacts/Jan", "Contacts/Jan/Photos"]) {
+      v.folder(target);
+      const result = await moveContacts(v.app, target, "Contacts");
+      expect(result.moved).toBe(0);
+      expect(result.skipped).toHaveLength(3);
+      expect(result.skipped[0].reason).toBe("target is inside a contact's folder: Contacts/Jan");
+    }
+    expect(v.paths().filter((p) => !p.startsWith("Contacts/Jan/Photos"))).toEqual(before);
+  });
+
+  it("next to: note move fails, folder is moved back", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    v.folder("Areas");
+    const note = v.note("Contacts/Jan de Vries.md");
+    v.note("Contacts/Jan de Vries/Poem.md", null);
+    const rename = (v.app as unknown as { fileManager: { renameFile: (n: unknown, to: string) => Promise<void> } }).fileManager;
+    const renameFile = rename.renameFile;
+    rename.renameFile = async (node, to) => {
+      if (node === note) throw new Error("locked");
+      await renameFile(node, to);
+    };
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result.moved).toBe(0);
+    expect(result.skipped).toEqual([{ from: "Contacts/Jan de Vries", reason: "locked" }]);
+    expect(v.paths()).toEqual(["Areas", "Contacts", "Contacts/Jan de Vries", "Contacts/Jan de Vries.md", "Contacts/Jan de Vries/Poem.md"]);
+  });
+
+  it("next to: when the folder cannot be moved back either, the split is reported", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    v.folder("Areas");
+    const note = v.note("Contacts/Jan de Vries.md");
+    v.note("Contacts/Jan de Vries/Poem.md", null);
+    const rename = (v.app as unknown as { fileManager: { renameFile: (n: unknown, to: string) => Promise<void> } }).fileManager;
+    const renameFile = rename.renameFile;
+    rename.renameFile = async (node, to) => {
+      if (node === note || to === "Contacts/Jan de Vries") throw new Error("locked");
+      await renameFile(node, to);
+    };
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result.moved).toBe(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].reason).toBe(
+      "SPLIT: Contacts/Jan de Vries moved to Areas/Jan de Vries but Contacts/Jan de Vries.md stayed (locked); put them together by hand",
+    );
+    expect(v.paths()).toContain("Areas/Jan de Vries/Poem.md");
+    expect(v.paths()).toContain("Contacts/Jan de Vries.md");
   });
 
   it("one-note layout moves notes one by one as before", async () => {

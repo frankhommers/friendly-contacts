@@ -14,6 +14,7 @@ export async function runLayoutCommand(app: App, direction: LayoutDirection): Pr
   try {
     const result = await changeLayout(app, direction);
     const lines = [
+      ...(result.alreadyDone > 0 ? [`${result.alreadyDone} contacts were in this layout already`] : []),
       ...result.skipped.map((s) => `skipped ${s.path}: ${s.reason}`),
       ...result.kept.map((folder) => `kept ${folder}: other files are in it`),
     ];

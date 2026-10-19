@@ -265,6 +265,8 @@ export interface LayoutChangeResult {
   skipped: { path: string; reason: string }[];
   /** Folders that stay because other files are in them. */
   kept: string[];
+  /** Contacts that were in the wanted layout already (a re-run); not counted as skipped. */
+  alreadyDone: number;
 }
 
 function dirnameOf(path: string): string {
@@ -314,6 +316,7 @@ interface LayoutPlan {
   groups: FsStep[][];
   skipped: { path: string; reason: string }[];
   kept: string[];
+  alreadyDone: number;
 }
 
 /**
@@ -332,31 +335,42 @@ function planLayoutChange(app: App, direction: LayoutDirection): LayoutPlan | { 
   const skipped: LayoutPlan["skipped"] = [];
   const notes: { path: string; name: string }[] = [];
 
+  let alreadyDone = 0;
   for (const file of files) {
     const folder = contactFolderOf(file.path, s, isFolder);
-    if (direction === "into" && folder === undefined) {
+    if (direction === "into") {
+      if (folder !== undefined) {
+        alreadyDone++;
+        continue;
+      }
       const inside = insideContactFolder(app, file.path, s, base);
       if (inside !== undefined) {
         skipped.push({ path: file.path, reason: `inside the folder of another contact: ${inside}` });
         continue;
       }
-    }
-    // The contacts folder, or a folder holding it, is no contact's folder: its note stays where it is.
-    if (direction === "out" && folder !== undefined && !strictlyInside(folder, base)) {
-      skipped.push({ path: file.path, reason: "not in its own folder below the contacts folder" });
+    } else if (folder === undefined || !strictlyInside(folder, base)) {
+      // Not in a folder of its own (the contacts folder's own note counts as not): nothing to take out.
+      alreadyDone++;
       continue;
     }
     notes.push({ path: file.path, name: contactNameOf(file.path, base, s, isFolder) });
   }
 
   if (direction === "into") {
-    const plan = planIntoFolders(notes, s, exists);
+    const isEmptyFolder = (path: string) => {
+      const node = byPath(app, path);
+      return node instanceof TFolder && node.children.length === 0;
+    };
+    const plan = planIntoFolders(notes, s, exists, isEmptyFolder);
     const groups: FsStep[][] = [];
     for (const step of plan.steps) {
-      if (step.kind === "createFolder") groups.push([step]);
-      else groups[groups.length - 1].push(step);
+      const last = groups[groups.length - 1];
+      // A move belongs to the folder step right before it; with a reused empty folder it starts its own group.
+      const last2 = last?.[last.length - 1];
+      if (step.kind === "move" && last2?.kind === "createFolder" && last.length === 1 && last2.to === dirnameOf(step.to)) last.push(step);
+      else groups.push([step]);
     }
-    return { groups, skipped: [...skipped, ...plan.skipped], kept: [] };
+    return { groups, skipped: [...skipped, ...plan.skipped], kept: [], alreadyDone };
   }
 
   const plan = planOutOfFolders(notes, s, exists, (folder) => descendants(app, folder));
@@ -374,7 +388,7 @@ function planLayoutChange(app: App, direction: LayoutDirection): LayoutPlan | { 
       else groups.push([step]);
     }
   }
-  return { groups, skipped: [...skipped, ...plan.skipped], kept: plan.kept };
+  return { groups, skipped: [...skipped, ...plan.skipped], kept: plan.kept, alreadyDone };
 }
 
 /** Why the command cannot run, or undefined. */
@@ -400,16 +414,21 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
   const result = await runSteps(app, plan.groups);
   const skipped = [...plan.skipped];
   let moved = 0;
+  const leftovers: FsStep[][] = [];
   for (const group of plan.groups) {
     const failure = result.failed.find((f) => group.includes(f.step));
     if (failure) {
       // The note's path: the source of the group's move (a group of only a folder step names the folder).
       skipped.push({ path: group.find((step) => step.from !== undefined)?.from ?? group[0].to, reason: failure.reason });
+      // A folder this run created for the contact stays behind empty: remove it, so a re-run is not blocked.
+      const made = group.filter((step) => step.kind === "createFolder" && !result.failed.some((f) => f.step === step));
+      leftovers.push(...made.map((step): FsStep[] => [{ kind: "deleteFolderIfEmpty", to: step.to }]));
     } else if (!group.every((step) => step.kind === "deleteFolderIfEmpty" && result.kept.includes(step.to))) {
       moved++;
     }
   }
-  return { moved, skipped, kept: [...new Set([...plan.kept, ...result.kept])] };
+  if (leftovers.length > 0) await runSteps(app, leftovers);
+  return { moved, skipped, kept: [...new Set([...plan.kept, ...result.kept])], alreadyDone: plan.alreadyDone };
 }
 
 /** The Notice after a layout command. */
@@ -457,6 +476,13 @@ export async function moveContactFolders(
   }
 
   const list = [...units.values()];
+  // Never into a contact's own folder (or note): that would nest the contacts in each other, or in themselves.
+  const blocking = list.flatMap((u) => u.paths).find((path) => isInsideOrAt(to, path));
+  if (blocking !== undefined) {
+    const reason = `target is inside a contact's folder: ${blocking}`;
+    return { moved: 0, skipped: list.map((u) => ({ from: u.paths[0], reason })) };
+  }
+
   const plan = planUnitMoves(list.map((u) => u.paths), from, to, (path) => byPath(app, path) !== null);
   const groups = plan.groups.map((g) =>
     g.moves.flatMap((move): FsStep[] => [
@@ -467,10 +493,25 @@ export async function moveContactFolders(
   const result = await runSteps(app, groups);
   const skipped = [...plan.skipped];
   let moved = 0;
-  plan.groups.forEach((g, i) => {
-    const failure = result.failed.find((f) => groups[i].includes(f.step));
-    if (failure) skipped.push({ from: failure.step.from ?? failure.step.to, reason: failure.reason });
-    else moved += list[g.unit].count;
-  });
+  for (const [i, g] of plan.groups.entries()) {
+    const failedAt = groups[i].findIndex((step) => result.failed.some((f) => f.step === step));
+    if (failedAt < 0) {
+      moved += list[g.unit].count;
+      continue;
+    }
+    const reason = result.failed.find((f) => f.step === groups[i][failedAt])?.reason as string;
+    // A contact must not end up split: put back what already moved (best effort).
+    const done = groups[i].slice(0, failedAt).filter((step) => step.kind === "move");
+    await runSteps(app, [[...done].reverse().map((step): FsStep => ({ kind: "move", from: step.to, to: step.from as string }))]);
+    const stuck = done.filter((step) => byPath(app, step.from as string) === null && byPath(app, step.to) !== null);
+    const name = list[g.unit].paths[0];
+    if (stuck.length === 0) {
+      skipped.push({ from: name, reason });
+    } else {
+      const left = g.moves.filter((m) => !done.some((step) => step.from === m.from));
+      const detail = `${stuck.map((step) => `${step.from} moved to ${step.to}`).join(", ")} but ${left.map((m) => `${m.from} stayed`).join(", ")}`;
+      skipped.push({ from: name, reason: `SPLIT: ${detail} (${reason}); put them together by hand` });
+    }
+  }
   return { moved, skipped };
 }

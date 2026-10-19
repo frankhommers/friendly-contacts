@@ -73,9 +73,8 @@ describe("planUnitMoves", () => {
   it("skips the whole unit when one of its targets exists", () => {
     const plan = planUnitMoves([["People/Sem", "People/Sem.md"], ["People/Jan"]], "People", "Areas", (p) => p === "Areas/Sem.md");
     expect(plan.groups).toEqual([{ unit: 1, moves: [{ from: "People/Jan", to: "Areas/Jan" }] }]);
-    expect(plan.skipped.map((s) => s.from)).toEqual(["People/Sem", "People/Sem.md"]);
-    expect(plan.skipped[0].reason).toContain("People/Sem.md");
-    expect(plan.skipped[1].reason).toContain("exists");
+    // One entry per contact.
+    expect(plan.skipped).toEqual([{ from: "People/Sem", reason: "People/Sem.md: target exists: Areas/Sem.md" }]);
   });
 });
 

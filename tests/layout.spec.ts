@@ -208,6 +208,12 @@ describe("planIntoFolders", () => {
     expect(plan.skipped).toHaveLength(1);
   });
 
+  it("an existing empty folder is used as it is", () => {
+    const plan = planIntoFolders([{ path: "Contacts/Jan.md", name: "Jan" }], inside, existing("Contacts/Jan"), () => true);
+    expect(plan.steps).toEqual([{ kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan/Jan.md" }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
   it("a note already in its folder is skipped", () => {
     const plan = planIntoFolders([{ path: "Contacts/Jan/Jan.md", name: "Jan" }], inside, existing("Contacts/Jan"));
     expect(plan.steps).toEqual([]);

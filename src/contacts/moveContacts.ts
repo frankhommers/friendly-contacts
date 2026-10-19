@@ -87,9 +87,9 @@ export function planUnitMoves(
       groups.push({ unit, moves: paths.flatMap((path) => moveOf.get(path) ?? []) });
       return;
     }
-    for (const path of paths) {
-      skipped.push(skipOf.get(path) ?? { from: path, reason: `kept with ${blocked}: ${skipOf.get(blocked)?.reason}` });
-    }
+    // One entry per unit (per contact), named by its first path.
+    const reason = skipOf.get(blocked)?.reason;
+    skipped.push({ from: paths[0], reason: blocked === paths[0] ? (reason as string) : `${blocked}: ${reason}` });
   });
   return { groups, skipped };
 }

@@ -235,11 +235,15 @@ export function planRename(
   return { steps };
 }
 
-/** For notes in one-note layout: create each contact's folder and put the note in the layout. */
+/**
+ * For notes in one-note layout: create each contact's folder and put the note in the layout. A folder that exists
+ * and is empty (`isEmptyFolder`, e.g. left by an earlier run that failed half way) is used as it is.
+ */
 export function planIntoFolders(
   notes: { path: string; name: string }[],
   s: LayoutSettings,
   exists: (path: string) => boolean,
+  isEmptyFolder: (path: string) => boolean = () => false,
 ): { steps: FsStep[]; skipped: { path: string; reason: string }[] } {
   const steps: FsStep[] = [];
   const skipped: { path: string; reason: string }[] = [];
@@ -259,7 +263,8 @@ export function planIntoFolders(
       skipped.push({ path: note.path, reason: `same folder as ${other}: ${folder}` });
       continue;
     }
-    if (exists(folder)) {
+    const reuse = exists(folder) && isEmptyFolder(folder);
+    if (exists(folder) && !reuse) {
       skipped.push({ path: note.path, reason: `folder exists: ${folder}` });
       continue;
     }
@@ -268,7 +273,7 @@ export function planIntoFolders(
       continue;
     }
     claimed.set(folder.toLowerCase(), note.path);
-    steps.push({ kind: "createFolder", to: folder });
+    if (!reuse) steps.push({ kind: "createFolder", to: folder });
     if (paths.note !== note.path) steps.push({ kind: "move", from: note.path, to: paths.note });
   }
   return { steps, skipped };
