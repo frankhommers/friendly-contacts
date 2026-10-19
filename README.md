@@ -48,6 +48,7 @@ To try the test releases:
       + [📞 Quick Actions](#-quick-actions)
       + [➕ Create a New Contact](#-create-a-new-contact)
       + [📂 A folder per contact](#-a-folder-per-contact)
+      + [👪 Relationships in the sidebar](#-relationships-in-the-sidebar)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
    * [📖 Understanding the vCard (VCF) Format](#-understanding-the-vcard-vcf-format)
    * [📄 Example Contact Note (Foo Bar)](#-example-contact-note-foo-bar)
@@ -186,6 +187,9 @@ Open the contacts sidebar view.
 Adds any missing default fields (as defined in **Settings → Default Contact Fields**) to the currently open contact file.  
 Existing fields are not overwritten.
 
+4) **Friendly Contacts: Add relationship…**  
+With a contact note open: pick another contact, then the relationship (see [Relationships in the sidebar](#-relationships-in-the-sidebar)).
+
 ---
 
 <!-- TOC --><a name="-create-a-new-contact"></a>
@@ -223,7 +227,7 @@ Contacts/
 - **Layout**: *One note per contact* or *Folder per contact*. New contacts follow this. Existing contacts stay where they are until you move them (see the commands below). When you change the layout and there are contacts to move, the plugin asks whether to do it now ("Put N contacts in their own folder?" or "Take N contacts out of their folders?"). You can say **Not now** and use the command later.
 - **Folder note name**: the file name of the folder note, without `.md`. `{{name}}` stands for the contact's name, so the default `{{name}}` gives `Jan de Vries/Jan de Vries.md`. You can also type a fixed name such as `index`, then every contact's note is called `index.md` (`Jan de Vries/index.md`) and the folder carries the name. A name that cannot work (empty, ending in `.md`, a character that is not allowed in file names, starting with a dot or ending in a dot or space, any `{{...}}` other than `{{name}}`) is shown with the reason and is not saved until you fix it. While the folder settings are not usable, the plugin works as one note per contact and shows a notice that says why.
 - **Fixed-name hint**: with a fixed name, the settings page adds "Obsidian's graph and tabs will show every contact as "index"." Obsidian shows file names there, and they are all the same. (Links to the contact get the contact's name as a label, see below.)
-- **Contacts in folders made with other settings**: when you change the folder note name or location while contacts are in folders (for example from `{{name}}` to `index`), the settings page says "N contacts are in folders made with other settings." A folder counts as a contact's folder when it is named for a contact note in it (its `name` property or its file name), whatever the settings. Such contacts are not put in folders again, new contacts are not created in their folders, **Move contacts to folder…** moves them with their whole folder and a rename through Sync renames their folder too. Their note keeps its naming: `Jan/Jan.md` becomes `Johan/Johan.md`, `Jan/index.md` becomes `Johan/index.md`. All this also holds when you went back to *One note per contact* without taking the contacts out. To match the new settings, take the contacts out and put them in folders again.
+- **Contacts in folders made with other settings**: when you change the folder note name or location while contacts are in folders (for example from `{{name}}` to `index`), the settings page says "N contacts are in folders made with other settings." A folder counts as a contact's folder when it is named for a contact note in it (its `name` property or its file name), whatever the settings. Such contacts are not put in folders again, new contacts are not created in their folders, **Move contacts to folder…** moves them with their whole folder and a rename through Sync renames their folder too. Their note keeps its naming: `Jan/Jan.md` becomes `Johan/Johan.md`, `Jan/index.md` becomes `Johan/index.md`. All this also holds when you went back to *One note per contact* without taking the contacts out. One side effect: in *One note per contact* with *Next to the folder* still stored, a contact note with a folder of the same name beside it (`Contacts/Jan.md` and `Contacts/Jan/`) is treated as owning that folder, even if you made the folder for something else, so **Move contacts to folder…** moves it along and a rename through Sync renames it. To match the new settings, take the contacts out and put them in folders again.
 - **Folder note location**: *Inside the folder* (`Contacts/Jan de Vries/Jan de Vries.md`) or *Next to the folder* (the note is beside its folder: `Contacts/Jan de Vries.md` and `Contacts/Jan de Vries/`). *Next to the folder* needs `{{name}}` in the folder note name, otherwise every contact would get the same file name.
 - **Copy from Folder Notes**: when the Folder Notes plugin is installed, this button copies its folder note name (its `{{folder_name}}` becomes `{{name}}`) and location, so the two plugins agree. If Folder Notes is set up differently from this plugin, the settings page says "Folder Notes uses different settings." Copying is refused, with a notice that says why, when Folder Notes uses something that cannot be copied, for example a folder note type other than `.md`, or folder notes stored in the vault folder.
 
@@ -259,6 +263,23 @@ A link to `index` says nothing about whom it is, and Obsidian's short form `[[in
 When Obsidian updates links after a move it may write the short form again (with its default link format, "Shortest path when possible"). So when you put contacts in folders, rename a contact through Sync or move the contacts folder, the plugin notes beforehand which relationship entries point to those contacts and afterwards writes them as full paths again. A label that was the contact's old name gets the new one, also when the name was changed on the server; a label you wrote yourself is kept. Taking contacts out of their folders moves each note twice (via its temporary name), so there too the plugin notes the entries beforehand and afterwards makes every entry that no longer opens the contact point to its note again. Only relationship properties of contact notes are changed.
 
 When you import a contact from the address book, relationships in other notes that pointed to nobody but name this contact become links to the new note (a label you wrote yourself is kept). **Import All** does this once at the end, for all the contacts it imported. This only happens with a fixed note name.
+
+---
+
+<!-- TOC --><a name="-relationships-in-the-sidebar"></a>
+### 👪 Relationships in the sidebar
+
+Each contact in the sidebar shows its relationships below its details, one line per relationship property (`spouse`, `children`, `friends`, …). A contact without relationships only shows a small **+ Relationship** button.
+
+- **Click a name** to open that contact's note. A name in grey points to nobody: there is no contact note for it (yet).
+- **+ Relationship** (or the command **Add relationship…** with a contact note open) first asks for the other contact, then for the relationship (`children (child)`, `friends (friend)`, …). Contacts with the same name show their folder in the list. The link is written the way the plugin writes all relationship links (see [A folder per contact](#-a-folder-per-contact)). If that contact is already listed there, a notice says so and nothing changes. A single relationship such as `spouse` is replaced after you confirm ("Replace Anna with Lot as spouse?"). A grey entry with the same name as the contact you pick, or with that name as its label, is turned into the link instead of listing the person twice.
+- **×** removes the person from that relationship, after you confirm. If the write fails, a notice says so.
+- **Import** appears next to a grey name when Sync is on and exactly one card on the server has that name, and that card has no note yet. It creates the note, as **Import contact from server…** does.
+- **Link** appears instead of Import when that card already has a note (for example the entry says `[[Sem de Vries]]` while the note is `Sem.md`). It turns the grey entry into a link to that note, in its place.
+
+The other side follows when relationships are mirrored (**Mirror relationships on this device**): adding Sem to Jan's `children` gives Sem `parents: [[Jan]]`, and removing it takes that away again. A single relationship on the other side is never overwritten: if Lot already has Piet as `spouse`, making Lot Jan's spouse leaves Lot's `spouse` as it is, and the plugin tells you so.
+
+If the server cannot be read, the sidebar does not ask again for a minute.
 
 ---
 

@@ -245,5 +245,22 @@ book's name; below that is written as **<book>**.
 - [ ] **Remove a book:** try to remove the default book: refused ("Make another address book the default first").
       Try to remove a book that notes use: refused with the number of contacts. Remove a book no note uses: it goes
       and its `sync-state/<id>/` folder is deleted.
+- [ ] **Relationships in the sidebar:** with mirroring on, open the sidebar. A contact without relationships shows
+      only a small **+ Relationship** button. Click it on Jan, pick Sem, then `children (child)`: Jan's card shows
+      `children` with Sem, Sem's card shows `parents` with Jan (and so do the notes). Click Sem's name: Sem's note
+      opens. Add Sem again under `children`: a notice says Sem is already listed. Give Jan a `spouse`, then add another
+      contact as `spouse`: "Replace <old> with <new> as spouse?"; when the new one already has a spouse of their own,
+      the dialog adds that their `spouse` stays as it is. Click **×** next to Sem and confirm: the entry goes from
+      Jan, and `parents` from Sem. With two contacts of the same name, the picker shows each one's folder. The
+      command *Add relationship…* with Jan's note open does the same; with another note open it says "Open a contact
+      note first."
+- [ ] **Relationships in the sidebar: Import and Link:** add `friends: ['[[Anna]]']` to Jan by hand, where Anna is a
+      card on the server without a note. Anna is grey with an **Import** button: click it, the note is created and
+      Anna is no longer grey. Rename Anna's note file to `Anna B.md` (keep `name` and `uid`) and add
+      `colleagues: ['[[Sem]]', '[[Anna]]']` to Jan: Anna is grey with **Link**, not Import. Click **Link**: the
+      entry becomes a link to `Anna B.md`, still second in the list, and no second Anna note appears. Add
+      `family: ['[[Anna]]']` to Jan and pick Anna via **+ Relationship** → `family (kin)`: the grey entry becomes the
+      link, without a question, instead of a second entry. Stop the server: grey names show no button, and there is
+      one "Could not read <book>" notice, not one per card.
 - [ ] **Mirror relationships on this device:** turn it off, then reload the plugin. Adding a child no longer
       touches the other note.
