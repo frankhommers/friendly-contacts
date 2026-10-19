@@ -24,7 +24,7 @@ function isInside(path: string, folder: string): boolean {
   return folder === "" || path.startsWith(folder + "/");
 }
 
-function join(folder: string, relative: string): string {
+export function join(folder: string, relative: string): string {
   return folder === "" ? relative : `${folder}/${relative}`;
 }
 
