@@ -1,5 +1,6 @@
-## Friendly Contacts 3.0.0-alpha.3
+## Friendly Contacts 3.0.0-alpha.4
 
-Fix: the settings screen showed "[object DocumentFragment]" under "Contacts folder location" and "Default hashtags" (and the "Field blocked" notice could show the same). The descriptions are now built in the settings window's own document.
+- The address book settings are clearer: each address book is a framed block with its name, sync status and Enable/Disable at the top; "Default for new contacts" is a switch with an explanation; removing an address book is its own row (not possible for the default one, with the reason shown).
+- From alpha.3: the settings no longer show "[object DocumentFragment]".
 
-Everything else is as in 3.0.0-alpha.2: a folder per contact, relationships in the sidebar, the people graph, several address books, Sync with a review screen, and birthdays without a year. Back up your vault before installing.
+Everything else is as in 3.0.0-alpha.2. Back up your vault before installing.
