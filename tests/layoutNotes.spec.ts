@@ -88,6 +88,7 @@ import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { createContactFile } from "src/file/file";
 import {
   changeLayout,
+  contactsInOtherFolders,
   layoutChangeCount,
   layoutNotice,
   newContactLocation,
@@ -354,6 +355,22 @@ describe("new contacts", () => {
     expect(newContactLocation(v.app, "Jan")).toEqual({ folder: "Contacts/Jan", note: "Contacts/Jan.md" });
     v.setActive(anna);
     expect(newContactLocation(v.app, "Jan").folder).toBe("Contacts/Jan");
+  });
+
+  it("never in a contact's folder made with other settings", () => {
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan/Jan.md", { name: "Jan de Vries", uid: "jan" }); // made with {{name}}
+    const sem = v.note("Contacts/Family/Sem/index.md", { name: "Sem", uid: "sem" }); // made with index
+    const anna = v.note("Contacts/Family/Anna.md", { name: "Anna", uid: "anna" });
+    for (const layout of [DEFAULT_SETTINGS.layout, inside, insideIndex]) {
+      useLayout(layout);
+      v.setActive(jan);
+      expect(newContactLocation(v.app, "Piet").note).toBe(layout.layout === "note" ? "Contacts/Piet.md" : `Contacts/Piet/${layout === inside ? "Piet" : "index"}.md`);
+      v.setActive(sem);
+      expect(newContactLocation(v.app, "Piet").note.startsWith("Contacts/Family/Piet")).toBe(true);
+      v.setActive(anna);
+      expect(newContactLocation(v.app, "Piet").note.startsWith("Contacts/Family/Piet")).toBe(true);
+    }
   });
 
   it("existing empty folder is reused", async () => {
@@ -889,6 +906,51 @@ describe("layout commands", () => {
     expect(result.alreadyDone).toBe(1);
     expect(result.skipped.map((s) => s.path)).toEqual(["Contacts/Jan/Sem.md"]);
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md", "Contacts/Jan/Sem.md"]);
+  });
+
+  it("into folders skips contacts in folders made with other settings, and never nests them", async () => {
+    useLayout(insideIndex);
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md", { name: "Jan de Vries", uid: "jan" }); // made with {{name}}: the file name says it
+    v.note("Contacts/Jan/Poem.md", null);
+    v.note("Contacts/Jan/Kid.md", { name: "Kid", uid: "kid" }); // someone else in Jan's folder
+    v.note("Contacts/Sem de Vries/Card.md", { name: "Sem de Vries", uid: "sem" }); // the name property says it
+    v.note("Contacts/Anna.md", { name: "Anna", uid: "anna" });
+    expect(layoutChangeCount(v.app, "into")).toBe(1);
+    const result = await changeLayout(v.app, "into");
+    expect(result.moved).toBe(1);
+    expect(result.skipped).toEqual([
+      { path: "Contacts/Jan/Jan.md", reason: "already in a folder (different settings)" },
+      { path: "Contacts/Jan/Kid.md", reason: "inside the folder of another contact: Contacts/Jan" },
+      { path: "Contacts/Sem de Vries/Card.md", reason: "already in a folder (different settings)" },
+    ]);
+    expect(v.paths()).toEqual([
+      "Contacts",
+      "Contacts/Anna",
+      "Contacts/Anna/index.md",
+      "Contacts/Jan",
+      "Contacts/Jan/Jan.md",
+      "Contacts/Jan/Kid.md",
+      "Contacts/Jan/Poem.md",
+      "Contacts/Sem de Vries",
+      "Contacts/Sem de Vries/Card.md",
+    ]);
+  });
+
+  it("counts the contacts in folders made with other settings", () => {
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md", { name: "Jan", uid: "jan" });
+    v.note("Contacts/Sem/index.md", { name: "Sem", uid: "sem" });
+    v.note("Contacts/Anna.md", { name: "Anna", uid: "anna" });
+    v.note("Contacts/Family/Piet.md", { name: "Piet", uid: "piet" });
+    useLayout(insideIndex);
+    expect(contactsInOtherFolders(v.app)).toBe(1);
+    useLayout(inside);
+    expect(contactsInOtherFolders(v.app)).toBe(1);
+    useLayout(next);
+    expect(contactsInOtherFolders(v.app)).toBe(2);
+    useLayout({ ...insideIndex, layout: "note" });
+    expect(contactsInOtherFolders(v.app)).toBe(1);
   });
 
   it("into folders needs the folder layout and usable settings", async () => {

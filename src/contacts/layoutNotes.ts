@@ -13,6 +13,7 @@ import {
   FsStep,
   hasFixedNoteName,
   isInsideOrAt,
+  isNamedForContact,
   LayoutSettings,
   newContactFolder,
   planIntoFolders,
@@ -21,7 +22,8 @@ import {
   validateLayout,
 } from "src/contacts/layout";
 import { linkTarget, linkWithAlias } from "src/contacts/friendly/relations";
-import { isContactFrontmatter } from "src/contacts/friendlyNotes";
+import { isContactFrontmatter, legacyRecord } from "src/contacts/friendlyNotes";
+import { createNameSlug } from "src/util/nameUtils";
 import { normalizeFolder, planUnitMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings } from "src/context/sharedSettingsContext";
 
@@ -66,6 +68,29 @@ function isContactFile(app: App, file: TAbstractFile | null): file is TFile {
   return !!frontmatter && isContactFrontmatter(frontmatter);
 }
 
+/**
+ * The names a contact note goes by, whatever layout it was made with: its `name` property, the file name its
+ * properties give (as on import) and its own file name.
+ */
+function contactNamesOf(app: App, file: TFile): string[] {
+  const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+  const names = [file.basename];
+  if (typeof frontmatter.name === "string") names.push(frontmatter.name);
+  try {
+    names.push(createNameSlug(legacyRecord(frontmatter, getSettings().friendly.mapping)));
+  } catch {
+    // no name to compute
+  }
+  return names;
+}
+
+/** The names of the contact notes directly in `folder`. */
+function contactNamesIn(app: App, folder: string): string[] {
+  const node = byPath(app, folder);
+  if (!(node instanceof TFolder)) return [];
+  return node.children.flatMap((child) => (isContactFile(app, child) ? contactNamesOf(app, child) : []));
+}
+
 /** True when `path` lies strictly inside `folder` (the vault root '' holds every other path). */
 function strictlyInside(path: string, folder: string): boolean {
   return path !== folder && isInsideOrAt(path, folder);
@@ -80,7 +105,13 @@ export function newContactLocation(app: App, name: string, baseFolder: string = 
   const s = effectiveLayout();
   const parent = app.workspace.getActiveFile()?.parent;
   const activeFolder = parent ? (parent.isRoot() ? "" : parent.path) : undefined;
-  const folder = newContactFolder(baseFolder, activeFolder, s, (path) => isContactFile(app, byPath(app, path)));
+  const folder = newContactFolder(
+    baseFolder,
+    activeFolder,
+    s,
+    (path) => isContactFile(app, byPath(app, path)),
+    (path) => contactNamesIn(app, path),
+  );
   return contactPaths(folder, name, s);
 }
 
@@ -450,13 +481,38 @@ function descendants(app: App, folder: string): string[] {
   return found;
 }
 
-/** The folder of another contact that `path` lies in (a contact note in someone's folder is its own contact). */
+/**
+ * The folder of another contact that `path` lies in (a contact note in someone's folder is its own contact): one
+ * whose folder note in this layout is a contact note, or one named for a contact note in it (other settings).
+ */
 function insideContactFolder(app: App, path: string, s: LayoutSettings, base: string): string | undefined {
   for (let dir = dirnameOf(path); strictlyInside(dir, base); dir = dirnameOf(dir)) {
     const note = folderNotePath(dir, s);
     if (note !== undefined && isContactFile(app, byPath(app, note))) return dir;
+    if (isNamedForContact(dir, contactNamesIn(app, dir))) return dir;
   }
   return undefined;
+}
+
+/** True when `file` is in a folder of its own that the folder settings `s` do not make (other settings made it). */
+function inOtherFolder(app: App, file: TFile, s: LayoutSettings, base: string): boolean {
+  const dir = dirnameOf(file.path);
+  return (
+    strictlyInside(dir, base) &&
+    contactFolderOf(file.path, s, folderExists(app)) === undefined &&
+    isNamedForContact(dir, contactNamesOf(app, file))
+  );
+}
+
+/**
+ * How many contacts are in a folder of their own made with other folder settings (e.g. `Jan/Jan.md` while the
+ * folder note name is `index`). Such contacts are not put in folders again, and are not renamed with their folder.
+ */
+export function contactsInOtherFolders(app: App): number {
+  const s: LayoutSettings = { ...(getSettings().layout ?? DEFAULT_LAYOUT), layout: "folder" };
+  if (validateLayout(s) !== undefined) return 0;
+  const base = contactsBase();
+  return contactsInFolder(app, base).filter((file) => inOtherFolder(app, file, s, base)).length;
 }
 
 interface LayoutPlan {
@@ -490,6 +546,10 @@ function planLayoutChange(app: App, direction: LayoutDirection): LayoutPlan | { 
     if (direction === "into") {
       if (folder !== undefined) {
         alreadyDone++;
+        continue;
+      }
+      if (inOtherFolder(app, file, s, base)) {
+        skipped.push({ path: file.path, reason: "already in a folder (different settings)" });
         continue;
       }
       const inside = insideContactFolder(app, file.path, s, base);

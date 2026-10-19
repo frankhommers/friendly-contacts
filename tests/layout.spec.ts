@@ -398,6 +398,18 @@ describe("new contacts and names", () => {
     expect(newContactFolder("", "Sem", inside, existing("Sem/Sem.md"))).toBe("");
   });
 
+  it("new contact folder: never in a folder named for a contact note in it, whatever the settings", () => {
+    const names = (map: Record<string, string[]>) => (folder: string) => map[folder] ?? [];
+    // Contacts/Jan holds Jan.md (made with `{{name}}`), now the layout is one note or the name is `index`
+    const jan = names({ "Contacts/Jan": ["Jan de Vries", "Jan"] });
+    expect(newContactFolder("Contacts", "Contacts/Jan", DEFAULT_LAYOUT, none, jan)).toBe("Contacts");
+    expect(newContactFolder("Contacts", "Contacts/Jan/Photos", insideIndex, none, jan)).toBe("Contacts");
+    // the name property says whose folder it is (index.md made with `index`, now `{{name}}`); case does not matter
+    expect(newContactFolder("Contacts", "Contacts/Family/jan", inside, none, names({ "Contacts/Family/jan": ["Jan"] }))).toBe("Contacts/Family");
+    // a category is no contact's folder
+    expect(newContactFolder("Contacts", "Contacts/Family", DEFAULT_LAYOUT, none, names({ "Contacts/Family": ["Sem"] }))).toBe("Contacts/Family");
+  });
+
   it("contact name of a note", () => {
     expect(contactNameOf("Contacts/Jan/index.md", "Contacts", insideIndex, none)).toBe("Jan");
     expect(contactNameOf("Contacts/Jan/Jan.md", "Contacts", inside, none)).toBe("Jan");

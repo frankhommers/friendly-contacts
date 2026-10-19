@@ -134,24 +134,35 @@ export function folderNotePath(folder: string, s: LayoutSettings): string | unde
 }
 
 /**
+ * True when `folder` is named for one of `names` (the names of a contact note directly in it): a contact's folder,
+ * whatever settings it was made with. Case does not matter.
+ */
+export function isNamedForContact(folder: string, names: string[]): boolean {
+  const name = fileName(folder);
+  return folder !== "" && names.some((n) => sameIgnoringCase(n.trim(), name));
+}
+
+/**
  * The folder a new contact goes in: the active note's folder when that lies inside the contacts folder, else the
- * contacts folder. In folder layout never inside a contact's folder: then the parent of the outermost one.
- * `isContactNote(path)` says whether a contact note exists at that path.
+ * contacts folder. Never inside a contact's folder (then the parent of the outermost one): in folder layout the
+ * folder whose folder note (`isContactNote(path)`) is a contact note, and in any layout a folder named for a contact
+ * note in it (`contactNamesIn(folder)`: the names of the contact notes directly in it), so contacts in folders made
+ * with other settings are recognised too.
  */
 export function newContactFolder(
   baseFolder: string,
   activeFolder: string | undefined,
   s: LayoutSettings,
   isContactNote: (path: string) => boolean,
+  contactNamesIn: (folder: string) => string[] = () => [],
 ): string {
   const base = normalizeFolder(baseFolder);
   const active = activeFolder === undefined ? undefined : normalizeFolder(activeFolder);
   if (active === undefined || !isInsideOrAt(active, base)) return base;
-  if (s.layout !== "folder") return active;
   let result = active;
-  for (let folder = active; folder !== base && folder !== ""; folder = dirname(folder)) {
+  for (let folder = active; !sameIgnoringCase(folder, base) && folder !== ""; folder = dirname(folder)) {
     const note = folderNotePath(folder, s);
-    if (note !== undefined && isContactNote(note)) result = dirname(folder);
+    if ((note !== undefined && isContactNote(note)) || isNamedForContact(folder, contactNamesIn(folder))) result = dirname(folder);
   }
   return result;
 }

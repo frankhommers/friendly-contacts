@@ -2,6 +2,7 @@ import { App, Notice } from "obsidian";
 import * as React from "react";
 import { folderNotesSettings } from "src/contacts/folderNotesPlugin";
 import { differsFromFolderNotes, fromFolderNotes, LayoutSettings, validateLayout } from "src/contacts/layout";
+import { contactsInOtherFolders } from "src/contacts/layoutNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 
 interface LayoutSettingsProps {
@@ -17,6 +18,7 @@ export function LayoutSettingsSection({ app, onLayoutChanged }: LayoutSettingsPr
   // Read once when the section opens: the plugin's settings do not change while this tab is shown.
   const folderNotes = React.useMemo(() => folderNotesSettings(app), [app]);
   const [differs, setDiffers] = React.useState(() => differsFromFolderNotes(folderNotes, getSettings().layout));
+  const [inOtherFolders, setInOtherFolders] = React.useState(() => contactsInOtherFolders(app));
 
   const problem = validateLayout(draft);
 
@@ -28,6 +30,7 @@ export function LayoutSettingsSection({ app, onLayoutChanged }: LayoutSettingsPr
     const from = current.layout.layout;
     await setSettings({ ...current, layout: { ...next, noteName: next.noteName.trim() } });
     setDiffers(differsFromFolderNotes(folderNotes, next));
+    setInOtherFolders(contactsInOtherFolders(app));
     if (from !== next.layout) await onLayoutChanged?.(from, next.layout);
   };
 
@@ -96,6 +99,14 @@ export function LayoutSettingsSection({ app, onLayoutChanged }: LayoutSettingsPr
       <div className="setting-item">
         <div className="setting-item-info">
           <div className="setting-item-name">Folder note location</div>
+          {inOtherFolders > 0 ? (
+            <div className="setting-item-description">
+              <div className="mod-warning">
+                {inOtherFolders} contacts are in folders made with other settings. They are not put in folders
+                again, and a rename through Sync renames only their note.
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="setting-item-control">
           <select
