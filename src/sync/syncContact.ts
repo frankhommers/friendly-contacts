@@ -11,7 +11,7 @@
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
-import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
+import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
 import { CURRENT_READER, Friendly, FriendlyValue, needsLegacyRewrite, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
@@ -40,7 +40,12 @@ export interface SyncDeps {
   rows: MappingRow[];
   /** Lookups for Apply: resolving a link may give a linked contact note its UID (a write to that note). */
   ctx: RelationContext;
-  /** The same lookups without any write, for prepare (nothing is written before Apply). */
+  /**
+   * The same lookups without any write, for prepare (nothing is written before Apply) and for canonical link text.
+   * It must give the same `displayName` and `uidToName` answers as `ctx` (built from the same notes and contact
+   * lists): prepare decides with it which relationship lines Apply rewrites (`needsLegacyRewrite`), and Apply
+   * rewrites them with `ctx`. Were they to disagree, the review could ask for a rewrite Apply never does, every Sync.
+   */
   readOnlyCtx: RelationContext;
   /** Warnings (note coercion, patch, a skipped rename); results come back as values. */
   notify(msg: string): void;
@@ -153,7 +158,10 @@ export async function prepareSync(
     // Read the way it was stored: lines an older reader ignored then are the server's additions now.
     const baseCard = baseLines && {
       lines: baseLines,
-      friendly: toFriendly(baseLines, deps.rows, deps.readOnlyCtx, { reader: readerOf(baseEntry?.reader) }),
+      friendly: canonicalFriendly(
+        toFriendly(baseLines, deps.rows, deps.readOnlyCtx, { reader: readerOf(baseEntry?.reader) }),
+        deps,
+      ),
     };
     const base = baseCard?.friendly.props;
 
@@ -188,7 +196,17 @@ export async function prepareSync(
 
 function serverCard(pulled: VCardRaw, href: string, etag: string | undefined, deps: SyncDeps): NonNullable<PreparedSync['server']> {
   const lines = parseCard(pulled.raw);
-  return { lines, friendly: toFriendly(lines, deps.rows, deps.readOnlyCtx), href, etag: etag ?? '', raw: pulled.raw };
+  const friendly = canonicalFriendly(toFriendly(lines, deps.rows, deps.readOnlyCtx), deps);
+  return { lines, friendly, href, etag: etag ?? '', raw: pulled.raw };
+}
+
+/**
+ * A card's properties with canonical relation links (as the note's are), so a name the phone left without the
+ * hint (`[[Sem de Vries]]`) and the note's link to that contact (`[[Contacts/Sem de Vries/index|Sem de Vries]]`) are
+ * not seen as a change. Provenance stays: only link text changes, never the number or order of items.
+ */
+function canonicalFriendly(friendly: Friendly, deps: SyncDeps): Friendly {
+  return { props: canonicalRelations(friendly.props, deps.readOnlyCtx, deps.rows), source: friendly.source };
 }
 
 export async function applySync(
@@ -222,7 +240,7 @@ export async function applySync(
       if (res.status === 412) return { kind: 'stale', reason: 'server' };
       if (!succeeded(res)) return { kind: 'failed', message: describeResponse(res) };
       stored = await createdBase(deps.adapter, id, raw, res);
-      final = toFriendly(card.lines, deps.rows, deps.ctx).props;
+      final = canonicalRelations(toFriendly(card.lines, deps.rows, deps.ctx).props, deps.readOnlyCtx, deps.rows);
       warnings = card.warnings;
       serverChanged = true;
     } else {
@@ -232,7 +250,10 @@ export async function applySync(
       const raw = serializeCard(patched.lines);
       warnings = patched.warnings;
       serverChanged = raw !== serializeCard(server.lines);
-      final = serverChanged ? toFriendly(patched.lines, deps.rows, deps.ctx).props : server.friendly.props;
+      // As prepared: canonical links, so a name without the hint does not replace the note's link to that contact.
+      final = serverChanged
+        ? canonicalRelations(toFriendly(patched.lines, deps.rows, deps.ctx).props, deps.readOnlyCtx, deps.rows)
+        : server.friendly.props;
       if (prepared.move) {
         const moved = await applyMove(prepared, prepared.move, serverChanged ? raw : server.raw, deps);
         if (moved.kind !== 'done') return moved;
@@ -307,12 +328,16 @@ async function applyMove(
 }
 
 /**
- * Relation links as the card would show them: a link that resolves to a known contact becomes `[[<its name>]]`,
- * so `[[06 People/Sem de Vries]]` and the server's `[[Sem de Vries]]` are not seen as a change.
+ * Relation links in one form: a link that resolves to a known contact becomes that contact's link text
+ * (`uidToName`), so `[[06 People/Sem de Vries]]`, a plain `[[Sem de Vries]]` from the card and the link Sync writes
+ * are not seen as a change. `[[urn:uuid:<uid>]]` (a phone's "urn:uuid:…" name that reached the note) is that contact
+ * too. Unknown and ambiguous names stay as they are. Used for every side: note, base, card, and what Apply writes.
  */
 function canonicalRelations(props: Props, ctx: RelationContext, rows: MappingRow[]): Props {
   const canonical = (item: string): string => {
-    const resolved = ctx.resolveLink(linkTarget(item.trim()));
+    const target = linkTarget(item.trim());
+    const uuid = uuidTarget(target);
+    const resolved = uuid !== undefined ? { uid: uuid } : ctx.resolveLink(target);
     const name = 'uid' in resolved ? ctx.uidToName(resolved.uid) : undefined;
     return name !== undefined && name !== '' ? toLink(name) : item;
   };

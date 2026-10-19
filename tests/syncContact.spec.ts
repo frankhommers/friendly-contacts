@@ -167,12 +167,21 @@ function memoryNote(frontmatter: Record<string, unknown>) {
 const OPTS = { sourceName: 'Radicale' };
 
 function setup(
-  opts: { server?: string; href?: string; base?: string; local?: Record<string, unknown>; ctx?: RelationContext } = {},
+  opts: {
+    server?: string;
+    href?: string;
+    base?: string;
+    /** The reader the base was stored with; absent: none recorded (reader 1). */
+    reader?: number;
+    local?: Record<string, unknown>;
+    ctx?: RelationContext;
+  } = {},
 ) {
   const fake = fakeAdapter();
   const serverEtag = opts.server !== undefined ? fake.put(opts.href ?? HREF, opts.server) : undefined;
+  const reader = opts.reader === undefined ? {} : { reader: opts.reader };
   const { state, entries, sets } = memoryState(
-    opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF } } : {},
+    opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF, ...reader } } : {},
   );
   const { note, io } = memoryNote(opts.local ?? friendlyOf(V1));
   const notices: string[] = [];
@@ -957,6 +966,112 @@ describe('old relationship lines on a 3.0 card', () => {
 
   it('a card without RELATED lines is unaffected', async () => {
     const t = setup({ server: V1, base: V1, local: friendlyOf(V1), ctx: people });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+});
+
+describe('relationship names a phone rewrote', () => {
+  const SEM = 'sem-uid';
+  const people: RelationContext = {
+    uidToName: (uid) => (cleanUid(uid) === SEM ? 'Sem' : undefined),
+    displayName: (uid) => (cleanUid(uid) === SEM ? 'Sem de Vries' : undefined),
+    resolveLink: (name) => (name === 'Sem' || name === 'Sem de Vries' ? { uid: SEM } : { text: name }),
+  };
+  const withLines = (raw: string, ...lines: string[]) => edit(raw, 'TITLE:Baker\r\n', `TITLE:Baker\r\n${lines.map((l) => `${l}\r\n`).join('')}`);
+  const V4 = edit(edit(V1, 'VERSION:3.0', 'VERSION:4.0'), 'item1.X-ABLabel:_$!<Mobile>!$_\r\n', '');
+  const relationLines = (raw: string) => lineTexts(raw).filter((l) => /RELATED|ABLabel:_\$!<Spouse>/.test(l));
+
+  // What alpha.6 wrote, and what DAVx5 made of it: the old link became the name, which reads "urn:uuid:sem-uid".
+  const versions = [
+    {
+      version: '3.0',
+      alpha6: withLines(V1, `RELATED;TYPE=spouse:urn:uuid:${SEM}`),
+      phone: withLines(V1, `item9.X-ABRELATEDNAMES:urn:uuid:${SEM}`, 'item9.X-ABLabel:_$!<Spouse>!$_'),
+      fixed: [`item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem de Vries`, 'item9.X-ABLabel:_$!<Spouse>!$_'],
+    },
+    {
+      version: '4.0',
+      alpha6: withLines(V4, `RELATED;TYPE=spouse:urn:uuid:${SEM}`),
+      phone: withLines(V4, `RELATED;TYPE=spouse;VALUE=text:urn:uuid:${SEM}`),
+      fixed: [`RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=${SEM}:Sem de Vries`],
+    },
+  ];
+  const local = (raw: string, spouse: string) => ({ ...toFriendly(parseCard(raw), DEFAULT_MAPPING, people).props, spouse });
+
+  for (const { version, alpha6, phone, fixed } of versions) {
+    for (const [what, base, reader] of [
+      ['a reader-1 base (stored by alpha.6)', alpha6, undefined],
+      ['a reader-1 base of the phone\'s card', phone, undefined],
+      ['a reader-2 base of the phone\'s card', phone, 2],
+    ] as const) {
+      it(`${version}, ${what}: the note's link stays, only the rewrite is reviewed, and Apply puts the name on the card`, async () => {
+        const t = setup({ server: phone, base, reader, local: local(phone, '[[Sem]]'), ctx: people });
+        expect(t.note.frontmatter.spouse).toBe('[[Sem]]');
+        const prepared = await reviewOf(t);
+        expect(prepared.server!.friendly.props.spouse).toBe('[[Sem]]');
+        expect(changedRows(prepared)).toEqual([]);
+        expect(prepared.rewriteRelations).toBe(true);
+
+        expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+        const raw = t.cards.get(HREF)!.raw;
+        expect(relationLines(raw)).toEqual(fixed);
+        expect(raw).not.toContain('urn:uuid');
+        expect(t.note.frontmatter.spouse).toBe('[[Sem]]');
+        expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      });
+    }
+
+    it(`${version}: a note that took over the "urn:uuid:…" name gets the link back`, async () => {
+      const t = setup({ server: phone, base: phone, reader: 2, local: local(phone, `[[urn:uuid:${SEM}]]`), ctx: people });
+      const prepared = await reviewOf(t);
+      expect(changedRows(prepared)).toEqual([]);
+      expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'both' });
+      expect(t.note.frontmatter.spouse).toBe('[[Sem]]');
+      expect(relationLines(t.cards.get(HREF)!.raw)).toEqual(fixed);
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+  }
+
+  describe('a contact in its own folder (link text is a path with an alias)', () => {
+    const LINK = 'Contacts/Sem de Vries/index|Sem de Vries';
+    const folders: RelationContext = {
+      uidToName: (uid) => (cleanUid(uid) === SEM ? LINK : undefined),
+      displayName: (uid) => (cleanUid(uid) === SEM ? 'Sem de Vries' : undefined),
+      resolveLink: (name) => (name === 'Contacts/Sem de Vries/index' || name === 'Sem de Vries' ? { uid: SEM } : { text: name }),
+    };
+    const HINTED = withLines(V1, `item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem de Vries`, 'item9.X-ABLabel:_$!<Child>!$_');
+    const DROPPED = withLines(V1, 'item9.X-ABRELATEDNAMES:Sem de Vries', 'item9.X-ABLabel:_$!<Child>!$_');
+    const note = () => ({ ...friendlyOf(V1), children: [`[[${LINK}]]`] });
+
+    it('a phone rewrite that drops the hint is up to date', async () => {
+      const t = setup({ server: DROPPED, base: HINTED, reader: 2, local: note(), ctx: folders });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.pushes).toEqual([]);
+      expect(t.note.writes).toEqual([]);
+    });
+
+    it('with another change from the phone, Apply keeps the note\'s link and the next Sync is up to date', async () => {
+      const server = edit(DROPPED, 'TITLE:Baker', 'TITLE:Master baker');
+      const t = setup({ server, base: HINTED, reader: 2, local: note(), ctx: folders });
+      expect(changedRows(await reviewOf(t))).toEqual([['title', 'server']]);
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.note.frontmatter.children).toEqual([`[[${LINK}]]`]);
+      expect(t.note.writes.map((w) => Object.keys(w.set))).toEqual([['title', 'source']]);
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+  });
+
+  it('a renamed contact: the old name on the card is refreshed by the rewrite', async () => {
+    const OLD = withLines(V1, `item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem`, 'item9.X-ABLabel:_$!<Spouse>!$_');
+    const t = setup({ server: OLD, base: OLD, reader: 2, local: local(OLD, '[[Sem]]'), ctx: people });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(prepared.rewriteRelations).toBe(true);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(relationLines(t.cards.get(HREF)!.raw)).toEqual([
+      `item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem de Vries`,
+      'item9.X-ABLabel:_$!<Spouse>!$_',
+    ]);
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 });
