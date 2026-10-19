@@ -17,7 +17,7 @@ import { parseCard } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
 import { DEFAULT_MAPPING, isMappedProperty } from 'src/contacts/friendly/mapping';
 import { RelationContext, resolveRemoteName } from 'src/contacts/friendly/relations';
-import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
+import { CURRENT_READER, FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { contactFileName, renderFriendlyNote } from 'src/contacts/friendlyNotes';
 import { initSettings } from 'src/context/sharedSettingsContext';
 import type { Source } from 'src/settings/settings.d';
@@ -359,7 +359,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     if (!pulled || !('raw' in pulled)) throw new Error(`pull ${href} failed`);
     const props = toFriendly(parseCard(pulled.raw), DEFAULT_MAPPING, await relationContext(adapter, notes)).props;
     const uid = cleanUid(String(props.uid));
-    await book.state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href });
+    await book.state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href, reader: CURRENT_READER });
     return memoryNote({ ...props, source: book.source.name });
   }
   const importCard = (href: string) => importFrom(bookList[0], href);

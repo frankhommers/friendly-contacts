@@ -223,10 +223,54 @@ describe('prepareSync', () => {
   it('no base and equal stores the base only', async () => {
     const t = setup({ server: V1 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF, reader: 2 });
     expect(t.pushes).toEqual([]);
     expect(t.note.writes).toEqual([]);
     expect(t.cards.get(HREF)!.raw).toBe(V1);
+  });
+
+  describe('a base stored by an older reader', () => {
+    // What DAVx5 writes in a 3.0 card for a relationship and an anniversary entered on the phone.
+    const PHONE = edit(
+      V1,
+      'TITLE:Baker\r\n',
+      'TITLE:Baker\r\nitem7.X-ABRELATEDNAMES:Ger Verhallen\r\nitem7.X-ABLabel:_$!<Father>!$_\r\n' +
+        'item8.X-ABDATE:2012-06-21\r\nitem8.X-ABLabel:_$!<Anniversary>!$_\r\n',
+    );
+    // The note as the older reader made it: the phone's lines were not read.
+    const oldNote = () => toFriendly(parseCard(PHONE), DEFAULT_MAPPING, ctx, { reader: 1 }).props;
+
+    it('old base with phone relationships preselects the server', async () => {
+      const t = setup({ server: PHONE, base: PHONE, local: oldNote() });
+      expect(changedRows(await reviewOf(t))).toEqual([
+        ['anniversary', 'server'],
+        ['parents', 'server'],
+      ]);
+    });
+
+    it('Apply puts them into the note, leaves the card alone and records reader 2', async () => {
+      const t = setup({ server: PHONE, base: PHONE, local: oldNote() });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.note.frontmatter).toMatchObject({ parents: ['[[Ger Verhallen]]'], anniversary: '2012-06-21' });
+      expect(t.entries.get(UID)).toEqual({ raw: PHONE, etag: t.serverEtag, href: HREF, reader: 2 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('the same base stored by the current reader would mean they were removed in the note', async () => {
+      const t = setup({ server: PHONE, local: oldNote() });
+      t.entries.set(UID, { raw: PHONE, etag: 'old', href: HREF, reader: 2 });
+      expect(changedRows(await reviewOf(t))).toEqual([
+        ['anniversary', 'local'],
+        ['parents', 'local'],
+      ]);
+    });
+
+    it('new base records reader 2', async () => {
+      const t = setup({ server: PHONE, local: toFriendly(parseCard(PHONE), DEFAULT_MAPPING, ctx).props });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.entries.get(UID)?.reader).toBe(2);
+    });
   });
 
   it('no base and different makes conflicts', async () => {
@@ -441,7 +485,7 @@ describe('applySync', () => {
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
     expect(t.note.writes).toEqual([{ set: { mobile: '06-99999999', source: 'Radicale' }, remove: [] }]);
     expect(t.pushes).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF, reader: 2 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
@@ -470,7 +514,7 @@ describe('applySync', () => {
     expect(t.note.writes).toEqual([]);
     const stored = t.cards.get(HREF)!;
     expect(stored.raw).toBe(put.vcard.raw);
-    expect(t.entries.get(UID)).toEqual({ raw: put.vcard.raw, etag: stored.etag, href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: put.vcard.raw, etag: stored.etag, href: HREF, reader: 2 });
   });
 
   it('local and server changes on different properties give both', async () => {
@@ -568,7 +612,7 @@ describe('applySync', () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
     t.options.etagOnPut = false;
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
-    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF, reader: 2 });
   });
 
   it('a failed PUT fails without writing the note or the base', async () => {
@@ -594,7 +638,7 @@ describe('applySync', () => {
     const href = '/frank/contacts/sem-0001.vcf';
     const card = t.cards.get(href)!;
     expect(friendlyOf(card.raw)).toMatchObject({ name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' });
-    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href });
+    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href, reader: 2 });
     expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
   });
 

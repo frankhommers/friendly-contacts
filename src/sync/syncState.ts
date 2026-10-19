@@ -14,6 +14,8 @@ export interface SyncStateEntry {
   raw: string;
   etag: string;
   href: string;
+  /** The card reader the base was stored with (see `Reader`); absent: stored before readers were recorded (1). */
+  reader?: number;
 }
 
 export interface SyncState {
@@ -22,7 +24,7 @@ export interface SyncState {
   remove(uid: string): Promise<void>;
 }
 
-type SyncIndex = Record<string, { etag: string; href: string }>;
+type SyncIndex = Record<string, { etag: string; href: string; reader?: number }>;
 
 /** A safe file name per UID, one-to-one: other characters (and `_` itself) become `_<hex>_`. */
 const fileNameOf = (uid: string) =>
@@ -65,13 +67,18 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
       if (!meta || raw === undefined) {
         return undefined;
       }
-      return { raw, etag: meta.etag, href: meta.href };
+      const entry: SyncStateEntry = { raw, etag: meta.etag, href: meta.href };
+      if (typeof meta.reader === 'number') entry.reader = meta.reader;
+      return entry;
     },
     set(uid, entry) {
       return serialized(async () => {
         await store.write(rawPath(uid), entry.raw);
         const index = await readIndex();
-        index[cleanUid(uid)] = { etag: entry.etag, href: entry.href };
+        index[cleanUid(uid)] =
+          entry.reader === undefined
+            ? { etag: entry.etag, href: entry.href }
+            : { etag: entry.etag, href: entry.href, reader: entry.reader };
         await writeIndex(index);
       });
     },

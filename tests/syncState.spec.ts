@@ -38,6 +38,17 @@ describe('SyncState', () => {
     expect(await state.get('other')).toBeUndefined();
   });
 
+  it('keeps the reader a base was stored with; an old index entry has none', async () => {
+    const { files, store } = memoryStore();
+    const state = createSyncState(store, 'sync');
+    await state.set('abc', { ...entry, reader: 2 });
+    expect(await state.get('abc')).toEqual({ ...entry, reader: 2 });
+    expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, reader: 2 });
+    await state.set('old', entry);
+    expect(await state.get('old')).toEqual(entry);
+    expect(await state.get('old')).not.toHaveProperty('reader');
+  });
+
   it('uid with urn:uuid prefix uses clean file name', async () => {
     const { store, files } = memoryStore();
     const state = createSyncState(store, 'sync');

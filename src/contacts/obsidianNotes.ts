@@ -11,7 +11,7 @@ import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
-import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
+import { CURRENT_READER, FriendlyValue, newCard, patch, readerOf, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, isContactNote, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
 import {
@@ -396,7 +396,8 @@ export async function friendlyNoteCard(
   let lines;
   if (base) {
     const baseLines = parseCard(base.raw);
-    lines = patch(baseLines, toFriendly(baseLines, rows, ctx), props, rows, ctx).lines;
+    // Read the way it was stored, so lines an older reader ignored are not taken for relationships removed in the note.
+    lines = patch(baseLines, toFriendly(baseLines, rows, ctx, { reader: readerOf(base.reader) }), props, rows, ctx).lines;
   } else {
     lines = newCard(props, rows, ctx).lines;
   }
@@ -450,6 +451,7 @@ export async function importRemoteCard(
       raw: pulled.raw,
       etag: pulled.etag || meta.etag || "",
       href: pulled.href || meta.href,
+      reader: CURRENT_READER,
     });
   }
   if (imported.written && imported.path !== undefined && hasFixedNoteName(effectiveLayout())) {

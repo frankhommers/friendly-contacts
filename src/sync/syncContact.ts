@@ -12,7 +12,7 @@ import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
-import { Friendly, FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
+import { CURRENT_READER, Friendly, FriendlyValue, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { moveCard } from 'src/sync/moveCard';
@@ -146,7 +146,11 @@ export async function prepareSync(
     }
 
     const baseLines = baseEntry ? parseCard(baseEntry.raw) : undefined;
-    const baseCard = baseLines && { lines: baseLines, friendly: toFriendly(baseLines, deps.rows, deps.readOnlyCtx) };
+    // Read the way it was stored: lines an older reader ignored then are the server's additions now.
+    const baseCard = baseLines && {
+      lines: baseLines,
+      friendly: toFriendly(baseLines, deps.rows, deps.readOnlyCtx, { reader: readerOf(baseEntry?.reader) }),
+    };
     const base = baseCard?.friendly.props;
 
     // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
@@ -162,7 +166,9 @@ export async function prepareSync(
     if (!server) rows = rows.filter((r) => r.property !== 'uid');
     if (server && !where.move && isUpToDate(rows)) {
       // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
-      if (!baseEntry) await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href });
+      if (!baseEntry) {
+        await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href, reader: CURRENT_READER });
+      }
       return { kind: 'upToDate' };
     }
 
@@ -232,9 +238,9 @@ export async function applySync(
         if (res.status === 412) return { kind: 'stale', reason: 'server' };
         if (!succeeded(res)) return { kind: 'failed', message: describeResponse(res) };
         // Without an ETag in the response the base keeps etag ''; the base etag is never used for If-Match.
-        stored = { raw, etag: responseEtag(res), href: server.href };
+        stored = { raw, etag: responseEtag(res), href: server.href, reader: CURRENT_READER };
       } else {
-        stored = { raw: server.raw, etag: server.etag, href: server.href };
+        stored = { raw: server.raw, etag: server.etag, href: server.href, reader: CURRENT_READER };
       }
     }
 
@@ -331,7 +337,12 @@ export async function createdBase(adapter: AdapterInterface, id: string, raw: st
   } catch {
     meta = undefined;
   }
-  return { raw, etag: responseEtag(res) || meta?.etag || '', href: meta?.href ?? `${encodeURIComponent(id)}.vcf` };
+  return {
+    raw,
+    etag: responseEtag(res) || meta?.etag || '',
+    href: meta?.href ?? `${encodeURIComponent(id)}.vcf`,
+    reader: CURRENT_READER,
+  };
 }
 
 /** getMetaByUid matches UIDs that merely contain ours; only an exact match is this contact's card. */

@@ -268,6 +268,44 @@ describe('reading every form', () => {
     expect(date('ANNIVERSARY:20120621')).toBe('2012-06-21');
   });
 
+  it('reader 1 ignores X-ABRELATEDNAMES and X-ABDATE', () => {
+    const f = toFriendly(davx5Lines, DEFAULT_MAPPING, ctx, { reader: 1 });
+    expect(f.props).toEqual({
+      uid: '5f0c3a1e-8b2d-4c47-9e61-7a2b9d4c1e08',
+      name: 'Frank Hommers',
+      firstname: 'Frank',
+      lastname: 'Hommers',
+      mobile: '+31 6 12345678',
+      email: 'frank@example.nl',
+      birthday: '1975-03-12',
+    });
+    // As before Part 6: RELATED is read, without the hint and untrimmed.
+    const v1 = (...body: string[]) => toFriendly(parseCard(card(...body)), DEFAULT_MAPPING, ctx, { reader: 1 }).props;
+    expect(v1('RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=anna-uid:Anna')).toEqual({ spouse: '[[Anna]]' });
+    expect(v1('RELATED;TYPE=friend:urn:uuid:anna-uid')).toEqual({ friends: ['[[Anna de Vries]]'] });
+    expect(v1('ANNIVERSARY:20120621')).toEqual({ anniversary: '2012-06-21' });
+  });
+
+  it('reads the same person in RELATED and X-ABRELATEDNAMES as two entries, and writes the card back unchanged', () => {
+    const text = card(
+      'FN:Frank',
+      'RELATED;TYPE=friend;VALUE=text:Kim',
+      'item1.X-ABRELATEDNAMES:Kim',
+      'item1.X-ABLabel:_$!<Friend>!$_',
+    );
+    const cardLines = parseCard(text);
+    const f = toFriendly(cardLines, DEFAULT_MAPPING, ctx);
+    expect(f.props.friends).toEqual(['[[Kim]]', '[[Kim]]']);
+    expect(f.source.friends).toEqual([{ line: 2 }, { line: 3 }]);
+    expect(serializeCard(patch(cardLines, f, { ...f.props }, DEFAULT_MAPPING, ctx).lines)).toBe(text + '\r\n');
+  });
+
+  it('a hint does not map an X-ABRELATEDNAMES line with an unknown label', () => {
+    expect(
+      translate(card('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=anna-uid:Anna', 'item1.X-ABLabel:Godmother')).props,
+    ).toEqual({});
+  });
+
   it('leaves other X-ABDATE lines unmapped', () => {
     expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Other>!$_')).props).toEqual({});
     expect(translate(card('X-ABDATE:2012-06-21')).props).toEqual({});

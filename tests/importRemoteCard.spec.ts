@@ -69,7 +69,7 @@ describe("importRemoteCard", () => {
     expect(await importRemoteCard(app, pulled, { href: "/abc-1.vcf" }, source)).toBe("imported");
     const note = state.files.get("Contacts/Anna Jansen.md");
     expect(note).toMatch(/^source: Work$/m);
-    expect(await contactSyncState("s1", app).get("abc-1")).toEqual({ raw: card, etag: "e1", href: "/abc-1.vcf" });
+    expect(await contactSyncState("s1", app).get("abc-1")).toEqual({ raw: card, etag: "e1", href: "/abc-1.vcf", reader: 2 });
     expect(await contactSyncState("other", app).get("abc-1")).toBeUndefined();
   });
 

@@ -102,7 +102,7 @@ describe('moveCard', () => {
     ]);
     expect([...t.family.cards.values()].map((c) => c.raw)).toEqual([RAW]);
     expect(t.private_.cards.size).toBe(0);
-    expect(t.toState.entries.get(ID)).toEqual({ raw: RAW, etag: 'family-e1', href: `/family/${ID}.vcf` });
+    expect(t.toState.entries.get(ID)).toEqual({ raw: RAW, etag: 'family-e1', href: `/family/${ID}.vcf`, reader: 2 });
     expect(t.fromState.entries.has(ID)).toBe(false);
   });
 
