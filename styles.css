@@ -564,6 +564,22 @@
   font-style: italic;
 }
 
+/* Multi-line values (a note, an address) keep their line breaks. */
+.friendly-review-text {
+  white-space: pre-wrap;
+}
+
+.friendly-review-removed,
+.friendly-review-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.friendly-review-warning {
+  color: var(--text-warning, var(--color-orange));
+  margin: 0 0 8px;
+}
+
 .friendly-review-photo {
   max-width: 96px;
   max-height: 96px;
@@ -595,6 +611,10 @@
 
 .friendly-review-edit {
   width: 100%;
+}
+
+textarea.friendly-review-edit {
+  resize: vertical;
 }
 
 .friendly-review-import {

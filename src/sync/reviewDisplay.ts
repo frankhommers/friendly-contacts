@@ -2,10 +2,12 @@
 
 import { linkTarget } from '../contacts/friendly/relations';
 import { FriendlyValue } from '../contacts/friendly/translate';
-import { ReviewRow, Side } from './review';
+import { Choice, isDecided, ReviewRow, Side } from './review';
 
 export interface DisplayValue {
   text?: string;
+  /** Shown dimmed: a note about the value rather than a value. */
+  muted?: boolean;
   image?: string;
   items?: { name: string; only: boolean }[];
 }
@@ -43,6 +45,47 @@ export function displayValue(row: ReviewRow, side: Side, linkName: (link: string
   }
 
   return { text: own.join(', ') };
+}
+
+/** What a column of a row shows; for a new card (`newCardIn`: the book's name) the server column says it is not there. */
+export function cellValue(
+  row: ReviewRow,
+  side: Side,
+  linkName: (link: string) => string,
+  opts: { newCardIn?: string } = {},
+): DisplayValue {
+  if (side === 'server' && opts.newCardIn !== undefined) return { text: `Not in ${opts.newCardIn} yet`, muted: true };
+  return displayValue(row, side, linkName);
+}
+
+/** The column, pick button and "All from" label of a side: the address book's name, or Obsidian. */
+export const sideLabel = (side: Side, serverName: string): string => (side === 'server' ? serverName : 'Obsidian');
+
+/** The sides a row can be picked from: a new card has no server side, and picking it would empty the note. */
+export const pickSides = (newCard: boolean): Side[] => (newCard ? ['local'] : ['server', 'local']);
+
+/** The rows on screen (changed ones; with Show all also the unchanged ones, never `uid`), and how many Show all adds. */
+export function shownRows(rows: ReviewRow[], showAll: boolean): { visible: ReviewRow[]; hidden: number } {
+  const extra = (r: ReviewRow) => !r.changed && r.property !== 'uid';
+  return { visible: rows.filter((r) => r.changed || (showAll && extra(r))), hidden: rows.filter(extra).length };
+}
+
+const hasNewline = (value: FriendlyValue | undefined): boolean => asList(value).some((v) => v.includes('\n'));
+
+/** The custom edit of a row needs a multi-line field: a side's value or the custom text has a newline. */
+export function isMultiline(row: ReviewRow, choice: Choice | undefined): boolean {
+  return hasNewline(row.server) || hasNewline(row.local) || (typeof choice === 'object' && choice.custom.includes('\n'));
+}
+
+/** An empty custom value that removes the property (on a conflict it decides nothing instead). */
+export function willRemove(row: ReviewRow, choice: Choice | undefined): boolean {
+  return typeof choice === 'object' && choice.custom.trim() === '' && isDecided(row, choice);
+}
+
+/** Why Apply is disabled; undefined when no conflict is left. */
+export function applyHint(undecided: number): string | undefined {
+  if (undecided === 0) return undefined;
+  return `Decide ${undecided} conflict${undecided === 1 ? '' : 's'}`;
 }
 
 /** `[[Path/Name|Alias]]` -> Alias, else the last part of the target; `[Alias](path.md)` -> Alias. Never a UID. */

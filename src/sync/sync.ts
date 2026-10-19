@@ -189,8 +189,8 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
     adapterFor,
     stateFor: (id) => contactSyncState(id, app),
     contexts: async () => {
-      const { ctx, readOnlyCtx } = await syncRelationContexts(app, file.path);
-      return { ctx, readOnlyCtx, settle: () => ctx.settle() };
+      const { ctx, readOnlyCtx, unreadable } = await syncRelationContexts(app, file.path);
+      return { ctx, readOnlyCtx, settle: () => ctx.settle(), unreadable };
     },
     review: (request) => openReview(app, file, request),
     notify: (message) => new Notice(message),

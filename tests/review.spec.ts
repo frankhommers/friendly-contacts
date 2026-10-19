@@ -1,5 +1,5 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { canApply, Choice, isUpToDate, resultProps, reviewRows } from 'src/sync/review';
+import { canApply, Choice, isDecided, isUpToDate, previewChoices, resultProps, reviewRows, undecidedCount } from 'src/sync/review';
 import { describe, expect, it } from 'vitest';
 
 const rows = DEFAULT_MAPPING;
@@ -62,9 +62,43 @@ describe('reviewRows', () => {
     expect(resultProps(rs, new Map([['mobile', { custom: ' 9 ' }]]), { mobile: '2' })).toEqual({ mobile: '9' });
   });
 
-  it('empty custom text removes', () => {
+  it('empty custom text removes on a row with a preselection', () => {
+    const rs = review({ mobile: '1' }, { mobile: '2' }, { mobile: '1' });
+    expect(rs[0].preselect).toBe('server');
+    const choices = new Map<string, Choice>([['mobile', { custom: '  ' }]]);
+    expect(canApply(rs, choices)).toBe(true);
+    expect(resultProps(rs, choices, { mobile: '2' })).toEqual({});
+  });
+
+  it('empty custom text on a conflict leaves it undecided', () => {
     const rs = review({ mobile: '1' }, { mobile: '2' }, { mobile: '3' });
-    expect(resultProps(rs, new Map([['mobile', { custom: '  ' }]]), { mobile: '2' })).toEqual({});
+    const choices = new Map<string, Choice>([['mobile', { custom: '  ' }]]);
+    expect(isDecided(rs[0], { custom: '  ' })).toBe(false);
+    expect(isDecided(rs[0], { custom: '4' })).toBe(true);
+    expect(canApply(rs, choices)).toBe(false);
+    expect(undecidedCount(rs, choices)).toBe(1);
+    expect(() => resultProps(rs, choices, { mobile: '2' })).toThrow(/mobile/);
+  });
+
+  it('resultProps refuses an undecided conflict instead of picking a side', () => {
+    const rs = review({ mobile: '1' }, { mobile: '2' }, { mobile: '3' });
+    expect(() => resultProps(rs, none, { mobile: '2' })).toThrow(/mobile/);
+  });
+
+  it('counts the undecided conflicts', () => {
+    const rs = review({ mobile: '1', email: 'a', title: 't' }, { mobile: '2', email: 'b', title: 'u' }, { mobile: '3', email: 'c', title: 't' });
+    expect(undecidedCount(rs, none)).toBe(2);
+    expect(undecidedCount(rs, new Map([['email', 'local']]))).toBe(1);
+    expect(undecidedCount(rs, new Map<string, Choice>([['email', 'local'], ['mobile', 'server']]))).toBe(0);
+  });
+
+  it('previewChoices keeps the note\'s value for an undecided conflict', () => {
+    const rs = review({ mobile: '1', title: 't' }, { mobile: '2', title: 'u' }, { mobile: '3', title: 't' });
+    const preview = previewChoices(rs, new Map<string, Choice>([['mobile', { custom: '' }]]));
+    expect(preview.get('mobile')).toBe('local');
+    expect(preview.has('title')).toBe(false);
+    expect(resultProps(rs, preview, { mobile: '2', title: 'u' })).toEqual({ mobile: '3', title: 'u' });
+    expect(previewChoices(rs, new Map([['mobile', 'server']])).get('mobile')).toBe('server');
   });
 
   it('local choice removes a value the note does not have', () => {

@@ -2,14 +2,30 @@ import { App, Modal, Notice } from 'obsidian';
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { canApply, Choice, ReviewRow, Side } from 'src/sync/review';
-import { displayValue, DisplayValue, linkDisplayName, NONE } from 'src/sync/reviewDisplay';
+import { canApply, Choice, isDecided, ReviewRow, Side, undecidedCount } from 'src/sync/review';
+import {
+  applyHint,
+  cellValue,
+  displayValue,
+  DisplayValue,
+  isMultiline,
+  linkDisplayName,
+  NONE,
+  pickSides,
+  shownRows,
+  sideLabel,
+  willRemove,
+} from 'src/sync/reviewDisplay';
 import type { PreparedSync } from 'src/sync/syncContact';
 
 export interface SyncReviewInput {
   title: string;
   /** The "card moves from ... to ..." line of a source change. */
   moveLine?: string;
+  /** The address book whose card the server column shows (its column, pick buttons and "All from" use the name). */
+  serverName: string;
+  /** Warning lines above the table. */
+  warnings: string[];
   prepared: PreparedSync;
   /** Mirror writes the result of these choices will trigger on other notes, worded ("Sem: parents gets [[Jan]]"). */
   also: (choices: Map<string, Choice>) => string[];
@@ -22,8 +38,6 @@ export interface SyncReviewInput {
   /** Called when the modal closes without Apply or Import (Cancel, Escape). */
   onCancel?: () => void;
 }
-
-const SIDE_LABEL: Record<Side, string> = { server: 'Radicale', local: 'Obsidian' };
 
 const Value: React.FC<{ value: DisplayValue }> = ({ value }) => {
   if (value.image) return <img className="friendly-review-photo" src={value.image} alt="Photo" />;
@@ -39,8 +53,9 @@ const Value: React.FC<{ value: DisplayValue }> = ({ value }) => {
       </ul>
     );
   }
-  const absent = value.text === NONE;
-  return <span className={absent ? 'friendly-review-none' : undefined}>{value.text}</span>;
+  const classes = ['friendly-review-text'];
+  if (value.muted || value.text === NONE) classes.push('friendly-review-none');
+  return <span className={classes.join(' ')}>{value.text}</span>;
 };
 
 interface ContentProps {
@@ -53,6 +68,10 @@ interface ContentProps {
 
 const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, onCancel, onImported }) => {
   const rows = input.prepared.rows;
+  const { serverName } = input;
+  // A new card has no server side to pick: choosing it would empty the note.
+  const newCard = input.prepared.server === undefined;
+  const sides = pickSides(newCard);
   const [choices, setChoices] = useState<Map<string, Choice>>(new Map());
   const [showAll, setShowAll] = useState(false);
   const [rename, setRename] = useState(true);
@@ -66,9 +85,9 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
   };
   const setAll = (side: Side) => set(rows.filter((r) => r.changed).map((r) => [r.property, side]));
 
-  const visible = rows.filter((r) => r.changed || showAll);
-  const hiddenCount = rows.filter((r) => !r.changed).length;
+  const { visible, hidden: hiddenCount } = shownRows(rows, showAll);
   const ok = canApply(rows, choices) && !importing;
+  const hint = applyHint(undecidedCount(rows, choices));
   // Both follow the current picks.
   const also = useMemo(() => input.also(choices), [input, choices]);
   const renameTo = useMemo(() => input.rename(choices), [input, choices]);
@@ -80,7 +99,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
 
   const resultOf = (row: ReviewRow): DisplayValue | undefined => {
     const choice = effective(row);
-    if (choice === undefined) return undefined;
+    if (choice === undefined || !isDecided(row, choice)) return undefined;
     if (typeof choice === 'object') return { text: choice.custom.trim() === '' ? NONE : choice.custom };
     return displayValue(row, choice, linkName);
   };
@@ -99,7 +118,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
 
   const renderRow = (row: ReviewRow) => {
     const choice = effective(row);
-    const conflict = row.changed && choice === undefined;
+    const conflict = !isDecided(row, choice);
     const classes = ['friendly-review-row'];
     if (!row.changed) classes.push('is-unchanged');
     if (conflict) classes.push('is-conflict');
@@ -107,6 +126,13 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
     const entries = serverOnly.get(row.property) ?? [];
     const custom = typeof choice === 'object' ? choice.custom : undefined;
     const editText = custom ?? (result?.text !== undefined && result.text !== NONE ? result.text : '');
+    const editProps = {
+      className: 'friendly-review-edit',
+      'aria-label': `Custom value for ${row.property}`,
+      placeholder: 'Edit result',
+      value: editText,
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set([[row.property, { custom: e.target.value }]]),
+    };
 
     return (
       <tr key={row.property} className={classes.join(' ')}>
@@ -115,7 +141,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
           {conflict ? <span className="friendly-review-conflict"> Conflict: choose one</span> : null}
         </th>
         <td className={choice === 'server' ? 'is-chosen' : undefined}>
-          <Value value={displayValue(row, 'server', linkName)} />
+          <Value value={cellValue(row, 'server', linkName, { newCardIn: newCard ? serverName : undefined })} />
           {entries.map((entry, i) => (
             <div key={i} className="friendly-review-import">
               {entry.name} is not in Obsidian yet.{' '}
@@ -132,7 +158,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
           {row.changed ? (
             <>
               <div className="friendly-review-pick" role="radiogroup" aria-label={`${row.property} result`}>
-                {(['server', 'local'] as Side[]).map((side) => (
+                {sides.map((side) => (
                   <button
                     key={side}
                     role="radio"
@@ -140,19 +166,15 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
                     className={choice === side ? 'is-selected mod-cta' : undefined}
                     onClick={() => set([[row.property, side]])}
                   >
-                    {SIDE_LABEL[side]}
+                    {sideLabel(side, serverName)}
                   </button>
                 ))}
               </div>
               {row.kind === 'text' ? (
-                <input
-                  type="text"
-                  className="friendly-review-edit"
-                  aria-label={`Custom value for ${row.property}`}
-                  placeholder="Edit result"
-                  value={editText}
-                  onChange={(e) => set([[row.property, { custom: e.target.value }]])}
-                />
+                <>
+                  {isMultiline(row, choice) ? <textarea rows={3} {...editProps} /> : <input type="text" {...editProps} />}
+                  {willRemove(row, choice) ? <span className="friendly-review-removed">(will be removed)</span> : null}
+                </>
               ) : result ? (
                 <Value value={{ ...result, items: result.items?.map((i) => ({ ...i, only: false })) }} />
               ) : null}
@@ -167,10 +189,18 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
 
   return (
     <div className="friendly-review">
+      {input.warnings.map((warning, i) => (
+        <p key={i} className="friendly-review-warning">
+          {warning}
+        </p>
+      ))}
       {input.moveLine ? <p className="friendly-review-move">{input.moveLine}</p> : null}
       <div className="friendly-review-toolbar">
-        <button onClick={() => setAll('server')}>All from Radicale</button>
-        <button onClick={() => setAll('local')}>All from Obsidian</button>
+        {sides.map((side) => (
+          <button key={side} onClick={() => setAll(side)}>
+            All from {sideLabel(side, serverName)}
+          </button>
+        ))}
         <label className="friendly-review-showall">
           <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show all
           {hiddenCount > 0 ? ` (${hiddenCount} unchanged)` : ''}
@@ -181,8 +211,8 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
           <thead>
             <tr>
               <th>Property</th>
-              <th>Radicale</th>
-              <th>Obsidian</th>
+              <th>{sideLabel('server', serverName)}</th>
+              <th>{sideLabel('local', serverName)}</th>
               <th>Result</th>
             </tr>
           </thead>
@@ -218,6 +248,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
           Apply
         </button>
         <button onClick={onCancel}>Cancel</button>
+        {hint ? <span className="friendly-review-hint">{hint}</span> : null}
       </div>
     </div>
   );

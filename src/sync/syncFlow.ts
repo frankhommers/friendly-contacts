@@ -9,7 +9,7 @@ import { coerceNoteProps } from '../contacts/friendly/merge';
 import { RelationContext } from '../contacts/friendly/relations';
 import type { Source } from '../settings/settings.d';
 import type { AdapterInterface } from './adapters/adapterInterface';
-import { Choice, resultProps } from './review';
+import { canApply, Choice, previewChoices, resultProps } from './review';
 import { alsoChanges, MirrorLookup, renameTarget } from './reviewExtras';
 import { BaseHolder, noteSourceId, planSync, SyncPlan } from './sources';
 import { applySync, locateCard, NoteIO, PreparedSync, prepareSync, SyncDeps, SyncOutcome } from './syncContact';
@@ -23,6 +23,10 @@ export interface ReviewRequest {
   title: string;
   /** `Address book: <from> -> <to>` when the card moves. */
   moveLine?: string;
+  /** The address book whose card the server column shows: the target, or for a move the book it comes from. */
+  serverName: string;
+  /** Lines shown above the table (an address book whose contact list could not be read). */
+  warnings: string[];
   prepared: PreparedSync;
   /** "Also changes" for the result of these choices. */
   also(choices: Map<string, Choice>): string[];
@@ -43,6 +47,8 @@ export interface FlowContexts {
   readOnlyCtx: RelationContext;
   /** Waits for the writes `ctx` started (UIDs given to linked notes). */
   settle(): Promise<void>;
+  /** Ids of the active address books whose contact list could not be read for these lookups. */
+  unreadable?: string[];
 }
 
 export interface SyncFlowDeps {
@@ -177,7 +183,10 @@ async function chooseSource(
 
 async function syncRound(deps: SyncFlowDeps): Promise<Round> {
   const end = (result: FlowResult): Round => ({ kind: 'end', result });
-  const where = await chooseSource(deps, await deps.note.readFrontmatter());
+  // Read once: prepare works from the same frontmatter the book was chosen with, so a change in between (say a
+  // new `source:`) is seen by Apply's staleness check instead of being synced to the wrong book.
+  const frontmatter = await deps.note.readFrontmatter();
+  const where = await chooseSource(deps, frontmatter);
   if ('refused' in where) {
     deps.notify(`Not syncing ${deps.name}: ${where.refused}.`);
     return end({ kind: 'refused', message: where.refused });
@@ -199,7 +208,7 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       notify: deps.notify,
     };
     const moveFrom = move && { from: move.location, adapter: deps.adapterFor(move.from), state: deps.stateFor(move.from.id) };
-    const prepared = await prepareSync(deps.note, syncDeps, { sourceId: target.id, move: moveFrom });
+    const prepared = await prepareSync(deps.note, syncDeps, { sourceId: target.id, move: moveFrom, frontmatter });
     if (prepared.kind === 'failed') {
       deps.notify(`Sync failed: ${prepared.message}`);
       return end({ kind: 'failed', message: prepared.message });
@@ -212,24 +221,37 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     const review = prepared.prepared;
     const server = review.server?.friendly.props ?? {};
     const result = (choices: Map<string, Choice>) => resultProps(review.rows, choices, server);
+    // While conflicts are open, "Also changes" and the rename preview keep the note's value for them.
+    const preview = (choices: Map<string, Choice>) => result(previewChoices(review.rows, choices));
     const renameTo = (choices: Map<string, Choice>): { to: string; blocked?: string } | undefined => {
       // A name changed since the last Sync on either side (against the base; without one, the note's values)
       // renames; a note renamed by hand with unchanged names is left alone, and a declined rename is not offered
       // again (the base then holds the new name).
-      const to = renameTarget(review.base ?? review.local, result(choices), deps.rows);
+      const to = renameTarget(review.base ?? review.local, preview(choices), deps.rows);
       if (to === undefined || to === deps.name) return undefined;
       return deps.nameTaken(to) ? { to, blocked: `A note named "${to}" already exists in this folder.` } : { to };
     };
     const { mirror } = deps;
+    const sourceName = sourceNameIn(deps.sources);
     const decision = await deps.review({
       title: review.server ? deps.name : `New card in ${target.name}`,
       moveLine: move ? `Address book: ${move.from.name} -> ${target.name}` : undefined,
+      serverName: (move?.from ?? target).name,
+      warnings: (contexts.unreadable ?? []).map(
+        (id) => `Could not read ${sourceName(id)}; relationships to people only in that address book may show as changed.`,
+      ),
       prepared: review,
-      also: (choices) => (mirror ? alsoChanges(deps.path, review.local, result(choices), deps.rows, mirror, mirror.nameOf) : []),
+      also: (choices) => (mirror ? alsoChanges(deps.path, review.local, preview(choices), deps.rows, mirror, mirror.nameOf) : []),
       rename: renameTo,
     });
     if (decision.kind === 'cancel') return end({ kind: 'cancelled', plan });
     if (decision.kind === 'reopen') return { kind: 'reopen' };
+    if (!canApply(review.rows, decision.choices)) {
+      // The screen keeps Apply disabled until every conflict is decided; getting here is a bug.
+      const message = 'a conflict was not decided (a bug in the review screen); nothing was written';
+      deps.notify(`Sync failed: ${message}.`);
+      return end({ kind: 'failed', message });
+    }
 
     if (move) {
       // The card must still be only in the book it moves from; anything else is a change on the server.

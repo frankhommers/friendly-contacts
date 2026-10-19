@@ -83,16 +83,43 @@ export function isUpToDate(rows: ReviewRow[]): boolean {
   return !rows.some((r) => r.changed);
 }
 
-export function canApply(rows: ReviewRow[], choices: Map<string, Choice>): boolean {
-  return rows.every((r) => !r.changed || r.preselect !== undefined || choices.has(r.property));
+/**
+ * Whether a row's result is settled by `choice` (the user's pick, if any) or the preselection. An empty
+ * "Edit result" decides nothing on a conflict; on a row with a preselection it removes the property.
+ */
+export function isDecided(row: ReviewRow, choice: Choice | undefined): boolean {
+  if (!row.changed) return true;
+  const effective = choice ?? row.preselect;
+  if (effective === undefined) return false;
+  return !(typeof effective === 'object' && row.preselect === undefined && effective.custom.trim() === '');
 }
 
-/** The properties after applying the choices to `server` (F(S)); rows that are not `changed` are ignored. */
+/** The conflicts still to decide. */
+export function undecidedCount(rows: ReviewRow[], choices: Map<string, Choice>): number {
+  return rows.filter((r) => !isDecided(r, choices.get(r.property))).length;
+}
+
+export function canApply(rows: ReviewRow[], choices: Map<string, Choice>): boolean {
+  return undecidedCount(rows, choices) === 0;
+}
+
+/** The choices for a preview of the result while conflicts are open: an undecided conflict keeps the note's value. */
+export function previewChoices(rows: ReviewRow[], choices: Map<string, Choice>): Map<string, Choice> {
+  const preview = new Map(choices);
+  for (const row of rows) if (!isDecided(row, choices.get(row.property))) preview.set(row.property, 'local');
+  return preview;
+}
+
+/**
+ * The properties after applying the choices to `server` (F(S)); rows that are not `changed` are ignored.
+ * Throws on an undecided conflict (check `canApply` first): no side is ever picked silently.
+ */
 export function resultProps(rows: ReviewRow[], choices: Map<string, Choice>, server: Props): Props {
   const result: Props = { ...server };
   for (const row of rows) {
     if (!row.changed) continue;
-    const choice = choices.get(row.property) ?? row.preselect ?? 'server';
+    const choice = choices.get(row.property) ?? row.preselect;
+    if (choice === undefined || !isDecided(row, choice)) throw new Error(`The conflict in ${row.property} is not decided.`);
     let value: FriendlyValue | undefined;
     if (choice === 'server') value = row.server;
     else if (choice === 'local') value = row.local;

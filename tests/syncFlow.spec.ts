@@ -422,6 +422,118 @@ describe('syncFlow: review outcomes', () => {
   });
 });
 
+describe('syncFlow: the review request', () => {
+  it('names the server column after the book the card is in: the target, or the book a move comes from', async () => {
+    const sync = setup({ local: { ...JAN, mobile: '06-2', source: 'Family' } });
+    sync.family.seed(card());
+    sync.setScript([() => ({ kind: 'cancel' })]);
+    await sync.run();
+    expect(sync.requests[0].serverName).toBe('Family');
+
+    const move = setup({ local: { ...JAN, mobile: '06-2', source: 'Family' } });
+    move.radicale.seed(card());
+    move.setScript([() => ({ kind: 'cancel' })]);
+    await move.run();
+    expect(move.requests[0].moveLine).toBe('Address book: Radicale -> Family');
+    expect(move.requests[0].serverName).toBe('Radicale');
+
+    const { uid: _uid, ...withoutUid } = JAN;
+    const created = setup({ local: { ...withoutUid, source: 'Family' } });
+    created.setScript([() => ({ kind: 'cancel' })]);
+    await created.run();
+    expect(created.requests[0].serverName).toBe('Family');
+  });
+
+  it('warns about address books whose contact list could not be read', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    t.deps.contexts = async () => ({ ctx: noRelations, readOnlyCtx: noRelations, settle: async () => {}, unreadable: ['family'] });
+    t.setScript([() => ({ kind: 'cancel' })]);
+    await t.run();
+    expect(t.requests[0].warnings).toEqual([
+      'Could not read Family; relationships to people only in that address book may show as changed.',
+    ]);
+  });
+
+  it('no warnings when every contact list loaded', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    t.setScript([() => ({ kind: 'cancel' })]);
+    await t.run();
+    expect(t.requests[0].warnings).toEqual([]);
+  });
+
+  it('previews also changes and the rename while a conflict is still open', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card('06-3'), false); // no base: every difference is a conflict
+    let also: string[] | undefined;
+    let rename: ReturnType<ReviewRequest['rename']> = { to: 'x' };
+    t.setScript([
+      (r) => {
+        expect(r.prepared.rows.find((row) => row.property === 'mobile')?.preselect).toBeUndefined();
+        also = r.also(new Map());
+        rename = r.rename(new Map());
+        return { kind: 'cancel' };
+      },
+    ]);
+    await t.run();
+    expect(also).toEqual([]);
+    expect(rename).toBeUndefined();
+  });
+
+  it('Apply with an undecided conflict is a bug: a Notice, and nothing is written', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    const href = t.radicale.seed(card('06-3'), false);
+    t.setScript([() => preselected()]);
+    const result = await t.run();
+    expect(result).toMatchObject({ kind: 'failed' });
+    expect(t.notices).toEqual([expect.stringMatching(/^Sync failed: .*conflict.*nothing was written/)]);
+    expect(pushCount(t)).toBe(0);
+    expect(t.note.writes).toEqual([]);
+    expect(t.radicale.cards.get(href)!.raw).toBe(card('06-3'));
+    expect(t.radicale.entries.size).toBe(0);
+  });
+
+  it('the note is read once per round: a change after the book was chosen is caught at Apply', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2' } });
+    t.radicale.seed(card());
+    const contexts = t.deps.contexts;
+    let first = true;
+    t.deps.contexts = async () => {
+      // The user sets source: while the address books are being searched (after the book was chosen).
+      if (first) t.note.frontmatter.source = 'Family';
+      first = false;
+      return contexts();
+    };
+    const result = await t.run();
+    expect(t.notices[0]).toBe('Jan de Vries changed while reviewing');
+    expect(t.requests).toHaveLength(2);
+    expect(t.requests[1].moveLine).toBe('Address book: Radicale -> Family');
+    expect(result).toMatchObject({ kind: 'done', plan: { kind: 'move', to: 'family' } });
+    expect(t.note.frontmatter.source).toBe('Family');
+  });
+
+  it('resolves only after a slow settle has finished', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    let settled = false;
+    t.deps.contexts = async () => ({
+      ctx: noRelations,
+      readOnlyCtx: noRelations,
+      settle: () =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            settled = true;
+            resolve();
+          }, 30),
+        ),
+    });
+    const result = await t.run();
+    expect(settled).toBe(true);
+    expect(result).toMatchObject({ kind: 'done' });
+  });
+});
+
 describe('syncFlow: also changes and rename', () => {
   /** The card was renamed on the server (another device); the note still has the old names. */
   const renamedOnServer = (t: ReturnType<typeof setup>) => {
