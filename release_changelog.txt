@@ -1,8 +1,7 @@
-## Friendly Contacts 3.0.0-alpha.5
+## Friendly Contacts 3.0.0-alpha.6
 
-- "Insights" is now **Import** (inbox icon in the sidebar header): contacts on your address books that have no note yet, grouped per address book with a search field (also finds "René" when you type "rene"). Import one, all of one address book, or everything at once (with a confirmation). The "Group insights" switch is gone.
-- The background checks in the settings have plain names.
-- From alpha.4: clearer address book settings. From alpha.3: no more "[object DocumentFragment]" in the settings.
+- **Sync button on an open contact note:** a sync icon (two arrows in a circle) at the top right of a contact note starts Sync for that contact. Also as **Sync contact** in the note's ⋯ menu and the file explorer's right-click menu. Only shown on contact notes when an address book is set up.
+- From alpha.5: the Import panel with search per address book.
 
 Known issue: relationships are not yet written the way DAVx5 (Android) and Apple store them; relationships set on the phone are not read yet. Avoid editing relationships on contacts you also edit on your phone until this is fixed.
 
