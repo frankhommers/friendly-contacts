@@ -492,3 +492,123 @@
 .vcf-relations-list .setting-item-control {
   gap: 6px;
 }
+
+/* Sync review screen */
+.friendly-review-modal {
+  width: min(960px, 96vw);
+  max-width: 96vw;
+}
+
+.friendly-review-toolbar,
+.friendly-review-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.friendly-review-scroll {
+  overflow-x: auto;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.friendly-review-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.friendly-review-table th,
+.friendly-review-table td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--background-modifier-border);
+  overflow-wrap: anywhere;
+}
+
+.friendly-review-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--background-primary);
+}
+
+.friendly-review-table td {
+  min-width: 140px;
+}
+
+.friendly-review-row.is-unchanged {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.friendly-review-row.is-conflict {
+  box-shadow: inset 3px 0 0 var(--color-red);
+  background: var(--background-modifier-error-hover, transparent);
+}
+
+.friendly-review-conflict {
+  display: block;
+  color: var(--color-red);
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+}
+
+.friendly-review-table td.is-chosen {
+  background: var(--background-modifier-hover);
+}
+
+.friendly-review-none {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.friendly-review-photo {
+  max-width: 96px;
+  max-height: 96px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.friendly-review-items {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.friendly-review-items li.is-only {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+
+.friendly-review-only {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+}
+
+.friendly-review-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.friendly-review-edit {
+  width: 100%;
+}
+
+.friendly-review-import {
+  margin-top: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.friendly-review-blocked {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.friendly-review-also,
+.friendly-review-rename {
+  margin: 8px 0;
+}
