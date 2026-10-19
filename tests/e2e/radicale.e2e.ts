@@ -490,6 +490,21 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await serverCard(JAN_HREF)).toBe(serverVersion);
   });
 
+  it('4b. the same field edited on both sides is decided by the user: Obsidian', async () => {
+    await putCard(JAN_HREF, (await serverCard(JAN_HREF)).replace('TITLE:Head baker', 'TITLE:Master baker'));
+    const before = unfolded(await serverCard(JAN_HREF));
+    jan.frontmatter.title = 'Pastry chef';
+
+    expect(await sync(jan, { title: 'local' })).toBe('pushed');
+    expect(jan.frontmatter.title).toBe('Pastry chef');
+    expect(pushes).toHaveLength(1);
+
+    const after = unfolded(await serverCard(JAN_HREF));
+    expect(minus(before, after).filter((l) => !isRev(l))).toEqual(['TITLE:Master baker']);
+    expect(minus(after, before).filter((l) => !isRev(l))).toEqual(['TITLE:Pastry chef']);
+    expect(await sync(jan)).toBe('unchanged');
+  });
+
   it('5. children: [[Sem]] becomes RELATED;TYPE=child:urn:uuid:<sem uid> on the server', async () => {
     await putCard(`${BOOK}sem-card.vcf`, SEM_CARD);
     notes = [...notes, { name: 'Sem', uid: SEM_UID }];
