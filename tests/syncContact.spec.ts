@@ -753,7 +753,7 @@ describe('applySync', () => {
     expect(await taken.sync({}, { sourceName: 'Radicale', rename: 'Jan Bakker' })).toMatchObject({ kind: 'done' });
     expect(taken.note.renames).toEqual([]);
     expect(taken.note.log.filter((e) => e !== 'read')).toEqual(['write:Jan de Vries']);
-    expect(taken.notices).toEqual([expect.stringContaining('Jan Bakker')]);
+    expect(taken.notices).toEqual(['Not renamed: "Jan Bakker" already exists.']);
     expect(taken.note.frontmatter.title).toBe('Master baker');
     expect(taken.entries.get(UID)?.raw).toBe(v2);
   });

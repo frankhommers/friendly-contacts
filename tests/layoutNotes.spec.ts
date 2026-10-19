@@ -55,9 +55,14 @@ vi.mock("obsidian", async (importOriginal) => {
 
 vi.mock("src/ui/modals/fileExistsModal", () => ({
   FileExistsModal: class {
-    constructor(_app: unknown, private path: string, private callback: (action: "replace" | "skip") => void) {}
+    constructor(
+      _app: unknown,
+      private path: string,
+      private callback: (action: "replace" | "skip") => void,
+      private message?: string,
+    ) {}
     open() {
-      h.dialogs.push(this.path);
+      h.dialogs.push(this.message === undefined ? this.path : `${this.path}: ${this.message}`);
       setTimeout(() => this.callback(h.choice), 5);
     }
   },
@@ -72,7 +77,7 @@ vi.mock("src/context/sharedSettingsContext", () => ({
 
 import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { createContactFile } from "src/file/file";
-import { newContactLocation, renameContact, resetLayoutWarning, runSteps } from "src/contacts/layoutNotes";
+import { newContactLocation, renameBlocked, renameContact, resetLayoutWarning, runSteps } from "src/contacts/layoutNotes";
 import { noteIO } from "src/contacts/obsidianNotes";
 
 type Folder = InstanceType<typeof h.TFolder>;
@@ -295,6 +300,32 @@ describe("new contacts", () => {
     expect((v.nodes.get("Contacts/Jan/Jan.md") as File).content).toBe("new");
   });
 
+  it("folder holding a different contact note asks first", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    v.note("Contacts/Jan/index.md", CONTACT, "other");
+    h.choice = "skip";
+    expect(await createContactFile(v.app, "Contacts", "new", "Jan.md")).toBe("Contacts/Jan/Jan.md");
+    expect(h.dialogs).toEqual([
+      'Contacts/Jan/Jan.md: The folder "Contacts/Jan" already holds a contact (index). Create "Contacts/Jan/Jan.md" there anyway?',
+    ]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/index.md"]);
+    h.choice = "replace";
+    await createContactFile(v.app, "Contacts", "new", "Jan.md");
+    expect((v.nodes.get("Contacts/Jan/Jan.md") as File).content).toBe("new");
+    expect((v.nodes.get("Contacts/Jan/index.md") as File).content).toBe("other");
+  });
+
+  it("next to: a contact note inside the folder asks first", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    v.note("Contacts/Jan/Sem.md", CONTACT, "sem");
+    h.choice = "skip";
+    await createContactFile(v.app, "Contacts", "new", "Jan.md");
+    expect(h.dialogs).toHaveLength(1);
+    expect(v.nodes.has("Contacts/Jan.md")).toBe(false);
+  });
+
   it("a skipped note next to its folder creates no folder", async () => {
     useLayout(next);
     const v = fakeApp();
@@ -359,6 +390,41 @@ describe("rename", () => {
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan Bakker", "Contacts/Jan Bakker/Jan Bakker.md"]);
   });
 
+  it("next to: folder move fails, note stays put", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan.md");
+    v.note("Contacts/Jan/Photo.md", null);
+    const realRename = v.renameFile;
+    let folderMoves = 0;
+    (v.app as { fileManager: { renameFile: unknown } }).fileManager.renameFile = async (node: Node, to: string) => {
+      if (node instanceof h.TFolder) {
+        folderMoves++;
+        throw new Error("folder is locked");
+      }
+      await realRename(node, to);
+    };
+    await expect(renameContact(v.app, jan as never, "Jan Bakker")).rejects.toThrow(/folder is locked/);
+    expect(folderMoves).toBe(1);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Photo.md"]);
+  });
+
+  it("the review knows why a rename is blocked", () => {
+    useLayout(inside);
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan/Jan.md");
+    expect(renameBlocked(v.app, jan as never, "Jan Bakker")).toBeUndefined();
+    v.folder("Contacts/Jan Bakker");
+    expect(renameBlocked(v.app, jan as never, "Jan Bakker")).toBe('A folder or note named "Jan Bakker" already exists.');
+    const family = v.note("Contacts/Family/Family.md");
+    v.note("Contacts/Family/Sem.md");
+    expect(renameBlocked(v.app, family as never, "Fam")).toBe("Contacts/Family holds other contacts (Sem); rename it by hand.");
+    useLayout(DEFAULT_SETTINGS.layout);
+    const anna = v.note("Contacts/Anna.md");
+    v.note("Contacts/Ann.md");
+    expect(renameBlocked(v.app, anna as never, "Ann")).toBe('A note named "Ann" already exists in this folder.');
+  });
+
   it("a taken target is reported and nothing moves", async () => {
     useLayout(inside);
     const v = fakeApp();
@@ -402,19 +468,40 @@ describe("runSteps", () => {
     expect(await runSteps(v.app, [{ kind: "move", from: "Contacts/A", to: "Contacts/B" }])).toEqual({ done: 1, failed: [] });
   });
 
-  it("a failed step stops the steps that depend on it, others still run", async () => {
+  it("a failed step stops the rest of that contact; other contacts still run", async () => {
     const v = fakeApp();
     v.note("Contacts/Jan.md");
     v.note("Contacts/Sem.md");
     const result = await runSteps(v.app, [
-      { kind: "move", from: "Contacts/Gone", to: "Contacts/Gone 2" },
-      { kind: "move", from: "Contacts/Gone 2/Gone.md", to: "Contacts/Gone 2/Gone 2.md" },
-      { kind: "createFolder", to: "Contacts/Sem" },
-      { kind: "move", from: "Contacts/Sem.md", to: "Contacts/Sem/Sem.md" },
+      [
+        { kind: "move", from: "Contacts/Gone", to: "Contacts/Gone 2" },
+        { kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan 2.md" },
+      ],
+      [
+        { kind: "createFolder", to: "Contacts/Sem" },
+        { kind: "move", from: "Contacts/Sem.md", to: "Contacts/Sem/Sem.md" },
+      ],
     ]);
     expect(result.done).toBe(2);
     expect(result.failed.map((f) => f.reason)).toEqual(["missing: Contacts/Gone", "an earlier step failed"]);
-    expect(v.paths()).toContain("Contacts/Sem/Sem.md");
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md", "Contacts/Sem", "Contacts/Sem/Sem.md"]);
+  });
+
+  it("a flat list is one contact: a failure stops everything after it", async () => {
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    const result = await runSteps(v.app, [
+      { kind: "move", from: "Contacts/Jan", to: "Contacts/Jan 2" },
+      { kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan 2.md" },
+    ]);
+    expect(result).toEqual({
+      done: 0,
+      failed: [
+        { step: { kind: "move", from: "Contacts/Jan", to: "Contacts/Jan 2" }, reason: "missing: Contacts/Jan" },
+        { step: { kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan 2.md" }, reason: "an earlier step failed" },
+      ],
+    });
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md"]);
   });
 
   it("an existing target is not overwritten", async () => {
@@ -431,9 +518,9 @@ describe("runSteps", () => {
     v.folder("Contacts/Empty");
     v.note("Contacts/Full/Poem.md", null);
     const result = await runSteps(v.app, [
-      { kind: "deleteFolderIfEmpty", to: "Contacts/Empty" },
-      { kind: "deleteFolderIfEmpty", to: "Contacts/Full" },
-      { kind: "move", from: "Contacts", to: "Other" },
+      [{ kind: "deleteFolderIfEmpty", to: "Contacts/Empty" }],
+      [{ kind: "deleteFolderIfEmpty", to: "Contacts/Full" }],
+      [{ kind: "move", from: "Contacts", to: "Other" }],
     ]);
     expect(result.done).toBe(1);
     expect(result.failed.map((f) => f.reason)).toEqual(["not empty: Contacts/Full", "refused: Contacts is the contacts folder"]);

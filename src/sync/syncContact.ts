@@ -241,7 +241,7 @@ export async function applySync(
     if (opts.rename !== undefined) {
       // The card is written by now: a rename problem is a warning, and the note and the base are still written.
       try {
-        if ((await note.rename(opts.rename)) === 'exists') deps.notify(`Not renamed: a note named "${opts.rename}" already exists.`);
+        if ((await note.rename(opts.rename)) === 'exists') deps.notify(`Not renamed: "${opts.rename}" already exists.`);
       } catch (e) {
         deps.notify(`Not renamed to "${opts.rename}": ${errorText(e)}`);
       }

@@ -62,8 +62,9 @@ export interface FlowContexts {
 
 export interface SyncFlowDeps {
   note: NoteIO;
-  /** The note's path and file name (without extension). */
+  /** The note's path. */
   path: string;
+  /** The contact's name: the note's file name, or in folder layout with a fixed note name its folder's name. */
   name: string;
   rows: MappingRow[];
   /** Every configured address book, and the enabled ones. */
@@ -79,8 +80,8 @@ export interface SyncFlowDeps {
   notify(message: string): void;
   /** Mirroring as it runs on this device; absent when it does not (then there are no "Also changes"). */
   mirror?: MirrorLookup & { nameOf(path: string): string };
-  /** True when renaming the contact to this name would land on another note (or folder, in folder layout). */
-  nameTaken(name: string): boolean;
+  /** Why renaming the contact to this name cannot be done (a target exists, ...), or undefined when it can. */
+  renameBlocked(name: string): string | undefined;
   /** True when a rename renames the contact's folder too (the note is in its own folder). */
   renamesFolder?: boolean;
 }
@@ -241,11 +242,8 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       const to = renameTarget(review.base ?? review.local, preview(choices), deps.rows);
       if (to === undefined || to === deps.name) return undefined;
       const offer: RenameOffer = deps.renamesFolder ? { to, folder: true } : { to };
-      if (!deps.nameTaken(to)) return offer;
-      const blocked = deps.renamesFolder
-        ? `A folder or note named "${to}" already exists.`
-        : `A note named "${to}" already exists in this folder.`;
-      return { ...offer, blocked };
+      const blocked = deps.renameBlocked(to);
+      return blocked === undefined ? offer : { ...offer, blocked };
     };
     const { mirror } = deps;
     const sourceName = sourceNameIn(deps.sources);

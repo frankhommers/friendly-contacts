@@ -13,7 +13,7 @@ import {
   remoteContacts,
   syncRelationContexts,
 } from "src/contacts/obsidianNotes";
-import {contactNameFor, renamesFolder, renameTaken} from "src/contacts/layoutNotes";
+import {contactNameFor, renameBlocked, renamesFolder} from "src/contacts/layoutNotes";
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -197,7 +197,7 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
     review: (request) => openReview(app, file, request),
     notify: (message) => new Notice(message),
     mirror: mirrorLookup(app, file),
-    nameTaken: (newName) => renameTaken(app, file, newName),
+    renameBlocked: (newName) => renameBlocked(app, file, newName),
     renamesFolder: renamesFolder(app, file),
   };
   return syncFlow(deps);

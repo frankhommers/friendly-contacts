@@ -4,15 +4,17 @@ import { createRoot, Root } from "react-dom/client"
 
 interface FileExistsModalProps {
 	filePath: string;
+	/** Asked instead of "The file ... already exists"; Replace then writes the file anyway. */
+	message?: string;
 	onClose: () => void;
 	onAction: (action: "replace" | "skip") => void;
 }
 
 
-const FileExistsModalContent: React.FC<FileExistsModalProps> = ({ filePath, onClose, onAction }) => {
+const FileExistsModalContent: React.FC<FileExistsModalProps> = ({ filePath, message, onClose, onAction }) => {
 	return (
 		<div className="contact-modal'">
-			<p>The file "{filePath}" already exists. What would you like to do?</p>
+			<p>{message ?? `The file "${filePath}" already exists. What would you like to do?`}</p>
 			<div className="contact-modal-buttons">
 				<button className="mod-cta"
 					onClick={() => {
@@ -41,7 +43,7 @@ export class FileExistsModal extends Modal {
 	private reactRoot: Root | null = null;
 	private answered = false;
 
-	constructor(app: App, filePath:string, callback?: (action: "replace" | "skip") => void) {
+	constructor(app: App, filePath:string, callback?: (action: "replace" | "skip") => void, private message?: string) {
 		super(app);
 		this.filePath = filePath;
 		this.callback = callback;
@@ -55,6 +57,7 @@ export class FileExistsModal extends Modal {
 		this.reactRoot.render(
 			<FileExistsModalContent
 				filePath={this.filePath}
+				message={this.message}
 				onAction={(action) => {
 					this.answered = true;
 					this.callback?.(action);

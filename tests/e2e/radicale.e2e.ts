@@ -323,7 +323,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
         return { kind: 'apply', choices: picked, rename: false };
       },
       notify: (msg) => void notices.push(msg),
-      nameTaken: () => false,
+      renameBlocked: () => undefined,
     });
   }
 

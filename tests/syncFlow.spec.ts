@@ -159,7 +159,7 @@ function setup(opts: { local?: Record<string, unknown>; books?: Book[]; defaultS
       return step(request);
     },
     notify: (message) => void notices.push(message),
-    nameTaken: (basename) => taken.has(basename),
+    renameBlocked: (name) => (taken.has(name) ? `A note named "${name}" already exists in this folder.` : undefined),
   };
   const setScript = (steps: typeof script) => {
     script = steps;
@@ -605,7 +605,7 @@ describe('syncFlow: also changes and rename', () => {
     expect(t.note.frontmatter.lastname).toBe('Bakker');
   });
 
-  it('in folder layout the rename says folder and note', async () => {
+  it('in folder layout the rename says folder and note, and why it is blocked', async () => {
     const t = setup({ local: { ...JAN, source: 'Radicale' } });
     t.deps.renamesFolder = true;
     renamedOnServer(t);
@@ -613,7 +613,7 @@ describe('syncFlow: also changes and rename', () => {
     t.setScript([
       (r) => {
         offered.push(r.rename(new Map()));
-        t.taken.add('Jan Bakker');
+        t.deps.renameBlocked = () => 'Contacts/Jan holds other contacts (Sem); rename it by hand.';
         offered.push(r.rename(new Map()));
         return { kind: 'cancel' };
       },
@@ -621,7 +621,7 @@ describe('syncFlow: also changes and rename', () => {
     await t.run();
     expect(offered).toEqual([
       { to: 'Jan Bakker', folder: true },
-      { to: 'Jan Bakker', folder: true, blocked: 'A folder or note named "Jan Bakker" already exists.' },
+      { to: 'Jan Bakker', folder: true, blocked: 'Contacts/Jan holds other contacts (Sem); rename it by hand.' },
     ]);
   });
 

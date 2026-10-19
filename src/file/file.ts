@@ -1,5 +1,5 @@
 import {App, normalizePath, Notice, Platform, TFile, TFolder, Vault, Workspace} from "obsidian";
-import {ensureFolder, newContactLocation} from "src/contacts/layoutNotes";
+import {contactsInFolder, ensureFolder, newContactLocation} from "src/contacts/layoutNotes";
 import {getSettings} from "src/context/sharedSettingsContext";
 import {FileExistsModal} from "src/ui/modals/fileExistsModal";
 import {createNameSlug} from "src/util/nameUtils";
@@ -30,14 +30,15 @@ async function openCreatedFile(app: App, filePath: string) {
 }
 
 /**
- * Writes the file; when it exists, waits for the user to pick Replace or Skip, so callers see the real outcome.
+ * Writes the file; when it exists, or `clash` says why it should not simply be written (a contact's folder that
+ * already holds another contact), waits for the user to pick Replace or Skip, so callers see the real outcome.
  * `folder` (a contact's own folder) is created right before the note is written, so a Skip leaves nothing behind;
  * an existing folder is used as it is.
  */
-async function handleFileCreation(app: App, filePath: string, content: string, folder?: string): Promise<void> {
+async function handleFileCreation(app: App, filePath: string, content: string, folder?: string, clash?: string): Promise<void> {
   const fileExists = await app.vault.adapter.exists(filePath);
 
-  if (!fileExists) {
+  if (!fileExists && clash === undefined) {
     if (folder !== undefined) await ensureFolder(app, folder);
     await app.vault.adapter.write(filePath, content);
     return;
@@ -52,14 +53,14 @@ async function handleFileCreation(app: App, filePath: string, content: string, f
         if (folder !== undefined) await ensureFolder(app, folder);
         await app.vault.adapter.write(filePath, content);
         await openCreatedFile(app, filePath);
-        new Notice(`File overwritten.`);
+        new Notice(fileExists ? `File overwritten.` : `File created.`);
       } catch (error) {
         reject(error);
         return;
       } finally {
         resolve();
       }
-    }).open();
+    }, fileExists ? undefined : clash).open();
   });
 }
 
@@ -82,7 +83,12 @@ export async function createContactFile(
   const name = filename.replace(/\.md$/i, "");
   const location = newContactLocation(app, name, folderPath);
   const filePath = normalizePath(location.note);
-  await handleFileCreation(app, filePath, content, location.folder);
+  // The contact's folder exists and holds another contact (e.g. `index.md` from before a pattern change): ask first.
+  const others = location.folder === undefined ? [] : contactsInFolder(app, location.folder).filter((f) => f.path !== filePath);
+  const clash = others.length > 0
+    ? `The folder "${location.folder}" already holds a contact (${others.map((f) => f.basename).join(", ")}). Create "${filePath}" there anyway?`
+    : undefined;
+  await handleFileCreation(app, filePath, content, location.folder, clash);
   return filePath;
 }
 

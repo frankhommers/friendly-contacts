@@ -96,7 +96,7 @@ export async function ensureFolder(app: App, path: string): Promise<void> {
 }
 
 /** Every contact note in `folder` and its sub-folders other than `except`. */
-function otherContactsIn(app: App, folder: TFolder, except: TFile): TFile[] {
+function otherContactsIn(app: App, folder: TFolder, except?: TFile): TFile[] {
   const found: TFile[] = [];
   const walk = (node: TAbstractFile) => {
     if (node instanceof TFolder) node.children.forEach(walk);
@@ -106,14 +106,42 @@ function otherContactsIn(app: App, folder: TFolder, except: TFile): TFile[] {
   return found;
 }
 
+/** The contact notes in the folder at `path` (and its sub-folders); empty when there is no such folder. */
+export function contactsInFolder(app: App, path: string): TFile[] {
+  const folder = byPath(app, path);
+  return folder instanceof TFolder ? otherContactsIn(app, folder) : [];
+}
+
 /** The contact's name for `file` in the current layout (the folder's name for a fixed note name such as `index`). */
 export function contactNameFor(app: App, file: TFile): string {
   return contactNameOf(file.path, contactsBase(), effectiveLayout(), folderExists(app));
 }
 
-/** True when renaming `file`'s contact to `newName` would land on something that exists. */
-export function renameTaken(app: App, file: TFile, newName: string): boolean {
-  return planFor(app, file, newName).skipped !== undefined;
+/**
+ * Why renaming `file`'s contact to `newName` cannot be done, or undefined when it can: a target exists, or the
+ * contact's folder holds other contacts (then it is a category, not this person's folder).
+ */
+export function renameBlocked(app: App, file: TFile, newName: string): string | undefined {
+  const plan = planFor(app, file, newName);
+  if (plan.skipped !== undefined) {
+    return contactFolder(app, file) !== undefined
+      ? `A folder or note named "${newName}" already exists.`
+      : `A note named "${newName}" already exists in this folder.`;
+  }
+  return folderMoveProblem(app, file, plan.steps);
+}
+
+/** A reason when a folder move in `steps` is not this contact's own folder, or that folder holds other contacts. */
+function folderMoveProblem(app: App, file: TFile, steps: FsStep[]): string | undefined {
+  const folder = contactFolder(app, file);
+  for (const step of steps) {
+    if (step.kind !== "move" || step.from === undefined || !(byPath(app, step.from) instanceof TFolder)) continue;
+    // Only the folder derived from this note may move, and only when it is this contact's alone.
+    if (step.from !== folder) return `Refused to move ${step.from}: it is not this contact's folder.`;
+    const others = otherContactsIn(app, byPath(app, folder) as TFolder, file);
+    if (others.length > 0) return `${folder} holds other contacts (${others.map((f) => f.basename).join(", ")}); rename it by hand.`;
+  }
+  return undefined;
 }
 
 /** True when renaming `file`'s contact renames its folder too (the note is in its own folder). */
@@ -144,59 +172,42 @@ function planFor(app: App, file: TFile, newName: string): { steps: FsStep[]; ski
 export async function renameContact(app: App, file: TFile, newName: string): Promise<"renamed" | "exists"> {
   const plan = planFor(app, file, newName);
   if (plan.skipped !== undefined) return "exists";
-  const folder = contactFolder(app, file);
-  for (const step of plan.steps) {
-    if (step.kind !== "move" || step.from === undefined || !(byPath(app, step.from) instanceof TFolder)) continue;
-    // Only the folder derived from this note may move, and only when it is this contact's alone.
-    if (step.from !== folder) throw new Error(`refused to move ${step.from}: it is not this contact's folder`);
-    const others = otherContactsIn(app, byPath(app, folder) as TFolder, file);
-    if (others.length > 0) {
-      throw new Error(`${folder} holds other contacts (${others.map((f) => f.basename).join(", ")}); rename it by hand`);
-    }
-  }
+  const problem = folderMoveProblem(app, file, plan.steps);
+  if (problem !== undefined) throw new Error(problem);
   const result = await runSteps(app, plan.steps);
   if (result.failed.length > 0) throw new Error(result.failed.map((f) => f.reason).join("; "));
   return "renamed";
 }
 
-function under(path: string, folder: string): boolean {
-  return path === folder || path.startsWith(`${folder}/`);
-}
+type StepResult = { done: number; failed: { step: FsStep; reason: string }[] };
 
 /**
- * Applies the steps in order. Before each move the source is looked up again (another plugin may have moved it
- * already): a missing source whose target exists counts as done. A failed step is reported and every later step
- * that touches its paths is skipped (the rest of that contact); independent steps still run.
+ * Applies the steps in order. `steps` is one contact's steps, or a list of them per contact. Before each move the
+ * source is looked up again (another plugin may have moved it already): a missing source whose target exists counts
+ * as done. A failed step is reported and the rest of that contact's steps are skipped (`an earlier step failed`);
+ * other contacts still run.
  */
-export async function runSteps(
-  app: App,
-  steps: FsStep[],
-): Promise<{ done: number; failed: { step: FsStep; reason: string }[] }> {
+export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<StepResult> {
+  const groups = (steps.length > 0 && Array.isArray(steps[0]) ? steps : [steps]) as FsStep[][];
   const base = contactsBase();
-  const failed: { step: FsStep; reason: string }[] = [];
-  const blocked: string[] = [];
-  let done = 0;
-
-  for (const step of steps) {
-    const paths = [step.from, step.to].filter((p): p is string => p !== undefined);
-    // Depends on a failed step: it works on (or inside) a path that step left as it was; deleting a folder also
-    // depends on what was to leave it.
-    const dependent =
-      paths.some((p) => blocked.some((b) => under(p, b))) ||
-      (step.kind === "deleteFolderIfEmpty" && blocked.some((b) => under(b, step.to)));
-    if (dependent) {
-      failed.push({ step, reason: "an earlier step failed" });
-      continue;
-    }
-    const reason = await runStep(app, step, base);
-    if (reason === undefined) {
-      done++;
-    } else {
-      failed.push({ step, reason });
-      blocked.push(...paths);
+  const result: StepResult = { done: 0, failed: [] };
+  for (const group of groups) {
+    let stopped = false;
+    for (const step of group) {
+      if (stopped) {
+        result.failed.push({ step, reason: "an earlier step failed" });
+        continue;
+      }
+      const reason = await runStep(app, step, base);
+      if (reason === undefined) {
+        result.done++;
+      } else {
+        result.failed.push({ step, reason });
+        stopped = true;
+      }
     }
   }
-  return { done, failed };
+  return result;
 }
 
 /** Runs one step; a reason when it could not. */
