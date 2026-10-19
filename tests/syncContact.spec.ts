@@ -941,6 +941,31 @@ describe('old relationship lines on a 3.0 card', () => {
     expect(t.note.frontmatter.title).toBe('Master baker');
   });
 
+  it('a rewrite-only Apply is stale when the note changed meanwhile, and writes nothing', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: local(LEGACY), ctx: people });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([]);
+    t.note.frontmatter.title = 'Chef';
+    expect(await t.apply(prepared)).toEqual({ kind: 'stale', reason: 'note' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.sets).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(LEGACY);
+  });
+
+  it('a rewrite-only Apply is stale when the card changed meanwhile (412), and writes nothing else', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: local(LEGACY), ctx: people });
+    const prepared = await reviewOf(t);
+    const other = edit(LEGACY, 'TITLE:Baker', 'TITLE:Master baker');
+    t.put(HREF, other);
+    expect(await t.apply(prepared)).toEqual({ kind: 'stale', reason: 'server' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.pushes[0].status).toBe(412);
+    expect(t.note.writes).toEqual([]);
+    expect(t.sets).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(other);
+  });
+
   it('Cancel (prepare without Apply) writes nothing', async () => {
     const t = setup({ server: LEGACY, base: LEGACY, local: local(LEGACY), ctx: people });
     await reviewOf(t);
