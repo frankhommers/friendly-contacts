@@ -279,7 +279,8 @@ describe('mapping migration', () => {
     expect(labelsOf(migrated, 'kinderen')).toEqual(['Child']);
     expect(labelsOf(migrated, 'ouders')).toEqual(['Parent', 'Mother', 'Father']);
     expect(migrated.find((r) => r.property === 'trouwdag')).toMatchObject({ appleDateLabel: 'Anniversary' });
-    expect(names(migrated).slice(0, stored.length)).toEqual(names(stored));
+    expect(names(migrated).filter((n) => n !== 'partner')).toEqual(names(stored));
+    expect(names(migrated).indexOf('partner')).toBe(names(migrated).indexOf('spouse') + 1);
     expect(names(migrated)).not.toContain('children');
     expect(relationRows(migrated).find((r) => r.property === 'ouders')!.mirror).toBe('kinderen');
     expect(names(migrated)).toContain('partner');
@@ -314,5 +315,45 @@ describe('mapping migration', () => {
   it('validateMapping accepts the new rows', () => {
     expect(validateMapping(DEFAULT_MAPPING)).toEqual([]);
     expect(validateMapping(migrateMapping(legacyMapping()))).toEqual([]);
+  });
+});
+
+describe('migration order and scope', () => {
+  it('an unrenamed migrated mapping has the order of the defaults', () => {
+    expect(names(migrateMapping(legacyMapping()))).toEqual(names(DEFAULT_MAPPING));
+  });
+
+  it('puts a new row after the stored row of the row before it, whatever its name', () => {
+    const migrated = migrateMapping(renameRow(legacyMapping(), 'spouse', 'echtgenoot'));
+    const order = names(migrated);
+    expect(order.indexOf('partner')).toBe(order.indexOf('echtgenoot') + 1);
+  });
+
+  it('reset after migrating a legacy mapping offers no renames', () => {
+    expect(mappingRenames(migrateMapping(legacyMapping()), DEFAULT_MAPPING)).toEqual([]);
+    const renamed = renameRow(migrateMapping(legacyMapping()), 'children', 'kinderen');
+    expect(mappingRenames(renamed, DEFAULT_MAPPING)).toEqual([{ from: 'kinderen', to: 'children' }]);
+  });
+
+  it('rename diff pairs rows by identity', () => {
+    const before = DEFAULT_MAPPING;
+    const reordered = [...before.slice(0, 5), ...before.slice(-3), ...before.slice(5, -3)];
+    const after = renameRow(reordered, 'mobile', 'cell');
+    expect(mappingRenames(before, after)).toEqual([{ from: 'mobile', to: 'cell' }]);
+    const withoutPartner = before.filter((r) => r.property !== 'partner');
+    expect(mappingRenames(withoutPartner, before)).toEqual([]);
+    // an edited write key is still the same row (fallback by position among the unpaired rows)
+    const edited = before.map((r) => (r.property === 'mobile' ? { ...r, property: 'cell', write: 'TEL;TYPE=CELL,VOICE' } : r));
+    expect(mappingRenames(before, edited)).toEqual([{ from: 'mobile', to: 'cell' }]);
+  });
+
+  it('does not bring back a default row the owner deleted', () => {
+    const stored = migrateMapping(legacyMapping()).filter((r) => r.property !== 'emergency');
+    expect(names(migrateMapping(stored))).not.toContain('emergency');
+  });
+
+  it('a custom relation row gets its type as label', () => {
+    const custom = { kind: 'relation', property: 'mentors', types: ['mentor'], write: 'RELATED;TYPE=mentor' } as MappingRow;
+    expect(labelsOf(migrateMapping([...legacyMapping(), custom]), 'mentors')).toEqual(['Mentor']);
   });
 });

@@ -224,37 +224,56 @@ export function renameRow(rows: MappingRow[], from: string, to: string): Mapping
 const defaultRelation = (types0: string): RelationRow | undefined =>
   DEFAULT_MAPPING.find((r): r is RelationRow => r.kind === 'relation' && r.types[0] === types0);
 
+/** Default relation rows (by first type) introduced since stored mappings were first written; only these are added. */
+const ROWS_NEW_IN_PART_6 = ['sweetheart'];
+
+const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
 /**
  * Brings a stored mapping up to date: relation rows without `labels` get those of the default row with the same
- * first type, default relation rows that are absent (by first type, e.g. `partner`) are appended, and the row that
- * writes `ANNIVERSARY` gets its date label. Rows are never renamed or removed; running it again changes nothing.
- * A default row is not appended when its name is already used by another row (the mapping would be invalid).
+ * first type (a custom type: itself, capitalised), the rows introduced by this release (`partner`) are added right
+ * after the stored row of the default row before them, and the row that writes `ANNIVERSARY` gets its date label.
+ * Rows are never renamed or removed; running it again changes nothing, and a default row the owner deleted is not
+ * brought back (only the rows in `ROWS_NEW_IN_PART_6` are ever added).
+ * A new row is not added when its name is already used by another row (the mapping would be invalid).
  */
 export function migrateMapping(stored: MappingRow[]): MappingRow[] {
   const rows: MappingRow[] = stored.map((row) => {
     if (row.kind === 'relation') {
       if (Array.isArray(row.labels)) return { ...row };
-      return { ...row, labels: [...(defaultRelation(row.types[0])?.labels ?? [])] };
+      const labels = defaultRelation(row.types[0])?.labels ?? (row.types[0] ? [capitalised(row.types[0])] : []);
+      return { ...row, labels: [...labels] };
     }
     if (row.kind === 'field' && row.appleDateLabel === undefined && row.write.trim().toUpperCase() === 'ANNIVERSARY') {
       return { ...row, appleDateLabel: 'Anniversary' };
     }
     return { ...row };
   });
-  const propertyOfType = (types0: string): string | undefined =>
-    rows.find((r) => r.kind === 'relation' && r.types[0] === types0)?.property;
-  for (const row of DEFAULT_MAPPING) {
-    if (row.kind !== 'relation' || propertyOfType(row.types[0]) !== undefined) continue;
+  const indexOfType = (types0: string): number =>
+    rows.findIndex((r) => r.kind === 'relation' && r.types[0] === types0);
+  const defaults = DEFAULT_MAPPING.filter((r): r is RelationRow => r.kind === 'relation');
+  for (const [d, row] of defaults.entries()) {
+    if (!ROWS_NEW_IN_PART_6.includes(row.types[0]) || indexOfType(row.types[0]) >= 0) continue;
     if (rows.some((r) => r.property === row.property)) continue;
     const added: RelationRow = { ...row, types: [...row.types], labels: [...row.labels] };
-    rows.push(added);
     if (row.mirror !== undefined) {
       // The mirror is named after the stored row of the mirrored type, which may have been renamed.
-      const mirrored = DEFAULT_MAPPING.find((r): r is RelationRow => r.kind === 'relation' && r.property === row.mirror);
-      const target = row.mirror === row.property ? added.property : mirrored && propertyOfType(mirrored.types[0]);
-      if (target) added.mirror = target;
+      const mirrored = defaults.find((r) => r.property === row.mirror);
+      const at = mirrored && mirrored !== row ? indexOfType(mirrored.types[0]) : -1;
+      if (mirrored === row) added.mirror = added.property;
+      else if (at >= 0) added.mirror = rows[at].property;
       else delete added.mirror;
     }
+    // Right after the stored row of the nearest default relation row before it, so the order stays that of the defaults.
+    let insertAt = rows.length;
+    for (let i = d - 1; i >= 0; i--) {
+      const at = indexOfType(defaults[i].types[0]);
+      if (at >= 0) {
+        insertAt = at + 1;
+        break;
+      }
+    }
+    rows.splice(insertAt, 0, added);
   }
   return rows;
 }
@@ -272,15 +291,37 @@ export function isFixedProperty(property: string): boolean {
   return (FIXED_PROPERTIES as readonly string[]).includes(property);
 }
 
-/** Property renames from `before` to `after`, row by row (the settings never add, remove or reorder rows). */
+/** What makes a row the same row when its name changes: its vCard identity, not its place in the table. */
+function rowIdentity(row: MappingRow): string {
+  if (row.kind === 'relation') return `relation|${row.types.join(',')}`;
+  if (row.kind === 'component') return `component|${row.write}|${row.index}`;
+  return `field|${row.write}`;
+}
+
+/**
+ * Property renames from `before` to `after`. Rows are paired by identity (kind, write key, types or index); the rows
+ * left unpaired (an identity that is ambiguous, or was edited) are paired by position, when as many are left on both
+ * sides. The settings never add, remove or reorder rows, but a migrated mapping may differ in order from the defaults.
+ */
 export function mappingRenames(before: MappingRow[], after: MappingRow[]): { from: string; to: string }[] {
+  const count = (rows: MappingRow[], key: string) => rows.filter((r) => rowIdentity(r) === key).length;
+  const pairs = new Map<number, MappingRow>(); // after index -> before row
+  const usedBefore = new Set<number>();
+  after.forEach((row, i) => {
+    const key = rowIdentity(row);
+    if (count(after, key) !== 1 || count(before, key) !== 1) return;
+    const j = before.findIndex((b) => rowIdentity(b) === key);
+    pairs.set(i, before[j]);
+    usedBefore.add(j);
+  });
+  const restAfter = after.map((_, i) => i).filter((i) => !pairs.has(i));
+  const restBefore = before.map((_, j) => j).filter((j) => !usedBefore.has(j));
+  if (restAfter.length === restBefore.length) restAfter.forEach((i, k) => pairs.set(i, before[restBefore[k]]));
   const renames: { from: string; to: string }[] = [];
-  const count = Math.min(before.length, after.length);
-  for (let i = 0; i < count; i++) {
-    const from = before[i].property;
-    const to = after[i].property;
-    if (from !== to) renames.push({ from, to });
-  }
+  after.forEach((row, i) => {
+    const from = pairs.get(i)?.property;
+    if (from !== undefined && from !== row.property) renames.push({ from, to: row.property });
+  });
   return renames;
 }
 
