@@ -13,13 +13,13 @@ type HeaderProps = {
   /** Present when an address book is active: opens the "Import contact from server" picker. */
   importFromServer?: () => void;
   exportAllVCF: () => void;
-  setDisplayInsightsView: Dispatch<SetStateAction<boolean>>;
+  setDisplayImportView: Dispatch<SetStateAction<boolean>>;
 }
 
 export const HeaderView = (props: HeaderProps) => {
 	const buttons = useRef<(HTMLElement | null)[]>([]);
   const [count, setCount] = useState<number>(insightQueueStore.insightQueItemCount.value);
-  const [insightsLoading, setInsightsLoading] = useState<boolean>(insightService.backgroundProcessRunning.value);
+  const [importLoading, setImportLoading] = useState<boolean>(insightService.backgroundProcessRunning.value);
 
 	useEffect(() => {
 		buttons.current.forEach(setIconForButton);
@@ -34,7 +34,7 @@ export const HeaderView = (props: HeaderProps) => {
 
   useEffect(() => {
     const unsubscribe = insightService.backgroundProcessRunning.subscribe((loading) => {
-      setInsightsLoading(loading);
+      setImportLoading(loading);
     });
     return () => unsubscribe();
   }, []);
@@ -104,16 +104,16 @@ export const HeaderView = (props: HeaderProps) => {
 
       <div className="badge-wrapper">
         <div
-          id="insights-btn"
-          data-icon="lightbulb"
+          id="import-panel-btn"
+          data-icon="inbox"
           className={[
             "clickable-icon",
             "nav-action-button",
-            insightsLoading && "is-pulsing",
+            importLoading && "is-pulsing",
           ].filter(Boolean).join(" ")}
-          aria-label="Contact insights"
+          aria-label="Import contacts from address books"
           ref={(element) => (buttons.current[8] = element)}
-          onClick={() => props.setDisplayInsightsView(true)}/>
+          onClick={() => props.setDisplayImportView(true)}/>
         {count > 0 && (
           <span className="badge-count">{count}</span>
         )}

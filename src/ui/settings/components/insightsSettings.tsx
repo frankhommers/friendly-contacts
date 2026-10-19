@@ -17,7 +17,7 @@ export function InsightSettings() {
 
         if (typeof currentValue === 'boolean' && containerRef.current) {
           new Setting(containerRef.current)
-            .setName(settingProps.name)
+            .setName(settingProps.title ?? settingProps.name)
             .setDesc(settingProps.settingDescription)
             .addToggle(toggle =>
               toggle
@@ -35,8 +35,8 @@ export function InsightSettings() {
     <div className="setting-item-spacer"  ref={containerRef}>
       <div className="setting-item setting-item-heading">
         <div className="setting-item-info">
-          <div className="setting-item-name">Insights processors</div>
-          <div className="setting-item-description"></div>
+          <div className="setting-item-name">Background checks</div>
+          <div className="setting-item-description">Checks that run quietly in the background now and then.</div>
         </div>
         <div className="setting-item-control"></div>
       </div>

@@ -1,116 +1,20 @@
-import * as React from "react";
 import {Contact} from "src/contacts";
-import {contactNotes, importRemoteCard, relinkImported} from "src/contacts/obsidianNotes";
-import {getApp} from "src/context/sharedAppContext";
 import {getSettings} from "src/context/sharedSettingsContext";
-import {InsightProcessor, InsightQueItem, PropsRenderGroup, RunType} from "src/insights/insight.d";
+import {InsightProcessor, PropsRender, PropsRenderGroup, RunType} from "src/insights/insight.d";
 import {insightQueueStore} from "src/insights/insightsQueStore";
 import {sync} from "src/sync";
-import {activeSources, isSyncAvailable} from "src/sync/adapters";
-import {uidAlreadyImported} from "src/sync/sources";
-import {cleanUid} from "src/util/vcard";
+import {isSyncAvailable} from "src/sync/adapters";
 
-
-/**
- * `importedNow`: UIDs imported so far in one "Import All" run; the metadata cache may not show those notes yet.
- * `relinkLater`: in such a run the new notes are collected there and relinked once at the end.
- */
-const ImportUnknownVcardToVault = async (
-  queItem: InsightQueItem,
-  importedNow: Set<string> = new Set(),
-  relinkLater?: { uid: string; path: string }[],
-) => {
-  // The same card can be queued once per address book; a UID that has a note is not imported again.
-  const noteUids = contactNotes(getApp()).map((note) => note.uid);
-  if (uidAlreadyImported(queItem.data.uid, noteUids, importedNow)) {
-    await insightQueueStore.remove(queItem);
-    return;
-  }
-  const source = activeSources().find((candidate) => candidate.id === queItem.data.sourceId);
-  if (!source) {
-    // The address book was removed or disabled since the insight was queued.
-    await insightQueueStore.remove(queItem);
-    return;
-  }
-  const rawCard = await sync.pullFromRemote(source, queItem.data.href);
-  if (rawCard) {
-    // #90 for now made the same as in the rootView skipping the record without notifying the user.
-    const outcome = await importRemoteCard(getApp(), rawCard, queItem.data, source, {relinkLater});
-    if (outcome === "unnamed") console.warn("Skipping contact without name", rawCard.raw);
-    // A card that was skipped because its note exists stays in the list.
-    if (outcome === "imported") importedNow.add(cleanUid(queItem.data.uid ?? rawCard.uid));
-    if (outcome !== "skipped") await insightQueueStore.remove(queItem);
-  }
-}
-
-const renderGroup = ({queItems}: PropsRenderGroup): JSX.Element | null => {
-  const addVcardsToVault = () => {
-    return async (event: React.MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const importedNow = new Set<string>();
-      const relinkLater: { uid: string; path: string }[] = [];
-      for (const queItem of queItems) {
-        await ImportUnknownVcardToVault(queItem, importedNow, relinkLater);
-      }
-      await relinkImported(getApp(), relinkLater);
-    }
-  }
-
-  return (
-    <div className="action-card">
-      <div className="action-card-content">
-        <p><strong>Contacts available for import</strong></p>
-        <p>
-          We found <strong>{queItems.length}</strong> contacts on the remote server that can be added to your vault.
-        </p>
-      </div>
-      <div className="action-card-actions">
-        <button className="action-card-button " onClick={addVcardsToVault()}>
-          Import All
-        </button>
-      </div>
-    </div>
-  );
-}
-
-type PropsRender = {
-  queItem: InsightQueItem;
-  dismissItem: () => void; // Callback for done or close
-};
-
-const render = ({queItem, dismissItem}: PropsRender): JSX.Element | null => {
-  const addVcardToVault = () => {
-    return async (event: React.MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      await ImportUnknownVcardToVault(queItem);
-    }
-  }
-
-  return (
-    <div className="action-card">
-      <div className="action-card-content">
-        <p><b>{queItem.data.fn}</b> is available on the remote server.</p>
-      </div>
-      <div className="modal-close-button"
-           tabIndex={0}
-           role="button"
-           aria-label="Close"
-           onClick={dismissItem}>
-      </div>
-      <div className="action-card-actions">
-        <button className="action-card-button" onClick={addVcardToVault()}>Add to Vault</button>
-      </div>
-    </div>
-  );
-}
+// The Import panel lists these cards itself (see ImportView); nothing is drawn per insight.
+const render = (_props: PropsRender): JSX.Element | null => null;
+const renderGroup = (_props: PropsRenderGroup): JSX.Element | null => null;
 
 export const SyncUnknownProcessor: InsightProcessor = {
   name: "SyncUnknownProcessor",
+  title: "Look for contacts to import",
   runType: RunType.BATCH,
   settingPropertyName: 'SyncUnknownProcessor',
-  settingDescription: 'query the configured remote contact server and allow you to decide to import ',
+  settingDescription: 'Looks on your address books for contacts that have no note yet and lists them in the Import panel.',
   settingDefaultValue: true,
 
   render,

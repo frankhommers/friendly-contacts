@@ -263,7 +263,7 @@ A link to `index` says nothing about whom it is, and Obsidian's short form `[[in
 
 When Obsidian updates links after a move it may write the short form again (with its default link format, "Shortest path when possible"). So when you put contacts in folders, rename a contact through Sync or move the contacts folder, the plugin notes beforehand which relationship entries point to those contacts and afterwards writes them as full paths again. A label that was the contact's old name gets the new one, also when the name was changed on the server; a label you wrote yourself is kept. Taking contacts out of their folders moves each note twice (via its temporary name), so there too the plugin notes the entries beforehand and afterwards makes every entry that no longer opens the contact point to its note again. Only relationship properties of contact notes are changed.
 
-When you import a contact from the address book, relationships in other notes that pointed to nobody but name this contact become links to the new note (a label you wrote yourself is kept). **Import All** does this once at the end, for all the contacts it imported. This only happens with a fixed note name.
+When you import a contact from the address book, relationships in other notes that pointed to nobody but name this contact become links to the new note (a label you wrote yourself is kept). **Import all** in the Import panel does this once at the end, for all the contacts it imported. This only happens with a fixed note name.
 
 ---
 
@@ -537,6 +537,12 @@ In the plugin setting page select "sync method" CardDav. Here you can fill in th
 * API key authentication
 
 OpenID Connect (OAuth2) is not supported at this time.
+
+#### Importing contacts from your address books
+
+Click the **inbox** button in the sidebar's top bar (**Import contacts from address books**) to open the Import panel. It lists the cards on your address books that have no note yet, grouped per address book: the heading shows the book's name and how many contacts it has, with an **Import all** button for that book. Each row shows the contact's name (and ` · organisation` when the card has one), an **Import** button and a **×** that hides the contact from the list until Obsidian restarts.
+
+Type in the search field to filter on name and organisation. Case and accents do not matter: "rene" finds "René". **Import all** at the top imports everything the filter shows, after a question that names the number of contacts and address books. A contact that already has a note is not imported again, and a name that clashes with an existing note keeps the contact in the list with a notice. The small **Other** section at the bottom only appears when a background check has something to tell you. The background checks can be switched off in the settings, under **Background checks**.
 
 #### Syncing a contact
 

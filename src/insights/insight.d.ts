@@ -20,6 +20,8 @@ export interface InsightQueItem {
 
 export interface InsightProcessor {
   name: string;
+  /** Plain-English name for the settings screen; `name` when absent. */
+  title?: string;
   render: (queItem: {
     queItem: InsightQueItem;
     dismissItem: () => void
@@ -35,6 +37,7 @@ export interface InsightProcessor {
 
 export interface InsighSettingProperties {
   name: string;
+  title?: string;
   runType: RunType;
   settingPropertyName: string;
   settingDescription: string;

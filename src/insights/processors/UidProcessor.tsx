@@ -49,9 +49,10 @@ const render = ({queItem, dismissItem}: PropsRender): JSX.Element | null => {
 
 export const UidProcessor: InsightProcessor = {
   name: "UidProcessor",
+  title: "Add missing contact IDs",
   runType: RunType.IMMEDIATELY,
   settingPropertyName: 'UidProcessor',
-  settingDescription: 'Generates a unique identifier for contact when missing.',
+  settingDescription: 'Gives a contact note a unique ID when it has none, so it can be synced.',
   settingDefaultValue: true,
 
   render,

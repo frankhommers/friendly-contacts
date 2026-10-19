@@ -77,6 +77,7 @@ export const insightService = {
   settings(): InsighSettingProperties[] {
     return Array.from(processors.values()).map(processor => ({
       name: processor.name,
+      title: processor.title,
       runType: processor.runType,
       settingPropertyName: processor.settingPropertyName,
       settingDescription: processor.settingDescription,

@@ -21,7 +21,7 @@ import { isSyncAvailable } from "src/sync/adapters";
 import { openImportContactModal } from "src/ui/modals/importContactModal";
 import { ContactsListView } from "src/ui/sidebar/components/ContactsListView";
 import { HeaderView } from "src/ui/sidebar/components/HeaderView";
-import { InsightsView } from "src/ui/sidebar/components/InsightsView";
+import { ImportView } from "src/ui/sidebar/components/ImportView";
 import { processAvatar } from "src/util/avatarActions";
 import { Sort } from "src/util/constants";
 import myScrollTo from "src/util/myScrollTo";
@@ -56,7 +56,7 @@ export const SidebarRootView = (props: SidebarRootViewProps) => {
 	const app = getApp();
   const { vault, workspace } = app;
   const [contacts, setContacts] = React.useState<Contact[]>([]);
-  const [displayInsightsView, setDisplayInsightsView] = React.useState<boolean>(false);
+  const [displayImportView, setDisplayImportView] = React.useState<boolean>(false);
 	const [sort, setSort] = React.useState<Sort>(Sort.NAME);
   let mySettings:ContactsPluginSettings = getSettings();
   const myHookSettings: ContactsPluginSettings|undefined = useSettings();
@@ -151,10 +151,9 @@ export const SidebarRootView = (props: SidebarRootViewProps) => {
 
 	return (
 		<div className="contacts-sidebar">
-      { displayInsightsView ?
-        <InsightsView
-          setDisplayInsightsView={setDisplayInsightsView}
-          processContacts={contacts}
+      { displayImportView ?
+        <ImportView
+          setDisplayImportView={setDisplayImportView}
         />
       :
         <>
@@ -181,7 +180,7 @@ export const SidebarRootView = (props: SidebarRootViewProps) => {
                   saveVcardFilePicker(vcards)
                 }}
                 onCreateContact={createNewContact}
-                setDisplayInsightsView={setDisplayInsightsView}
+                setDisplayImportView={setDisplayImportView}
                 sort={sort}
               />
             <div className="nav-actionable-container">

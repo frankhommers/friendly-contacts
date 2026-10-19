@@ -97,8 +97,15 @@ Install the build:
 Then check. The review screen labels the server column, its pick buttons and "All from ..." with the address
 book's name; below that is written as **<book>**.
 
-- [ ] **Import:** Insights panel → import the unknown remote contact. The note shows `name`, `mobile`, `email`,
+- [ ] **Import:** click the inbox button in the sidebar's top bar: the Import panel opens, titled by its count and
+      an **Import all** button, with a search field. The unknown remote contact is listed under its book as
+      `<book> (1)`, as `Name · Org`. Click **Import**: the note shows `name`, `mobile`, `email`,
       `work-email`, `city`, … and no `X-CREATED`. `.obsidian/plugins/friendly-contacts/sync-state/<book id>/` holds the card.
+- [ ] **Import panel search and bulk:** with two or more unknown cards in two address books (one named `René`), type
+      `rene`: only René stays and the headings count what is visible. Clear it. Click the top **Import all**:
+      "Import <n> contacts from <m> address books?". Cancel: nothing is imported. Confirm: all are imported and the
+      list says nothing is left. Click **×** on a row: it goes from the list. A book's own **Import all** imports only
+      that book. The same card in two books is imported once.
 - [ ] **Sync with no differences:** right after an import (or a Sync), run the command *Sync this contact* (or click
       the sidebar's sync icon and choose **Sync**). A notice says "Up to date" and no review screen opens.
 - [ ] **Server-only change:** change the email with `curl -T`, then Sync. The review screen lists only `email`, with
