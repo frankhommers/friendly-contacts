@@ -1,5 +1,5 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { canApply, Choice, isDecided, isUpToDate, previewChoices, resultProps, reviewRows, undecidedCount } from 'src/sync/review';
+import { canApply, Choice, isDecided, isRewriteOnly, isUpToDate, previewChoices, resultProps, reviewRows, undecidedCount } from 'src/sync/review';
 import { describe, expect, it } from 'vitest';
 
 const rows = DEFAULT_MAPPING;
@@ -120,6 +120,11 @@ describe('reviewRows', () => {
     expect(same[0].preselect).toBe('server');
     expect(isUpToDate(rs)).toBe(false);
     expect(isUpToDate(same)).toBe(true);
+    // A rewrite of card lines is something to review, even without a differing row.
+    expect(isUpToDate(same, true)).toBe(false);
+    expect(isRewriteOnly(same, true)).toBe(true);
+    expect(isRewriteOnly(rs, true)).toBe(false);
+    expect(isRewriteOnly(same, false)).toBe(false);
     expect(canApply(same, none)).toBe(true);
     expect(resultProps(rs, new Map([['email', 'local']]), { mobile: '2', email: 'a' })).toEqual({ mobile: '2', email: 'a' });
   });

@@ -12,7 +12,7 @@ import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
-import { CURRENT_READER, Friendly, FriendlyValue, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
+import { CURRENT_READER, Friendly, FriendlyValue, needsLegacyRewrite, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { moveCard } from 'src/sync/moveCard';
@@ -59,6 +59,8 @@ export interface PreparedSync {
   server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string };
   base?: Props;
   rows: ReviewRow[];
+  /** The card is vCard 3.0 and holds `RELATED` lines Apply rewrites into the form phones understand. */
+  rewriteRelations: boolean;
   /** Where the card will live. */
   target: { sourceId: string };
   /** The card is currently in another source (Part 1 'move'); Apply moves it to the target. */
@@ -164,7 +166,9 @@ export async function prepareSync(
     let rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
     // A new card's UID is no choice: Apply always writes the prepared one.
     if (!server) rows = rows.filter((r) => r.property !== 'uid');
-    if (server && !where.move && isUpToDate(rows)) {
+    // Decided with the same lookups as Apply uses, so a line Apply cannot rewrite never reopens the review.
+    const rewriteRelations = server !== undefined && needsLegacyRewrite(server.lines, deps.rows, deps.readOnlyCtx);
+    if (server && !where.move && isUpToDate(rows, rewriteRelations)) {
       // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
       if (!baseEntry) {
         await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href, reader: CURRENT_READER });
@@ -172,7 +176,7 @@ export async function prepareSync(
       return { kind: 'upToDate' };
     }
 
-    const prepared: PreparedSync = { uid, local: L, noteSnapshot, server, base, rows, target: { sourceId: where.sourceId } };
+    const prepared: PreparedSync = { uid, local: L, noteSnapshot, server, base, rows, rewriteRelations, target: { sourceId: where.sourceId } };
     if (where.move) prepared.move = { ...where.move };
     return { kind: 'review', prepared };
   } catch (e) {
@@ -219,7 +223,9 @@ export async function applySync(
       warnings = card.warnings;
       serverChanged = true;
     } else {
-      const patched = patch(server.lines, server.friendly, result, deps.rows, deps.ctx);
+      const patched = patch(server.lines, server.friendly, result, deps.rows, deps.ctx, {
+        rewriteLegacyRelations: prepared.rewriteRelations,
+      });
       const raw = serializeCard(patched.lines);
       warnings = patched.warnings;
       serverChanged = raw !== serializeCard(server.lines);

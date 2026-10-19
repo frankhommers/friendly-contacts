@@ -6,7 +6,7 @@ import type { Source } from 'src/settings/settings.d';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { Choice } from 'src/sync/review';
-import { MAX_REOPENS, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
+import { MAX_REOPENS, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -117,7 +117,7 @@ const preselected = (): ReviewDecision => ({ kind: 'apply', choices: new Map(), 
 const allFrom = (request: ReviewRequest, side: 'server' | 'local'): Map<string, Choice> =>
   new Map(request.prepared.rows.filter((r) => r.changed).map((r) => [r.property, side]));
 
-function setup(opts: { local?: Record<string, unknown>; books?: Book[]; defaultSource?: string } = {}) {
+function setup(opts: { local?: Record<string, unknown>; books?: Book[]; defaultSource?: string; ctx?: RelationContext } = {}) {
   const radicale = fakeBook('radicale', 'Radicale');
   const family = fakeBook('family', 'Family');
   const books = opts.books ?? [radicale, family];
@@ -155,7 +155,7 @@ function setup(opts: { local?: Record<string, unknown>; books?: Book[]; defaultS
     defaultSource: opts.defaultSource ?? 'radicale',
     adapterFor: (source) => books.find((b) => b.id === source.id)!.adapter,
     stateFor: (id) => books.find((b) => b.id === id)!.state,
-    contexts: async () => ({ ctx: noRelations, readOnlyCtx: noRelations, settle: async () => void settles.push(reviews) }),
+    contexts: async () => ({ ctx: opts.ctx ?? noRelations, readOnlyCtx: opts.ctx ?? noRelations, settle: async () => void settles.push(reviews) }),
     review: async (request) => {
       requests.push(request);
       const step = script[Math.min(reviews, script.length - 1)];
@@ -547,6 +547,85 @@ describe('syncFlow: the review request', () => {
     const result = await t.run();
     expect(settled).toBe(true);
     expect(result).toMatchObject({ kind: 'done' });
+  });
+});
+
+describe('syncFlow: old relationship lines on a 3.0 card', () => {
+  const people: RelationContext = {
+    uidToName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
+    displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+    resolveLink: (name) => (name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
+  };
+  const legacy = (mobile = '06-1') =>
+    card(mobile, ['RELATED;TYPE=child:urn:uuid:sem-uid']).replace('VERSION:4.0', 'VERSION:3.0');
+  const local = { ...JAN, children: ['[[Sem]]'], source: 'Radicale' };
+
+  it('the spec text', () => {
+    expect(REWRITE_LINE).toBe('Relationships on this card are rewritten in the form phones understand.');
+  });
+
+  it('the only difference: not "Up to date"; the review has the info line and no changed rows; Apply rewrites', async () => {
+    const t = setup({ local, ctx: people });
+    const href = t.radicale.seed(legacy());
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pushed' });
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].rewriteLine).toBe(REWRITE_LINE);
+    expect(t.requests[0].prepared.rows.filter((r) => r.changed)).toEqual([]);
+    expect(t.notices).not.toContain('Up to date');
+    const raw = t.radicale.cards.get(href)!.raw;
+    expect(raw).toContain('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries');
+    expect(raw).toContain('item1.X-ABLabel:_$!<Child>!$_');
+    expect(raw).not.toContain('urn:uuid:sem-uid');
+    expect(raw).toContain('VERSION:3.0');
+    expect(t.radicale.pushes[0].opts).toMatchObject({ href, ifMatch: expect.any(String) });
+  });
+
+  it('after Apply the next Sync is up to date and opens nothing', async () => {
+    const t = setup({ local, ctx: people });
+    t.radicale.seed(legacy());
+    await t.run();
+    t.requests.length = 0;
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
+    expect(t.requests).toEqual([]);
+  });
+
+  it('with property rows too: one review with the line and the rows; Apply does both', async () => {
+    const t = setup({ local: { ...local, mobile: '06-2' }, ctx: people });
+    const href = t.radicale.seed(legacy());
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pushed' });
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].rewriteLine).toBe(REWRITE_LINE);
+    expect(t.requests[0].prepared.rows.filter((r) => r.changed).map((r) => r.property)).toEqual(['mobile']);
+    const raw = t.radicale.cards.get(href)!.raw;
+    expect(raw).toContain('TEL;TYPE=CELL:06-2');
+    expect(raw).not.toContain('urn:uuid:sem-uid');
+  });
+
+  it('Cancel writes nothing', async () => {
+    const t = setup({ local, ctx: people });
+    const href = t.radicale.seed(legacy());
+    const before = t.radicale.cards.get(href)!.raw;
+    t.setScript([() => ({ kind: 'cancel' })]);
+    expect(await t.run()).toMatchObject({ kind: 'cancelled' });
+    expect(t.requests[0].rewriteLine).toBe(REWRITE_LINE);
+    expect(pushCount(t)).toBe(0);
+    expect(t.note.writes).toEqual([]);
+    expect(t.radicale.cards.get(href)!.raw).toBe(before);
+  });
+
+  it('a 4.0 card has no rewrite line', async () => {
+    const t = setup({ local: { ...JAN, children: ['[[Sem]]'], source: 'Radicale', mobile: '06-2' }, ctx: people });
+    t.radicale.seed(card('06-1', ['RELATED;TYPE=child:urn:uuid:sem-uid']));
+    await t.run();
+    expect(t.requests[0].rewriteLine).toBeUndefined();
+  });
+
+  it('a card moving between address books is rewritten too', async () => {
+    const t = setup({ local: { ...local, source: 'Family' }, ctx: people });
+    t.radicale.seed(legacy());
+    expect(await t.run()).toMatchObject({ kind: 'done', plan: { kind: 'move' } });
+    expect(t.requests[0].rewriteLine).toBe(REWRITE_LINE);
+    expect([...t.family.cards.values()][0].raw).not.toContain('urn:uuid:sem-uid');
   });
 });
 

@@ -2,7 +2,7 @@ import { App, Modal, Notice } from 'obsidian';
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { canApply, Choice, isDecided, ReviewRow, Side, undecidedCount } from 'src/sync/review';
+import { canApply, Choice, isDecided, isRewriteOnly, ReviewRow, Side, undecidedCount } from 'src/sync/review';
 import {
   applyHint,
   cellValue,
@@ -23,6 +23,8 @@ export interface SyncReviewInput {
   title: string;
   /** The "card moves from ... to ..." line of a source change. */
   moveLine?: string;
+  /** The info line "Relationships on this card are rewritten ..."; with no differing row the screen shows only this. */
+  rewriteLine?: string;
   /** The address book whose card the server column shows (its column, pick buttons and "All from" use the name). */
   serverName: string;
   /** Warning lines above the table. */
@@ -87,6 +89,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
   const setAll = (side: Side) => set(rows.filter((r) => r.changed).map((r) => [r.property, side]));
 
   const { visible, hidden: hiddenCount } = shownRows(rows, showAll);
+  const rewriteOnly = isRewriteOnly(rows, input.rewriteLine !== undefined);
   const ok = canApply(rows, choices) && !importing;
   const hint = applyHint(undecidedCount(rows, choices));
   // Both follow the current picks.
@@ -196,30 +199,35 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
         </p>
       ))}
       {input.moveLine ? <p className="friendly-review-move">{input.moveLine}</p> : null}
-      <div className="friendly-review-toolbar">
-        {sides.map((side) => (
-          <button key={side} onClick={() => setAll(side)}>
-            All from {sideLabel(side, serverName)}
-          </button>
-        ))}
-        <label className="friendly-review-showall">
-          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show all
-          {hiddenCount > 0 ? ` (${hiddenCount} unchanged)` : ''}
-        </label>
-      </div>
-      <div className="friendly-review-scroll">
-        <table className="friendly-review-table">
-          <thead>
-            <tr>
-              <th>Property</th>
-              <th>{sideLabel('server', serverName)}</th>
-              <th>{sideLabel('local', serverName)}</th>
-              <th>Result</th>
-            </tr>
-          </thead>
-          <tbody>{visible.map(renderRow)}</tbody>
-        </table>
-      </div>
+      {input.rewriteLine ? <p className="friendly-review-rewrite">{input.rewriteLine}</p> : null}
+      {rewriteOnly ? null : (
+        <>
+          <div className="friendly-review-toolbar">
+            {sides.map((side) => (
+              <button key={side} onClick={() => setAll(side)}>
+                All from {sideLabel(side, serverName)}
+              </button>
+            ))}
+            <label className="friendly-review-showall">
+              <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show all
+              {hiddenCount > 0 ? ` (${hiddenCount} unchanged)` : ''}
+            </label>
+          </div>
+          <div className="friendly-review-scroll">
+            <table className="friendly-review-table">
+              <thead>
+                <tr>
+                  <th>Property</th>
+                  <th>{sideLabel('server', serverName)}</th>
+                  <th>{sideLabel('local', serverName)}</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>{visible.map(renderRow)}</tbody>
+            </table>
+          </div>
+        </>
+      )}
       {also.length > 0 ? (
         <div className="friendly-review-also">
           <h4>Also changes</h4>

@@ -395,7 +395,11 @@ describe('prepareSync', () => {
       displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
       resolveLink: (name) => (name === 'Sem de Vries' || name === '06 People/Sem de Vries' ? { uid: 'sem-uid' } : { text: name }),
     };
-    const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
+    const server = edit(
+      edit(V1, 'VERSION:3.0', 'VERSION:4.0'), // on a 3.0 card this line would open the review for its rewrite
+      'TITLE:Baker\r\n',
+      'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n',
+    );
     const t = setup({ server, base: server, local: { ...friendlyOf(server), spouse: '[[06 People/Sem de Vries|Sem]]' }, ctx: sem });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
@@ -407,7 +411,11 @@ describe('prepareSync', () => {
       displayName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
       resolveLink: (name) => (name === 'Contacts/Sem/index' || name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
     };
-    const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
+    const server = edit(
+      edit(V1, 'VERSION:3.0', 'VERSION:4.0'), // on a 3.0 card this line would open the review for its rewrite
+      'TITLE:Baker\r\n',
+      'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n',
+    );
     for (const spouse of ['[[Contacts/Sem/index|Sem]]', '[[Contacts/Sem/index]]', '[[Contacts/Sem/index|Sem Jr]]']) {
       const t = setup({ server, base: server, local: { ...friendlyOf(server), spouse }, ctx: sem });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
@@ -837,6 +845,93 @@ describe('applySync', () => {
     expect(t.note.renames).toEqual(['Johan de Vries']);
     expect(t.note.displayNames).toEqual(['Johan de Vries']);
     expect(t.note.frontmatter.name).toBe('Johan de Vries');
+  });
+});
+
+describe('old relationship lines on a 3.0 card', () => {
+  const SEM = 'sem-uid';
+  const people: RelationContext = {
+    uidToName: (uid) => (cleanUid(uid) === SEM ? 'Sem' : undefined),
+    displayName: (uid) => (cleanUid(uid) === SEM ? 'Sem de Vries' : undefined),
+    resolveLink: (name) => (name === 'Sem' ? { uid: SEM } : { text: name }),
+  };
+  const LEGACY = edit(V1, 'TITLE:Baker\r\n', `TITLE:Baker\r\nRELATED;TYPE=child:urn:uuid:${SEM}\r\n`);
+  const V4 = edit(edit(LEGACY, 'VERSION:3.0', 'VERSION:4.0'), 'item1.X-ABLabel:_$!<Mobile>!$_\r\n', '');
+  const local = (raw: string) => toFriendly(parseCard(raw), DEFAULT_MAPPING, people).props;
+  const rewritten = (raw: string) => lineTexts(raw).filter((l) => /RELATED|ABLabel:_\$!<Child>/.test(l));
+
+  it('the only difference: the review opens with no rows, and is not up to date', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: local(LEGACY), ctx: people });
+    expect(local(LEGACY).children).toEqual(['[[Sem]]']);
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteRelations).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('Apply replaces the line by the 3.0 form, with If-Match, and the next Sync is up to date', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: local(LEGACY), ctx: people });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.pushes[0].opts).toEqual({ href: HREF, ifMatch: t.serverEtag });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(rewritten(raw)).toEqual([`item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem de Vries`, 'item3.X-ABLabel:_$!<Child>!$_']);
+    expect(raw).not.toContain('urn:uuid');
+    expect(raw).toContain('VERSION:3.0');
+    expect(t.entries.get(UID)?.raw).toBe(raw);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('together with other differences: both rows and the rewrite', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: { ...local(LEGACY), title: 'Chef' }, ctx: people });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteRelations).toBe(true);
+    expect(changedRows(prepared)).toEqual([['title', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(raw).toContain('TITLE:Chef');
+    expect(rewritten(raw)).toHaveLength(2);
+    expect(raw).not.toContain('urn:uuid');
+  });
+
+  it('taking the card\'s side everywhere still rewrites', async () => {
+    const server = edit(LEGACY, 'TITLE:Baker', 'TITLE:Master baker');
+    const t = setup({ server, base: LEGACY, local: local(LEGACY), ctx: people });
+    expect(changedRows(await reviewOf(t))).toEqual([['title', 'server']]);
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'both' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(raw).toContain('TITLE:Master baker');
+    expect(raw).not.toContain('urn:uuid');
+    expect(t.note.frontmatter.title).toBe('Master baker');
+  });
+
+  it('Cancel (prepare without Apply) writes nothing', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: local(LEGACY), ctx: people });
+    await reviewOf(t);
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.sets).toEqual([]);
+    expect(t.cards.get(HREF)!.raw).toBe(LEGACY);
+  });
+
+  it('a 4.0 card never needs the rewrite', async () => {
+    const t = setup({ server: V4, base: V4, local: local(V4), ctx: people });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    const changed = setup({ server: V4, base: V4, local: { ...local(V4), title: 'Chef' }, ctx: people });
+    expect((await reviewOf(changed)).rewriteRelations).toBe(false);
+    await changed.sync();
+    expect(changed.cards.get(HREF)!.raw).toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
+  });
+
+  it('a RELATED line that cannot be rewritten does not ask for a review', async () => {
+    const t = setup({ server: LEGACY, base: LEGACY, local: friendlyOf(LEGACY) }); // nobody knows sem-uid
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('a card without RELATED lines is unaffected', async () => {
+    const t = setup({ server: V1, base: V1, local: friendlyOf(V1), ctx: people });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 });
 

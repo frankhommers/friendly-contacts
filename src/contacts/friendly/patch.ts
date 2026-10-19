@@ -387,7 +387,7 @@ const unquote = (value: string): string => value.replace(/^"(.*)"$/, '$1').trim(
 
 /**
  * The row and person of a `RELATED` line as the 3.0 form needs them: the row by its type (it needs a label), the
- * name from the text value, or for a `urn:uuid:` value the contact's display name. Undefined when either is missing.
+ * name from the text value (the hinted contact's display name when it resolves), or for a `urn:uuid:` value the contact's display name. Undefined when either is missing.
  */
 function legacyTarget(line: VCardLine, rows: MappingRow[], ctx: RelationContext): { row: RelationRow; person: Person } | undefined {
   if (line.name !== 'RELATED') return undefined;
@@ -395,8 +395,11 @@ function legacyTarget(line: VCardLine, rows: MappingRow[], ctx: RelationContext)
   if (row?.kind !== 'relation' || ((row.labels ?? [])[0] ?? '').trim() === '') return undefined;
   const hint = cleanUid(unquote(getParam(line, HINT_PARAM) ?? ''));
   if ((getParam(line, 'VALUE') ?? '').toLowerCase() === 'text') {
-    const name = unescapeText(line.value).trim();
-    return name === '' ? undefined : { row, person: hint === '' ? { name } : { name, uid: hint } };
+    const text = unescapeText(line.value).trim();
+    if (text === '') return undefined;
+    if (hint === '') return { row, person: { name: text } };
+    // The contact's current name beats the text the card was last written with.
+    return { row, person: { name: ctx.displayName(hint)?.trim() || text, uid: hint } };
   }
   // As the reader: the hint wins when it names a contact, else the value is the contact's UID.
   for (const uid of [hint, cleanUid(line.value)]) {

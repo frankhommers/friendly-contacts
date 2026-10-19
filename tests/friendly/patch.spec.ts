@@ -573,6 +573,15 @@ describe('relationships and anniversaries in the card\'s own form', () => {
       expect(reparsed(result.lines)).toEqual({ name: 'X', spouse: '[[Odd]]', friends: ['[[Piet]]'] });
     });
 
+    it('a text RELATED line with a hint that names a contact is written with the contact\'s current name', () => {
+      const lines = card('FN:X', 'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Old Name');
+      const result = go(lines, read(lines).props, true);
+      expect(texts(result.lines)).toContain('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries');
+      // A hint nobody knows keeps the text.
+      const gone = card('FN:X', 'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=gone-uid:Old Name');
+      expect(texts(go(gone, read(gone).props, true).lines)).toContain('item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=gone-uid:Old Name');
+    });
+
     it('leaves RELATED lines it cannot name or map', () => {
       const lines = card('FN:X', 'RELATED;TYPE=child:urn:uuid:nobody', 'RELATED;TYPE=agent;VALUE=text:Bond');
       expect(go(lines, read(lines).props, true).lines).toEqual(lines);

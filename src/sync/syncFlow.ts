@@ -15,6 +15,9 @@ import { BaseHolder, noteSourceId, planSync, SyncPlan } from './sources';
 import { applySync, locateCard, NoteIO, PreparedSync, prepareSync, SyncDeps, SyncOutcome } from './syncContact';
 import type { SyncState } from './syncState';
 
+/** The info line of a review that rewrites the card's old relationship lines (exact text from the spec). */
+export const REWRITE_LINE = 'Relationships on this card are rewritten in the form phones understand.';
+
 /** How often the review reopens after the note or the card changed underneath, before Sync gives up. */
 export const MAX_REOPENS = 3;
 
@@ -23,6 +26,8 @@ export interface ReviewRequest {
   title: string;
   /** `Address book: <from> -> <to>` when the card moves. */
   moveLine?: string;
+  /** Shown when Apply rewrites relationship lines of a 3.0 card; the screen may have no rows besides it. */
+  rewriteLine?: string;
   /** The address book whose card the server column shows: the target, or for a move the book it comes from. */
   serverName: string;
   /** Lines shown above the table (an address book whose contact list could not be read). */
@@ -250,6 +255,7 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     const decision = await deps.review({
       title: review.server ? deps.name : `New card in ${target.name}`,
       moveLine: move ? `Address book: ${move.from.name} -> ${target.name}` : undefined,
+      rewriteLine: review.rewriteRelations ? REWRITE_LINE : undefined,
       serverName: (move?.from ?? target).name,
       warnings: (contexts.unreadable ?? []).map(
         (id) => `Could not read ${sourceName(id)}; relationships to people only in that address book may show as changed.`,

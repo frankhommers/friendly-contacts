@@ -79,8 +79,14 @@ export function reviewRows(
   });
 }
 
-export function isUpToDate(rows: ReviewRow[]): boolean {
-  return !rows.some((r) => r.changed);
+/** Nothing to review: no differing row, and no card lines Apply would rewrite (`rewrite`). */
+export function isUpToDate(rows: ReviewRow[], rewrite = false): boolean {
+  return !rewrite && !rows.some((r) => r.changed);
+}
+
+/** The review has only the rewrite to show: no row differs. */
+export function isRewriteOnly(rows: ReviewRow[], rewrite: boolean): boolean {
+  return rewrite && !rows.some((r) => r.changed);
 }
 
 /**
