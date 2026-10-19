@@ -21,6 +21,18 @@ Friendly Contacts is a fork of [VCF Contacts](https://github.com/broekema41/obsi
 
 ---
 
+## Install with BRAT
+
+To try the test releases:
+
+1. Back up your vault first, at least `.obsidian/plugins/friendly-contacts/data.json`.
+2. Install the **BRAT** plugin from Community Plugins and enable it.
+3. Open the command palette and run **BRAT: Add a beta plugin for testing**.
+4. Enter `frankhommers/friendly-contacts` and confirm.
+5. Enable **Friendly Contacts** under **Settings → Community plugins**.
+
+---
+
 <!-- TOC start -->
 # Table of Contents
 - [Friendly Contacts Plugin for Obsidian  ](#-friendly-contacts-plugin-for-obsidian)
