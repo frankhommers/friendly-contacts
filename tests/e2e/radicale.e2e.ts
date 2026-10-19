@@ -273,6 +273,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   let bookList: Book[] = [];
   const pushes: string[] = [];
   const notices: string[] = [];
+  /** The info line the last review showed, if any (the rewrite of old relationship lines). */
+  let rewriteLine: string | undefined;
   let jan: Note;
   let notes: { name: string; uid: string }[] = [];
 
@@ -301,6 +303,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   async function syncNote(note: Note, choices: Choices = {}): Promise<FlowResult> {
     pushes.length = 0;
     notices.length = 0;
+    rewriteLine = undefined;
     const lookups = await relationContext(adapter, notes);
     const sources = bookList.map((b) => b.source);
     return syncFlow({
@@ -316,6 +319,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       contexts: async () => ({ ctx: lookups, readOnlyCtx: lookups, settle: async () => {} }), // these lookups never write
       review: async (request) => {
         const { rows } = request.prepared;
+        rewriteLine = request.rewriteLine;
         // The server column is labelled with an address book's name, never a fixed server name.
         expect(sources.map((s) => s.name)).toContain(request.serverName);
         const picked =
@@ -809,5 +813,140 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     const fixed = await created('Drie');
     expect(fixed).toContain('VERSION:3.0');
     expect(fixed).toContain('BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-15');
+  });
+
+  // Radicale upper-cases property names and sorts the lines, so compare without order and case.
+  const upper = (lines: string[]) => lines.map((l) => l.replace(/^[^:;]+/, (name) => name.toUpperCase())).sort();
+  const changed = (lines: string[]) => lines.filter((l) => !isRev(l));
+
+  it('15. a DAVx5 3.0 card: relationships and anniversary are read, one is added and removed with its label', async () => {
+    const href = `${BOOK}davx5.vcf`;
+    await putCard(href, readVcfFixture('davx5V3.vcf'));
+    const frank = await importCard(href);
+    notes = [...notes, { name: 'Frank Hommers', uid: String(frank.frontmatter.uid) }];
+
+    // Relationships by label (built-in `_$!<Father>!$_` and plain ones); unlabeled and unknown labels are not mapped.
+    expect(frank.frontmatter).toMatchObject({
+      name: 'Frank Hommers',
+      anniversary: '2012-06-21',
+      parents: ['[[Ger Verhallen]]', '[[Truus Verhallen]]'],
+      children: ['[[Lotte Hommers]]'],
+      colleagues: ['[[Pieter Jansen]]', '[[Marieke Bos]]'],
+    });
+    expect(JSON.stringify(frank.frontmatter)).not.toMatch(/Oom Kees|Klaas de Wit/);
+
+    // Nothing changed: up to date, nothing written.
+    expect(await sync(frank)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+
+    // A relationship added in the note: X-ABRELATEDNAMES (with the UID hint) plus its label; every other line stays.
+    const before = unfolded(await serverCard(href));
+    frank.frontmatter.siblings = ['[[Sem]]'];
+    expect(await sync(frank)).toBe('pushed');
+    const withSibling = unfolded(await serverCard(href));
+    const added = [`item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM_UID}:Sem`, 'item9.X-ABLabel:Sibling'];
+    expect(upper(changed(minus(withSibling, before)))).toEqual(upper(added));
+    expect(changed(minus(before, withSibling))).toEqual([]);
+    expect(await sync(frank)).toBe('unchanged');
+    expect(frank.frontmatter.siblings).toEqual(['[[Sem]]']);
+
+    // Removing it takes the line and its label away again.
+    delete frank.frontmatter.siblings;
+    expect(await sync(frank)).toBe('pushed');
+    const after = unfolded(await serverCard(href));
+    expect(upper(changed(minus(withSibling, after)))).toEqual(upper(added));
+    expect(changed(minus(after, withSibling))).toEqual([]);
+    expect(await sync(frank)).toBe('unchanged');
+  });
+
+  it('16. a DAVx5 4.0 card: RELATED text lines are read, one is added with the hint and removed again', async () => {
+    const uid = 'C0FFEE00-0000-4000-8000-000000000016';
+    const href = `${BOOK}davx5-v4.vcf`;
+    await putCard(
+      href,
+      [
+        'BEGIN:VCARD',
+        'VERSION:4.0',
+        `UID:${uid}`,
+        'FN:Eva Hommers',
+        'N:Hommers;Eva;;;',
+        'TEL;TYPE=cell:+31 6 87654321',
+        'BDAY:19800204',
+        'ANNIVERSARY:20110917',
+        'RELATED;TYPE=parent;VALUE=text:Ger Verhallen',
+        'RELATED;TYPE=child;VALUE=text:Lotte Hommers',
+        'RELATED;TYPE=spouse;VALUE=text:Sanne Hommers',
+        'REV:20261019T081500Z',
+        'END:VCARD',
+        '',
+      ].join('\r\n'),
+    );
+    const eva = await importCard(href);
+    notes = [...notes, { name: 'Eva Hommers', uid }];
+    expect(eva.frontmatter).toMatchObject({
+      name: 'Eva Hommers',
+      anniversary: '2011-09-17',
+      parents: ['[[Ger Verhallen]]'],
+      children: ['[[Lotte Hommers]]'],
+      spouse: '[[Sanne Hommers]]',
+    });
+    expect(await sync(eva)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+
+    // The 4.0 form: RELATED;TYPE=...;VALUE=text with the hint; no item groups and no X-AB lines.
+    const before = unfolded(await serverCard(href));
+    eva.frontmatter.partner = '[[Sem]]';
+    expect(await sync(eva)).toBe('pushed');
+    const withPartner = unfolded(await serverCard(href));
+    const added = [`RELATED;TYPE=sweetheart;VALUE=text;X-FRIENDLY-UID=${SEM_UID}:Sem`];
+    expect(upper(changed(minus(withPartner, before)))).toEqual(upper(added));
+    expect(changed(minus(before, withPartner))).toEqual([]);
+    expect(withPartner.join('\n')).not.toMatch(/X-AB|urn:uuid/i);
+    expect(await sync(eva)).toBe('unchanged');
+    expect(eva.frontmatter.partner).toBe('[[Sem]]');
+
+    delete eva.frontmatter.partner;
+    expect(await sync(eva)).toBe('pushed');
+    const after = unfolded(await serverCard(href));
+    expect(upper(changed(minus(withPartner, after)))).toEqual(upper(added));
+    expect(changed(minus(after, withPartner))).toEqual([]);
+    expect(await sync(eva)).toBe('unchanged');
+  });
+
+  it('17. a 3.0 card with a plugin-written urn:uuid line is rewritten, and only that line changes', async () => {
+    const uid = 'C0FFEE00-0000-4000-8000-000000000017';
+    const href = `${BOOK}legacy.vcf`;
+    await putCard(
+      href,
+      [
+        'BEGIN:VCARD',
+        'VERSION:3.0',
+        `UID:${uid}`,
+        'FN:Ria Oud',
+        'N:Oud;Ria;;;',
+        `RELATED;TYPE=child:urn:uuid:${SEM_UID}`,
+        'END:VCARD',
+        '',
+      ].join('\r\n'),
+    );
+    const ria = await importCard(href);
+    expect(ria.frontmatter.children).toEqual(['[[Sem]]']);
+    const before = unfolded(await serverCard(href));
+    expect(before.join('\n')).toContain('urn:uuid');
+
+    // The note is unchanged; the review shows only the rewrite line and Apply writes the card.
+    expect(await sync(ria)).toBe('pushed');
+    expect(rewriteLine).toBe('Relationships on this card are rewritten in the form phones understand.');
+    const after = unfolded(await serverCard(href));
+    expect(after.join('\n')).not.toContain('urn:uuid');
+    expect(upper(changed(minus(after, before)))).toEqual(
+      upper([`item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM_UID}:Sem`, 'item1.X-ABLabel:_$!<Child>!$_']),
+    );
+    expect(changed(minus(before, after))).toEqual([expect.stringMatching(/^RELATED;TYPE=child:urn:uuid:/i)]);
+    expect(ria.frontmatter.children).toEqual(['[[Sem]]']);
+
+    // Done once: the next Sync is up to date and shows no review.
+    expect(await sync(ria)).toBe('unchanged');
+    expect(rewriteLine).toBeUndefined();
   });
 });
