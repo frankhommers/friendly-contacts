@@ -135,6 +135,8 @@ describe('reading every form', () => {
       spouse: '[[Sanne Hommers]]',
       children: ['[[Lotte Hommers]]'],
       colleagues: ['[[Pieter Jansen]]', '[[Marieke Bos]]'],
+      // `Neighbor\, Acquaintance`: a custom label of two parts, its comma escaped as DAVx5 (ez-vcard) writes it.
+      neighbours: ['[[Henk Smit]]'],
       anniversary: '2012-06-21',
       birthday: '1975-03-12',
     });
@@ -144,6 +146,7 @@ describe('reading every form', () => {
     const f = toFriendly(davx5Lines, DEFAULT_MAPPING, ctx);
     expect(f.source.parents).toEqual([{ line: at('item1', 'X-ABRELATEDNAMES') }, { line: at('item2', 'X-ABRELATEDNAMES') }]);
     expect(f.source.spouse).toEqual({ line: at('item3', 'X-ABRELATEDNAMES') });
+    expect(f.source.neighbours).toEqual([{ line: at('item9', 'X-ABRELATEDNAMES') }]);
     expect(f.source.anniversary).toEqual({ line: at('item8', 'X-ABDATE') });
   });
 

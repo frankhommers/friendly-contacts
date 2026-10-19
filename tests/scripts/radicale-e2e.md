@@ -55,13 +55,18 @@ Scenarios:
 14. A new card follows its book's version: Automatic takes the majority of the cards in the book, and the book's
     setting (vCard 3.0 or 4.0) wins over it.
 15. A DAVx5-shaped 3.0 card (`tests/fixtures/davx5V3.vcf`): relationships by label and the anniversary are read,
-    and the next Sync is `unchanged`. A relationship added in the note adds `itemN.X-ABRELATEDNAMES` with the UID
+    including a custom label of two parts with its comma escaped as DAVx5 writes it (`Neighbor\, Acquaintance`;
+    Radicale stores it as it is), and the next Sync is `unchanged`. A relationship added in the note adds `itemN.X-ABRELATEDNAMES` with the UID
     hint plus its label and nothing else; removing it takes both lines away again. Radicale upper-cases property
     names and sorts the lines, so the lines are compared without order and case.
 16. The same for a 4.0 card: `RELATED;TYPE=<type>;VALUE=text` lines are read, and a new relationship is written as
     `RELATED;TYPE=sweetheart;VALUE=text;X-FRIENDLY-UID=<uid>:<name>` (no item groups, no `X-AB` lines).
 17. A 3.0 card with a plugin-written `RELATED;TYPE=child:urn:uuid:…` line: the review shows the rewrite line, Apply
     writes the labelled form and only that line changes. The next Sync is `unchanged`.
+18. A card where DAVx5 kept alpha.6's link as the name (`item1.X-ABRELATEDNAMES:urn:uuid:…` on 3.0,
+    `RELATED;TYPE=spouse;VALUE=text:urn:uuid:…` on 4.0): it is read as a link to that contact, the review shows only
+    the rewrite line, and Apply writes the contact's name with the hint in the line's own form. The next Sync is
+    `unchanged`.
 
 Note: `DOMParser` in the suite is jsdom's, with `querySelector('response')` matching prefixed elements
 (`CR:address-data`) like Chromium does. Plain jsdom does not match them; Obsidian (Chromium) does.

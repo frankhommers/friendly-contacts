@@ -825,13 +825,20 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     const frank = await importCard(href);
     notes = [...notes, { name: 'Frank Hommers', uid: String(frank.frontmatter.uid) }];
 
+    // The custom label of two parts keeps its comma, escaped (`\,`) or not, whatever the server does with it.
+    const label = unfolded(await serverCard(href)).filter((l) => /^item9\.X-ABLABEL:/i.test(l));
+    expect(label).toHaveLength(1);
+    expect(label[0]).toMatch(/^item9\.X-ABLABEL:Neighbor\\?, Acquaintance$/i);
+
     // Relationships by label (built-in `_$!<Father>!$_` and plain ones); unlabeled and unknown labels are not mapped.
     expect(frank.frontmatter).toMatchObject({
       name: 'Frank Hommers',
       anniversary: '2012-06-21',
       parents: ['[[Ger Verhallen]]', '[[Truus Verhallen]]'],
+      spouse: '[[Sanne Hommers]]',
       children: ['[[Lotte Hommers]]'],
       colleagues: ['[[Pieter Jansen]]', '[[Marieke Bos]]'],
+      neighbours: ['[[Henk Smit]]'],
     });
     expect(JSON.stringify(frank.frontmatter)).not.toMatch(/Oom Kees|Klaas de Wit/);
 
@@ -844,7 +851,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     frank.frontmatter.siblings = ['[[Sem]]'];
     expect(await sync(frank)).toBe('pushed');
     const withSibling = unfolded(await serverCard(href));
-    const added = [`item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM_UID}:Sem`, 'item9.X-ABLabel:Sibling'];
+    const added = [`item10.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM_UID}:Sem`, 'item10.X-ABLabel:Sibling'];
     expect(upper(changed(minus(withSibling, before)))).toEqual(upper(added));
     expect(changed(minus(before, withSibling))).toEqual([]);
     expect(await sync(frank)).toBe('unchanged');
@@ -947,6 +954,33 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
 
     // Done once: the next Sync is up to date and shows no review.
     expect(await sync(ria)).toBe('unchanged');
+    expect(rewriteLine).toBeUndefined();
+  });
+
+  it.each([
+    ['3.0', [`item1.X-ABRELATEDNAMES:urn:uuid:${SEM_UID}`, 'item1.X-ABLabel:_$!<Spouse>!$_'], `item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM_UID}:Sem`],
+    ['4.0', [`RELATED;TYPE=spouse;VALUE=text:urn:uuid:${SEM_UID}`], `RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=${SEM_UID}:Sem`],
+  ])('18. %s: a "urn:uuid:…" name (DAVx5 kept alpha.6\'s link as the name) links Sem and gets his name', async (version, lines, fixed) => {
+    const uid = `C0FFEE00-0000-4000-8000-00000000018${version === '3.0' ? '3' : '4'}`;
+    const href = `${BOOK}urn-name-${version}.vcf`;
+    await putCard(
+      href,
+      ['BEGIN:VCARD', `VERSION:${version}`, `UID:${uid}`, 'FN:Rik Oud', 'N:Oud;Rik;;;', ...lines, 'END:VCARD', ''].join('\r\n'),
+    );
+    const rik = await importCard(href);
+    expect(rik.frontmatter.spouse).toBe('[[Sem]]');
+    const before = unfolded(await serverCard(href));
+
+    // The note already links Sem: only the rewrite is reviewed, and Apply puts his name on the card.
+    expect(await sync(rik)).toBe('pushed');
+    expect(rewriteLine).toBe('Relationships on this card are rewritten in the form phones understand.');
+    const after = unfolded(await serverCard(href));
+    expect(after.join('\n')).not.toContain('urn:uuid');
+    expect(upper(changed(minus(after, before)))).toEqual(upper([fixed]));
+    expect(changed(minus(before, after))).toEqual([expect.stringMatching(/urn:uuid:/i)]);
+    expect(rik.frontmatter.spouse).toBe('[[Sem]]');
+
+    expect(await sync(rik)).toBe('unchanged');
     expect(rewriteLine).toBeUndefined();
   });
 });
