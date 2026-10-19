@@ -3,6 +3,4 @@
 - **Sync button on an open contact note:** a sync icon (two arrows in a circle) at the top right of a contact note starts Sync for that contact. Also as **Sync contact** in the note's ⋯ menu and the file explorer's right-click menu. Only shown on contact notes when an address book is set up.
 - From alpha.5: the Import panel with search per address book.
 
-Known issue: relationships are not yet written the way DAVx5 (Android) and Apple store them; relationships set on the phone are not read yet. Avoid editing relationships on contacts you also edit on your phone until this is fixed.
-
 Back up your vault before installing.

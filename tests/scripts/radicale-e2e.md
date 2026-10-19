@@ -42,7 +42,7 @@ Scenarios:
    picks the server side (4) or Obsidian (4b). With the server side the note takes the server value and nothing is
    sent. With Obsidian the note's value ends up on the server card and only that line (and REV) differs. 4b starts
    from the server card scenario 4 left behind.
-5. `children: ['[[Sem]]']` becomes `RELATED;TYPE=child:urn:uuid:<Sem's UID>` on the server.
+5. `children: ['[[Sem]]']` becomes `itemN.X-ABRELATEDNAMES;X-FRIENDLY-UID=<Sem's UID>:Sem` plus `itemN.X-ABLabel:_$!<Child>!$_` on the 3.0 card.
 6. `met-via: '[[Piet]]'` is never sent to the server.
 7. A new note without `uid` is `created`. The card is on the server, and the base has the server's href.
 8. The first Sync of a converted upstream note changes nothing on the server.
@@ -52,6 +52,16 @@ Scenarios:
 12. Changing `source:` and Sync moves the card (the plan is `move`). The card is in the new book, gone from the
     old one, and only the edited line (and REV) differs.
 13. A card that is already in the named book is not moved. The other copy stays.
+14. A new card follows its book's version: Automatic takes the majority of the cards in the book, and the book's
+    setting (vCard 3.0 or 4.0) wins over it.
+15. A DAVx5-shaped 3.0 card (`tests/fixtures/davx5V3.vcf`): relationships by label and the anniversary are read,
+    and the next Sync is `unchanged`. A relationship added in the note adds `itemN.X-ABRELATEDNAMES` with the UID
+    hint plus its label and nothing else; removing it takes both lines away again. Radicale upper-cases property
+    names and sorts the lines, so the lines are compared without order and case.
+16. The same for a 4.0 card: `RELATED;TYPE=<type>;VALUE=text` lines are read, and a new relationship is written as
+    `RELATED;TYPE=sweetheart;VALUE=text;X-FRIENDLY-UID=<uid>:<name>` (no item groups, no `X-AB` lines).
+17. A 3.0 card with a plugin-written `RELATED;TYPE=child:urn:uuid:…` line: the review shows the rewrite line, Apply
+    writes the labelled form and only that line changes. The next Sync is `unchanged`.
 
 Note: `DOMParser` in the suite is jsdom's, with `querySelector('response')` matching prefixed elements
 (`CR:address-data`) like Chromium does. Plain jsdom does not match them; Obsidian (Chromium) does.
@@ -295,3 +305,25 @@ book's name; below that is written as **<book>**.
       says to set "This is me" or open the graph from a contact; otherwise everyone with a relationship is drawn.
 - [ ] **Mirror relationships on this device:** turn it off, then reload the plugin. Adding a child no longer
       touches the other note.
+- [ ] **Relationship entered on the phone:** in DAVx5 (Android) or Apple Contacts add a relationship to Jan, for
+      example Spouse "Sanne" or Child "Lotte", and let the phone sync to Radicale. In Obsidian run **Sync**: the
+      review lists the relationship property (`spouse`, `children`, …) with **<book>** preselected as the result.
+      **Apply**: the note has the name. A second **Sync** says "Up to date". A relationship with a label the plugin
+      does not know (say "Godfather") is not listed, and stays on the card.
+- [ ] **Relationship added in Obsidian shows on the phone:** add `friends: ['[[Sem]]']` to Jan and **Sync**. With
+      `curl` the card has `itemN.X-ABRELATEDNAMES;X-FRIENDLY-UID=<Sem's UID>:Sem` and `itemN.X-ABLabel:Friend` (for a
+      vCard 4.0 card: `RELATED;TYPE=friend;VALUE=text;X-FRIENDLY-UID=…:Sem`), and every other line is as it was. After
+      the phone has synced, Jan shows "Sem" under Friend, not a code. Remove it in Obsidian and **Sync**: the line
+      and its label are gone from the card. Do the same with `partner`: the phone shows Partner.
+- [ ] **Rewrite line for old `urn:uuid` lines:** put a 3.0 card on the server that holds
+      `RELATED;TYPE=child:urn:uuid:<Sem's UID>` (this is what older versions wrote), import it and **Sync**. The review
+      screen shows "Relationships on this card are rewritten in the form phones understand." and no property rows.
+      *Cancel* leaves the card as it was. **Apply** replaces that line with the `X-ABRELATEDNAMES` line and its label;
+      a second **Sync** says "Up to date". A 4.0 card with such a line is left alone.
+- [ ] **Create Contact with two books:** with two address books (the first the default), click **Create Contact**:
+      the dialog has an **Address book** dropdown with the default selected. Choose the second book and create
+      "Test Twee": the note has `source:` with that book's name, and its first **Sync** creates the card in that book
+      (not in the other). With one address book the dropdown is not shown.
+- [ ] **New contacts version:** in an address book's settings click **Count card versions**: the text reads
+      like "3 × vCard 3.0, 0 × vCard 4.0; Automatic gives new contacts vCard 3.0." Set **New contacts** to
+      vCard 4.0, create a contact in that book and **Sync**: the card says `VERSION:4.0`. Set it back to Automatic.

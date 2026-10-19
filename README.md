@@ -49,6 +49,7 @@ To try the test releases:
       + [➕ Create a New Contact](#-create-a-new-contact)
       + [📂 A folder per contact](#-a-folder-per-contact)
       + [👪 Relationships in the sidebar](#-relationships-in-the-sidebar)
+      + [📱 Relationships on phones](#-relationships-on-phones)
       + [🕸️ People graph](#-people-graph)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
    * [📖 Understanding the vCard (VCF) Format](#-understanding-the-vcard-vcf-format)
@@ -200,6 +201,7 @@ With a contact note open: pick another contact, then the relationship (see [Rela
 2. Fill in:
    - `Given Name`
    - `Family Name`
+   - `Address book`, when you have two or more: the default address book is preselected, and your choice is written as `source:` in the new note. With one address book (or none) the field is not shown.
 3. Add any extra details:
    - Phone numbers, emails, websites, etc.
 4. Your contact is now saved as a markdown file and export-ready!
@@ -281,6 +283,36 @@ Each contact in the sidebar shows its relationships below its details, one line 
 The other side follows when relationships are mirrored (**Mirror relationships on this device**): adding Sem to Jan's `children` gives Sem `parents: [[Jan]]`, and removing it takes that away again. A single relationship on the other side is never overwritten: if Lot already has Piet as `spouse`, making Lot Jan's spouse leaves Lot's `spouse` as it is, and the plugin tells you so.
 
 If the server cannot be read, the sidebar does not ask again for a minute.
+
+---
+
+<!-- TOC --><a name="-relationships-on-phones"></a>
+### 📱 Relationships on phones
+
+A card keeps the vCard version it has, and each property is written the way that version does it. vCard 3.0 has no `RELATED` property, so Apple Contacts and DAVx5 (Android) store relationships in a 3.0 card as a name with a label:
+
+```
+item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=<uid>:Sem de Vries
+item1.X-ABLabel:_$!<Child>!$_
+```
+
+- **Names, not codes.** The line holds the other person's display name (the `name` property, never a path or alias), so a phone shows "Sem de Vries". The label says what the person is: Spouse, Partner, Child, Parent, Mother, Father, Sibling, Brother, Sister, Kin, Relative, Friend, Colleague, Co-worker, Assistant, Manager, Neighbor, Co-resident, Acquaintance, Met or Emergency. Apple's built-in labels (Spouse, Partner, Child, Parent, Mother, Father, Brother, Sister, Friend, Assistant, Manager) are written as `_$!<Child>!$_`, the others as plain text. The `X-FRIENDLY-UID` parameter is a hint for this plugin only: it lets Sync find the exact contact when two people share a name. Phones ignore it.
+- **Which apps read them.** Apple Contacts and DAVx5 (and the Android apps that read through it) show `X-ABRELATEDNAMES` with its label. A vCard 4.0 card holds the relationship as `RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=<uid>:Sem de Vries`, which DAVx5 reads as well.
+- **Reading goes both ways.** Sync reads every form, whatever the card's version: `RELATED` with a `urn:uuid:` value or a text name, and `X-ABRELATEDNAMES` by its label (built-in `_$!<Spouse>!$_` or plain text; a label such as `Domestic-partner, Spouse` matches when any part matches). A relationship you enter on the phone therefore shows up in Obsidian after Sync. A relationship with an unknown label (say "Godfather") or none at all is not mapped; it stays on the card untouched.
+- **Anniversary.** vCard 3.0 has no `ANNIVERSARY` either; on a 3.0 card the `anniversary` property is written as `itemN.X-ABDATE` with the label `_$!<Anniversary>!$_`, and read from there.
+- **Only what changed is written.** Adding a relationship adds its line and its label; removing it removes both. Every other line stays as it was.
+
+**`partner` and `spouse`.** They are two relationships, each single, each mirrored by itself. `spouse` is labelled Spouse (type `spouse` on a 4.0 card); `partner` is for a partner you are not married to, labelled Partner (type `sweetheart` on a 4.0 card). A person can have both. In the people graph a partner is drawn as a partner, like a spouse.
+
+**Cards the plugin wrote earlier.** Older versions wrote `RELATED;TYPE=child:urn:uuid:<uid>` in every card, which phones show as a code or not at all. On a 3.0 card the next Apply that writes the card rewrites those lines into the form above. When that is the only difference between the note and the card, the review screen opens with the line "Relationships on this card are rewritten in the form phones understand." and no property rows; click **Apply**. After that the card is up to date.
+
+#### New contacts: Automatic, vCard 3.0 or vCard 4.0
+
+Each address book has a setting **New contacts** (in the address book's section of the plugin settings) with three choices: **Automatic** (the default), **vCard 3.0** and **vCard 4.0**. It decides the version of a card the plugin creates for a new contact. Automatic uses the version most of the cards in that address book have; an empty address book or a tie gives 3.0, the version every app understands. The version is looked at when the card is created (the first Sync of the new note), from the address book's contact list, which is cached for a few minutes. If the address book cannot be read, the new card is 3.0 and a notice says so.
+
+**Count card versions** next to it counts the versions in the address book and shows, for example, "118 × vCard 3.0, 4 × vCard 4.0; Automatic gives new contacts vCard 3.0." Nothing is changed by counting.
+
+**When your server starts offering vCard 4.0.** Existing cards keep the version they have: the plugin never converts a card from one version to another (phones rewrite a card in their own version anyway). Only new cards follow: as phones and the server store more 4.0 cards, the majority in the address book changes, and Automatic starts creating 4.0 cards once most of the cards are 4.0. Set the book to vCard 3.0 or vCard 4.0 to fix the version of new cards yourself.
 
 ---
 
@@ -564,6 +596,7 @@ Some things come with a choice:
 - If a relationship points to someone who is on the server but has no note yet, the row shows an **Import** button for that person. It creates the note, and the review opens again. When relationships are mirrored, the new note's relationship can be added back to this contact's note, so the screen may open once more with that change.
 - If your choices change the contact's name, **Rename note to ...** is offered, ticked. Untick it to keep the file name. It is disabled when another note in the folder already has that name.
 - To move a contact to another address book, change `source:` in the note to the name of that book and sync. The screen shows "Address book: <from> -> <to>", and Apply moves the card.
+- A 3.0 card that still holds relationship lines from older versions of the plugin shows the line "Relationships on this card are rewritten in the form phones understand." and Apply writes them in the new form (see [Relationships on phones](#-relationships-on-phones)).
 
 If the card changed on the server since the screen opened, Apply tells you and the screen opens again with the new values.
 
