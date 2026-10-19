@@ -33,7 +33,7 @@ vi.mock("src/sync/adapters", () => ({
   }),
 }));
 
-import { clearRemoteContactsCache, ObsidianRelationContext, remoteContacts } from "src/contacts/obsidianNotes";
+import { clearRemoteContactsCache, ObsidianRelationContext, remoteContacts, remoteContactsWithFailures } from "src/contacts/obsidianNotes";
 import { orgOutOfString } from "src/util/vcard";
 
 const source = (id: string, name = id): Source => ({
@@ -92,6 +92,18 @@ describe('remoteContacts', () => {
     state.lists = { a: [meta('1', 'Anna')], b: [meta('2', 'Piet')] };
     expect((await remoteContacts()).map((r) => r.uid)).toEqual(['1', '2']);
     expect(state.calls).toEqual(['a', 'b', 'b']);
+  });
+
+  it('reports the sources that failed on every call, while the Notice stays throttled', async () => {
+    state.active = [source('a'), source('b', 'Work')];
+    state.lists = { a: [meta('1', 'Anna')], b: new Error('offline') };
+    const first = await remoteContactsWithFailures();
+    expect(first.contacts.map((r) => r.uid)).toEqual(['1']);
+    expect(first.failed).toEqual(['b']);
+    expect((await remoteContactsWithFailures()).failed).toEqual(['b']);
+    expect(state.notices).toHaveLength(1);
+    state.lists = { a: [meta('1', 'Anna')], b: [meta('2', 'Piet')] };
+    expect(await remoteContactsWithFailures()).toMatchObject({ failed: [] });
   });
 
   it('tells about a failing source once, not on every retry', async () => {

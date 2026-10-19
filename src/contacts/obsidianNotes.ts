@@ -219,8 +219,14 @@ function failureText(reason: unknown, source: Source): string {
  * and tried again on the next call.
  */
 export async function remoteContacts(): Promise<RemoteContact[]> {
+  return (await remoteContactsWithFailures()).contacts;
+}
+
+/** `remoteContacts`, plus the ids of the active sources that could not be read this time (Notice or not). */
+export async function remoteContactsWithFailures(): Promise<{ contacts: RemoteContact[]; failed: string[] }> {
   const sources = activeSources();
   for (const id of remoteCache.keys()) if (!sources.some((s) => s.id === id)) remoteCache.delete(id);
+  const failed: string[] = [];
   const lists = await Promise.all(
     sources.map(async (source): Promise<RemoteContact[]> => {
       const key = JSON.stringify([source.addressBookUrl, source.authType, source.authKey]);
@@ -246,11 +252,12 @@ export async function remoteContacts(): Promise<RemoteContact[]> {
           lastFailureNotice.set(source.id, Date.now());
           new Notice(`Could not read ${source.name}: ${failureText(error, source)}`);
         }
+        failed.push(source.id);
         return [];
       }
     }),
   );
-  return lists.flat();
+  return { contacts: lists.flat(), failed: sources.filter((s) => failed.includes(s.id)).map((s) => s.id) };
 }
 
 /**
@@ -312,12 +319,14 @@ export async function relationContextFor(app: App, sourcePath: string): Promise<
 export async function syncRelationContexts(
   app: App,
   sourcePath: string,
-): Promise<{ ctx: ObsidianRelationContext; readOnlyCtx: ObsidianRelationContext }> {
+): Promise<{ ctx: ObsidianRelationContext; readOnlyCtx: ObsidianRelationContext; unreadable: string[] }> {
   const contacts = contactNotes(app);
-  const remote = await remoteContacts();
+  const { contacts: remote, failed } = await remoteContactsWithFailures();
   return {
     ctx: new ObsidianRelationContext(app, sourcePath, contacts, remote),
     readOnlyCtx: new ObsidianRelationContext(app, sourcePath, contacts, remote, true),
+    /** Ids of the active address books whose contact list could not be read. */
+    unreadable: failed,
   };
 }
 
