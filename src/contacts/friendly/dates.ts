@@ -17,6 +17,14 @@ function parseFull(value: string): [string, string, string] | undefined {
   return m ? [m[1], m[2] ?? m[4], m[3] ?? m[5]] : undefined;
 }
 
+/**
+ * The year that stands for "no year" on this line: its X-APPLE-OMIT-YEAR, or 1604 on an `X-ABDATE` line without it
+ * (DAVx5 writes Apple's year-less form there without the param).
+ */
+function appleYear(line: VCardLine): string | undefined {
+  return getParam(line, APPLE_PARAM) ?? (line.name.toUpperCase() === 'X-ABDATE' ? DEFAULT_APPLE_YEAR : undefined);
+}
+
 /** The note value for a date line; empty for an empty value. */
 export function readDate(line: VCardLine): string {
   const value = line.value.trim();
@@ -24,7 +32,7 @@ export function readDate(line: VCardLine): string {
     const full = parseFull(value);
     if (full) {
       const [year, month, day] = full;
-      return getParam(line, APPLE_PARAM) === year ? `--${month}-${day}` : `${year}-${month}-${day}`;
+      return appleYear(line) === year ? `--${month}-${day}` : `${year}-${month}-${day}`;
     }
     const yearLess = YEAR_LESS.exec(value);
     if (yearLess) return `--${yearLess[1]}-${yearLess[2]}`;
@@ -40,13 +48,13 @@ export function normalizeNoteDate(value: string): string {
 }
 
 /**
- * The note value as `line` reads it: a full date in the year of the line's X-APPLE-OMIT-YEAR is that line's
- * year-less date (`1604-03-12` -> `--03-12`, as notes showed Apple birthdays before year-less dates were read).
+ * The note value as `line` reads it: a full date in the year of the line's X-APPLE-OMIT-YEAR (see `appleYear`) is
+ * that line's year-less date (`1604-03-12` -> `--03-12`, as notes showed Apple birthdays before year-less dates were read).
  */
 export function noteDateFor(note: string, line: VCardLine | undefined): string {
   const text = normalizeNoteDate(note);
   const full = parseFull(text);
-  if (!full || !line || getParam(line, APPLE_PARAM) !== full[0]) return text;
+  if (!full || !line || appleYear(line) !== full[0]) return text;
   return `--${full[1]}-${full[2]}`;
 }
 
@@ -72,7 +80,7 @@ export function writeDate(
   const yearLess = YEAR_LESS.exec(text);
   if (yearLess) {
     const [, month, day] = yearLess;
-    const apple = line ? getParam(line, APPLE_PARAM) : undefined;
+    const apple = line ? appleYear(line) : undefined;
     if (apple === undefined && is4) return { value: `--${month}${day}`, params: dateParams };
     const year = apple !== undefined && /^\d{4}$/.test(apple) ? apple : DEFAULT_APPLE_YEAR;
     const basic = line !== undefined && apple !== undefined && /^\d{8}$/.test(line.value.trim());

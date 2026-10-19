@@ -508,6 +508,16 @@ describe('relationships and anniversaries in the card\'s own form', () => {
     expect(texts(result.lines).slice(2)).toEqual(['ANNIVERSARY:20120621']);
   });
 
+  it('an X-ABDATE anniversary in 1604 without the apple param is year-less and stays as it is', () => {
+    const lines = card('FN:X', 'item1.X-ABDATE:1604-06-21', 'item1.X-ABLabel:_$!<Anniversary>!$_');
+    expect(read(lines).props.anniversary).toBe('--06-21');
+    expect(go(lines, read(lines).props).lines).toEqual(lines);
+    expect(go(lines, { ...read(lines).props, anniversary: '1604-06-21' }).lines).toEqual(lines);
+    expect(texts(go(lines, { ...read(lines).props, anniversary: '--07-01' }).lines)[2]).toBe(
+      'item1.X-ABDATE;X-APPLE-OMIT-YEAR=1604:1604-07-01',
+    );
+  });
+
   it('existing anniversary lines are edited in place, whatever their form', () => {
     const own = card('FN:X', 'ANNIVERSARY:2012-06-21');
     expect(texts(go(own, { name: 'X', anniversary: '2013-01-02' }).lines)).toEqual(['VERSION:3.0', 'FN:X', 'ANNIVERSARY:2013-01-02']);

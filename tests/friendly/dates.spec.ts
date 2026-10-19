@@ -20,6 +20,15 @@ describe('readDate', () => {
     expect(readDate(line('1604-03-15', APPLE))).toBe('--03-15');
   });
 
+  it('reads X-ABDATE in 1604 without the apple param as year-less (DAVx5 drops the param on X-ABDATE)', () => {
+    const abdate = (value: string): VCardLine => ({ group: 'item1', name: 'X-ABDATE', params: [], value });
+    expect(readDate(abdate('1604-06-21'))).toBe('--06-21');
+    expect(readDate(abdate('16040621'))).toBe('--06-21');
+    expect(readDate(abdate('2012-06-21'))).toBe('2012-06-21');
+    // Only X-ABDATE: a birthday in 1604 without the param is a birthday in 1604.
+    expect(readDate(line('1604-06-21'))).toBe('1604-06-21');
+  });
+
   it('apple param with another year keeps the year', () => {
     expect(readDate(line('1980-03-15', APPLE))).toBe('1980-03-15');
   });
@@ -66,6 +75,15 @@ describe('writeDate', () => {
   it('writes year-less on an apple line with its own year', () => {
     const apple: [string, string] = ['X-APPLE-OMIT-YEAR', '1900'];
     expect(writeDate('--03-15', line('1900-01-01', apple), '4.0')).toEqual({ value: '1900-03-15', params: [apple] });
+  });
+
+  it('writes year-less on an X-ABDATE line in 1604 without the param in the apple form', () => {
+    const abdate = (value: string): VCardLine => ({ group: 'item1', name: 'X-ABDATE', params: [], value });
+    expect(noteDateFor('1604-06-21', abdate('1604-06-21'))).toBe('--06-21');
+    expect(writeDate('--07-01', abdate('1604-06-21'), '3.0')).toEqual({ value: '1604-07-01', params: [APPLE] });
+    expect(writeDate('--07-01', abdate('16040621'), '3.0')).toEqual({ value: '16040701', params: [APPLE] });
+    expect(writeDate('--07-01', abdate('1604-06-21'), '4.0')).toEqual({ value: '1604-07-01', params: [APPLE] });
+    expect(writeDate('2012-07-01', abdate('1604-06-21'), '3.0')).toEqual({ value: '2012-07-01', params: [] });
   });
 
   it('writes year-less on 4.0 as --MMDD', () => {

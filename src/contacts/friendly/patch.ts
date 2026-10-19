@@ -5,7 +5,7 @@
  */
 
 import { cleanUid, generateUUID } from '../../util/vcard';
-import { normalizeNoteDate, writeDate } from './dates';
+import { normalizeNoteDate, noteDateFor, writeDate } from './dates';
 import { escapeText, getParam, joinStructured, serializeLine, splitStructured, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeLabel } from './mapping';
@@ -148,12 +148,13 @@ function derivedName(props: Record<string, FriendlyValue>): string {
 
 /** A date in the form the card's version and the line's own style expect; a same-date edit leaves the line alone. */
 function patchDate(s: State, row: FieldRow, prov: Provenance | undefined, before: string, after: string): void {
-  if (normalizeNoteDate(before) === normalizeNoteDate(after)) return;
+  const line = prov ? s.base[prov.line] : undefined;
+  // `1604-06-21` in the note is the line's `--06-21` when 1604 stands for "no year" there.
+  if (normalizeNoteDate(before) === noteDateFor(after, line)) return;
   if (normalizeNoteDate(after) === '') {
     if (prov) removeLine(s, prov.line);
     return;
   }
-  const line = prov ? s.base[prov.line] : undefined;
   const written = writeDate(after, line, cardVersion(s));
   if (!line) {
     // vCard 3.0 has no ANNIVERSARY: Apple and DAVx5 write a labelled X-ABDATE. Existing lines keep their form.
