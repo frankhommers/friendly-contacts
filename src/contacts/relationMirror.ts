@@ -3,6 +3,7 @@
  * `parents` on the other). Stateful, but free of Obsidian: the vault is reached through MirrorEnv.
  */
 
+import { recoverWikilink } from 'src/contacts/friendly/merge';
 import { MappingRow } from 'src/contacts/friendly/mapping';
 import {
   inverseProperty,
@@ -34,6 +35,15 @@ export interface MirrorEnv {
 type Op = 'add' | 'remove';
 
 const asItems = (value: unknown): unknown[] => (value === undefined || value === null ? [] : Array.isArray(value) ? value : [value]);
+
+/**
+ * The entries of a relation property as the user may have left it: a list, a single string, or the
+ * `[["Name"]]` YAML makes of an unquoted `[[Name]]` (recovered as the link text).
+ */
+export function relationItems(value: unknown): unknown[] {
+  const whole = recoverWikilink(value);
+  return (whole !== undefined ? [whole] : asItems(value)).map((item) => recoverWikilink(item) ?? item);
+}
 
 export class RelationMirror {
   private snapshots = new Map<string, RelationSnapshot>();
@@ -193,17 +203,35 @@ export async function addOtherSide(env: MirrorEnv, rows: MappingRow[], item: One
   return result;
 }
 
-/** Removes the item's target from the relation property of the note holding it. */
-export async function removeRelation(env: MirrorEnv, rows: MappingRow[], item: OneSidedItem): Promise<void> {
-  const row = rows.find((r) => r.kind === 'relation' && r.property === item.property);
+/**
+ * Removes the entries of a relation property that `matches`; the last one going removes the property.
+ * Nothing is written when nothing matches.
+ */
+export async function removeEntries(
+  env: MirrorEnv,
+  rows: MappingRow[],
+  path: string,
+  property: string,
+  matches: (entry: string) => boolean,
+): Promise<void> {
+  const row = rows.find((r) => r.kind === 'relation' && r.property === property);
   const single = row?.kind === 'relation' && row.single === true;
-  const pointsToTarget = (entry: unknown) =>
-    typeof entry === 'string' && env.resolveLink(linkTarget(entry.trim()), item.path) === item.target;
-  await env.updateProperty(item.path, item.property, (current) => {
-    const items = asItems(current);
-    const kept = items.filter((entry) => !pointsToTarget(entry));
+  await env.updateProperty(path, property, (current) => {
+    const items = relationItems(current);
+    const kept = items.filter((entry) => !(typeof entry === 'string' && matches(entry)));
     if (kept.length === items.length) return current as string | string[] | undefined;
     if (kept.length === 0) return undefined;
     return single ? (kept[0] as string) : (kept as string[]);
   });
+}
+
+/** Removes the item's target from the relation property of the note holding it. */
+export async function removeRelation(env: MirrorEnv, rows: MappingRow[], item: OneSidedItem): Promise<void> {
+  await removeEntries(
+    env,
+    rows,
+    item.path,
+    item.property,
+    (entry) => env.resolveLink(linkTarget(entry.trim()), item.path) === item.target,
+  );
 }

@@ -86,7 +86,7 @@ function scalar(value: unknown): string | undefined {
 }
 
 /** Unquoted `[[Name]]` parses as `[["Name"]]`; recover that exact shape as the wikilink text. */
-function recoverWikilink(value: unknown): string | undefined {
+export function recoverWikilink(value: unknown): string | undefined {
   if (!Array.isArray(value) || value.length !== 1) return undefined;
   const inner: unknown = value[0];
   if (!Array.isArray(inner) || inner.length !== 1 || typeof inner[0] !== 'string') return undefined;
