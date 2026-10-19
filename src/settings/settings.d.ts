@@ -32,6 +32,8 @@ export interface Source {
   authType: AuthType;
   authKey: string;
   enabled: boolean;
+  /** vCard version of contacts created here; 'auto' (also when absent) follows most cards in the book. */
+  newCardVersion?: 'auto' | '3.0' | '4.0';
 }
 
 interface ProcessorsSettings {

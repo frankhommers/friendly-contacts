@@ -1,5 +1,6 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
+import { cardVersions } from "src/contacts/obsidianNotes";
 import { notesNamingSource, removalRefusal, removeSource, renameRefusal, renameSource, saveSourcePatch } from "src/contacts/sourceNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import {
@@ -11,7 +12,16 @@ import {
 } from "src/settings/carddavCredentials";
 import { ContactsPluginSettings, Source } from "src/settings/settings";
 import { connectionProblem } from "src/sync/adapters";
-import { SourcePatch, sourceWithSameUrl, uniqueSourceName, validateSourceName, withSource } from "src/sync/sources";
+import {
+  cardVersionStats,
+  followsBook,
+  newCardVersion,
+  SourcePatch,
+  sourceWithSameUrl,
+  uniqueSourceName,
+  validateSourceName,
+  withSource,
+} from "src/sync/sources";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import CarddavSettings, { CarddavSettingsInterface } from "src/ui/settings/components/carddavSettings";
 import { generateUUID } from "src/util/vcard";
@@ -123,6 +133,24 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
 
   const forgetSaved = () => attempt(() => onSave({ authKey: '' }));
 
+  /** "Count card versions": the versions found, or why they could not be read. */
+  const [counted, setCounted] = React.useState<{ versions?: (string | undefined)[]; counting?: boolean; error?: string }>();
+  const countVersions = async () => {
+    setCounted({ counting: true });
+    try {
+      setCounted({ versions: await cardVersions(source, { fresh: true }) });
+    } catch (error) {
+      setCounted({ error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  const countedText = (): string | undefined => {
+    if (counted?.counting) return 'Counting…';
+    if (counted?.error !== undefined) return `Could not count: ${counted.error}`;
+    if (!counted?.versions) return undefined;
+    const auto = followsBook(source) ? `; Automatic gives new contacts vCard ${newCardVersion(source, counted.versions)}` : '';
+    return `${cardVersionStats(counted.versions)}${auto}.`;
+  };
+
   const remove = () => attempt(async () => {
     const refused = await removalRefusal(app, source.id);
     if (refused) {
@@ -209,6 +237,37 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
           >
             <input type="checkbox" tabIndex={-1} checked={isDefault} readOnly />
           </div>
+        </div>
+      </div>
+
+      <div className="setting-item">
+        <div className="setting-item-info">
+          <div className="setting-item-name">New contacts</div>
+          <div className="setting-item-description">
+            The vCard version of contacts created in this address book. Automatic uses the version most of its
+            cards have (vCard 3.0 when it is empty or there is a tie).
+            {countedText() !== undefined
+              ? <div className={counted?.error !== undefined ? "mod-warning" : undefined}>{countedText()}</div>
+              : null}
+          </div>
+        </div>
+        <div className="setting-item-control">
+          <button
+            disabled={counted?.counting === true || source.addressBookUrl.trim() === ''}
+            onClick={() => { void countVersions(); }}
+          >
+            Count card versions
+          </button>
+          <select
+            className="dropdown"
+            aria-label={`vCard version of new contacts in ${source.name}`}
+            value={source.newCardVersion ?? 'auto'}
+            onChange={(e) => { void attempt(() => onSave({ newCardVersion: e.target.value as NonNullable<Source['newCardVersion']> })); }}
+          >
+            <option value="auto">Automatic</option>
+            <option value="3.0">vCard 3.0</option>
+            <option value="4.0">vCard 4.0</option>
+          </select>
         </div>
       </div>
 

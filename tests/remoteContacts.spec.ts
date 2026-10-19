@@ -33,8 +33,8 @@ vi.mock("src/sync/adapters", () => ({
   }),
 }));
 
-import { clearRemoteContactsCache, ObsidianRelationContext, remoteContacts, remoteContactsWithFailures } from "src/contacts/obsidianNotes";
-import { orgOutOfString } from "src/util/vcard";
+import { cardVersions, clearRemoteContactsCache, ObsidianRelationContext, remoteContacts, remoteContactsWithFailures } from "src/contacts/obsidianNotes";
+import { orgOutOfString, versionOutOfString } from "src/util/vcard";
 
 const source = (id: string, name = id): Source => ({
   id, name, addressBookUrl: `http://x/${id}/`, authType: "apikey", authKey: "secret-key", enabled: true,
@@ -58,6 +58,34 @@ describe('orgOutOfString', () => {
     expect(orgOutOfString('ORG;TYPE=work:Acme')).toBe('Acme');
     expect(orgOutOfString('item1.ORG:Acme;Sales')).toBe('Acme');
     expect(orgOutOfString('FN:Anna')).toBeUndefined();
+  });
+});
+
+describe('versionOutOfString', () => {
+  it('is the card\'s VERSION, trimmed', () => {
+    expect(versionOutOfString('BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Anna\r\nEND:VCARD')).toBe('3.0');
+    expect(versionOutOfString('BEGIN:VCARD\nversion: 4.0 \nEND:VCARD')).toBe('4.0');
+    expect(versionOutOfString('BEGIN:VCARD\r\nX-VERSION:9\r\nitem1.VERSION:9\r\nEND:VCARD')).toBeUndefined();
+    expect(versionOutOfString('')).toBeUndefined();
+  });
+});
+
+describe('cardVersions', () => {
+  it('lists the version of every card, also those without a UID, from the cached listing unless fresh', async () => {
+    state.active = [source('a')];
+    state.lists = { a: [meta('1', 'Anna', { version: '3.0' }), meta('', '', { version: '4.0' }), meta('3', 'Cor')] };
+    await remoteContacts();
+    expect(await cardVersions(source('a'))).toEqual(['3.0', '4.0', undefined]);
+    expect(state.calls).toEqual(['a']);
+    state.lists = { a: [meta('1', 'Anna', { version: '4.0' })] };
+    expect(await cardVersions(source('a'))).toEqual(['3.0', '4.0', undefined]);
+    expect(await cardVersions(source('a'), { fresh: true })).toEqual(['4.0']);
+    expect(state.calls).toEqual(['a', 'a']);
+  });
+
+  it('a book that cannot be read throws without its URL or credentials', async () => {
+    state.lists = { b: new Error('boom http://x/b/ secret-key') };
+    await expect(cardVersions(source('b'))).rejects.toThrow('boom … …');
   });
 });
 

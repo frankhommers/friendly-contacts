@@ -278,6 +278,35 @@ describe('newCard', () => {
     expect(lines).toEqual(['VERSION:4.0', 'FN:Anna', 'UID:abc']);
   });
 
+  it('new 3.0 card uses the 3.0 forms', () => {
+    const DATA = 'data:image/jpeg;base64,/9j/AAAA';
+    const people: RelationContext = { ...ctx, displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined) };
+    const props = { name: 'Anna', uid: 'anna', photo: DATA, birthday: '--03-15', anniversary: '2012-06-21', spouse: '[[Sem]]', friends: ['[[Opa]]'] };
+    const { lines, warnings } = newCard(props, DEFAULT_MAPPING, people, '3.0');
+    expect(texts(lines)).toEqual([
+      'VERSION:3.0',
+      'FN:Anna',
+      'BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-15',
+      'item1.X-ABDATE:2012-06-21',
+      'item1.X-ABLabel:_$!<Anniversary>!$_',
+      'PHOTO;ENCODING=b;TYPE=JPEG:/9j/AAAA',
+      'UID:anna',
+      'item2.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+      'item2.X-ABLabel:_$!<Spouse>!$_',
+      'item3.X-ABRELATEDNAMES:Opa',
+      'item3.X-ABLabel:_$!<Friend>!$_',
+    ]);
+    expect(warnings).toEqual([]);
+    // Read back as the same note.
+    const back = toFriendly(parseCard(serializeCard(lines)), DEFAULT_MAPPING, people).props;
+    expect(back).toMatchObject({ birthday: '--03-15', anniversary: '2012-06-21', spouse: '[[Sem]]', friends: ['[[Opa]]'] });
+  });
+
+  it('a new card is vCard 4.0 unless asked otherwise', () => {
+    expect(texts(newCard({ name: 'Anna', uid: 'a' }, DEFAULT_MAPPING, ctx).lines)[0]).toBe('VERSION:4.0');
+    expect(texts(newCard({ name: 'Anna', uid: 'a' }, DEFAULT_MAPPING, ctx, '4.0').lines)[0]).toBe('VERSION:4.0');
+  });
+
   it('returns relation warnings', () => {
     const { lines, warnings } = newCard({ name: 'Anna', children: ['[[Jan]]'] }, DEFAULT_MAPPING, ctx);
     expect(texts(lines)).toContain('RELATED;TYPE=child;VALUE=text:Jan');

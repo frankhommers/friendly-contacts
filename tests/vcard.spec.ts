@@ -4,7 +4,7 @@ import { VCardKinds } from "src/contacts/vcard/shared/structuredFields";
 import { setApp } from "src/context/sharedAppContext";
 import { NamingPayload } from "src/ui/modals/contactNameModal";
 import { fixtures } from "tests/fixtures/fixtures";
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {DEFAULT_SETTINGS} from "../src/settings/setting";
 
 // Helper function to parse vCards and collect only those with valid slugs
@@ -26,11 +26,21 @@ setApp({
   }
 } as unknown as App);
 
+const books = vi.hoisted(() => ({
+  sources: [] as { id: string; name: string }[],
+  defaultSource: '',
+  /** What the modal was offered, and the book the user picks. */
+  offered: [] as unknown[],
+  pick: undefined as string | undefined,
+}));
+
 vi.mock("src/context/sharedSettingsContext", () => {
   return {
     getSettings: vi.fn(() => ({
       createFieldsKeys: DEFAULT_SETTINGS.createFieldsKeys,
       friendly: DEFAULT_SETTINGS.friendly,
+      sources: books.sources,
+      defaultSource: books.defaultSource,
     })),
   };
 });
@@ -39,17 +49,23 @@ vi.mock('src/ui/modals/contactNameModal', () => {
   class ContactNameModal {
     private callback: (nameData: NamingPayload) => void;
 
+    private books: unknown;
+
     constructor(
       app: any,
-      callback: (nameData: NamingPayload) => void
+      callback: (nameData: NamingPayload) => void,
+      offered?: unknown,
     ) {
       this.callback = callback;
+      this.books = offered;
     }
     open() {
+      books.offered.push(this.books);
       this.callback({
         kind: VCardKinds.Individual,
         given: 'Foo',
-        family: 'Bar'
+        family: 'Bar',
+        ...(this.books && books.pick !== undefined ? { source: books.pick } : {}),
       });
     }
     onOpen() {}
@@ -61,14 +77,15 @@ vi.mock('src/ui/modals/contactNameModal', () => {
 });
 
 describe('vcard creatEmpty', () => {
+  beforeEach(() => {
+    books.sources = [];
+    books.defaultSource = '';
+    books.offered = [];
+    books.pick = undefined;
+  });
+
   it('should ask for a firstname and lastname ', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
-
     const empty = await vcard.createEmpty();
-
-    expect(warnSpy).toHaveBeenCalled();
-    expect(warnSpy.mock.calls[0][0]).toMatch(/^No name found for record/);
-    warnSpy.mockRestore();
 
     // createEmpty gives friendly properties: the name asked for, the default fields, a uid.
     expect(empty['name']).toBe('Foo Bar');
@@ -77,6 +94,26 @@ describe('vcard creatEmpty', () => {
     expect(empty['mobile']).toBe('');
     expect(empty['categories']).toBe('');
     expect(empty['uid']).toMatch(/^urn:uuid:/);
+    // No address book to choose: none offered, no source written.
+    expect(books.offered).toEqual([undefined]);
+    expect(empty).not.toHaveProperty('source');
+  });
+
+  it('with one address book there is nothing to choose', async () => {
+    books.sources = [{ id: 'a', name: 'Work' }];
+    books.defaultSource = 'a';
+    const empty = await vcard.createEmpty();
+    expect(books.offered).toEqual([undefined]);
+    expect(empty).not.toHaveProperty('source');
+  });
+
+  it('offers the address books, the default selected, and writes the one chosen as source', async () => {
+    books.sources = [{ id: 'a', name: 'Work' }, { id: 'b', name: 'Family' }];
+    books.defaultSource = 'b';
+    books.pick = 'Work';
+    const empty = await vcard.createEmpty();
+    expect(books.offered).toEqual([{ names: ['Work', 'Family'], selected: 'Family' }]);
+    expect(empty['source']).toBe('Work');
   });
 });
 

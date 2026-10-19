@@ -261,3 +261,51 @@ export function patchSource<T extends SourceList>(settings: T, id: string, patch
   const { id: _ignored, ...fields } = patch as SourcePatch & { id?: string };
   return { ...settings, sources: settings.sources.map((s) => (s.id === id ? { ...current, ...fields } : s)) };
 }
+
+/** The vCard versions the plugin writes cards in. */
+export type CardVersion = '3.0' | '4.0';
+
+/** How many cards are vCard 3.0, 4.0 and anything else (2.1, or no VERSION in the listing). */
+export function countCardVersions(versions: (string | undefined)[]): { v3: number; v4: number; other: number } {
+  const counts = { v3: 0, v4: 0, other: 0 };
+  for (const version of versions) {
+    const v = version?.trim();
+    if (v === '3.0') counts.v3++;
+    else if (v === '4.0') counts.v4++;
+    else counts.other++;
+  }
+  return counts;
+}
+
+/** "118 × vCard 3.0, 4 × vCard 4.0" (other versions only when there are any). */
+export function cardVersionStats(versions: (string | undefined)[]): string {
+  const { v3, v4, other } = countCardVersions(versions);
+  return `${v3} × vCard 3.0, ${v4} × vCard 4.0${other > 0 ? `, ${other} × another version` : ''}`;
+}
+
+/** True when the version of new cards depends on the cards in the book (Automatic, also when not set). */
+export const followsBook = (source: Pick<Source, 'newCardVersion'>): boolean =>
+  source.newCardVersion !== '3.0' && source.newCardVersion !== '4.0';
+
+/**
+ * The version a new card in this book gets: the book's setting, or with Automatic the version most of its cards
+ * (`versions`, from the listing) have. A tie or an empty book gives 3.0, the most widely understood.
+ */
+export function newCardVersion(source: Pick<Source, 'newCardVersion'>, versions: (string | undefined)[]): CardVersion {
+  if (source.newCardVersion === '3.0' || source.newCardVersion === '4.0') return source.newCardVersion;
+  const { v3, v4 } = countCardVersions(versions);
+  return v4 > v3 ? '4.0' : '3.0';
+}
+
+/** Address books to choose from, by name, and the one selected at first. */
+export type BookChoice = { names: string[]; selected: string };
+
+/**
+ * The address books "Create Contact" offers: every book by name, the default selected (else the first).
+ * undefined with one book or none: there is nothing to choose.
+ */
+export function bookChoice(settings: SourceList): BookChoice | undefined {
+  if (settings.sources.length < 2) return undefined;
+  const selected = (defaultSourceOf(settings) ?? settings.sources[0]).name;
+  return { names: settings.sources.map((s) => s.name), selected };
+}

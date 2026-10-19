@@ -653,6 +653,32 @@ describe('applySync', () => {
     expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
   });
 
+  it("create picks the book's version", async () => {
+    for (const version of ['3.0', '4.0'] as const) {
+      const t = setup({ local: { name: 'Sem Jansen', uid: 'sem-0001', birthday: '--03-15' } });
+      let asked = 0;
+      t.deps.newCardVersion = async () => {
+        asked++;
+        return version;
+      };
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'created' });
+      expect(asked).toBe(1);
+      const raw = t.pushes[0].vcard.raw;
+      expect(lineTexts(raw)).toContain(`VERSION:${version}`);
+      expect(lineTexts(raw)).toContain(version === '3.0' ? 'BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-15' : 'BDAY:--0315');
+      expect(t.note.frontmatter.birthday).toBe('--03-15');
+    }
+  });
+
+  it('an existing card never asks for the version of new cards', async () => {
+    const t = setup({ server: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
+    t.deps.newCardVersion = async () => {
+      throw new Error('asked');
+    };
+    expect(await t.sync({ title: 'local' })).toMatchObject({ kind: 'done' });
+    expect(lineTexts(t.pushes[0].vcard.raw)).toContain('VERSION:3.0');
+  });
+
   it('new contact without uid gets it written at Apply', async () => {
     const t = setup({ local: { name: 'Sem Jansen' } });
     const prepared = await reviewOf(t);

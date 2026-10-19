@@ -222,7 +222,7 @@ function versionOf(lines: VCardLine[]): string {
   return lines.find((line) => !line.group && line.name === 'VERSION')?.value ?? '3.0';
 }
 
-/** VERSION of the card being patched (newCard starts at 4.0). */
+/** VERSION of the card being patched (newCard starts with the version it is given). */
 function cardVersion(s: State): string {
   return versionOf(s.base);
 }
@@ -493,13 +493,14 @@ export function patch(
   return { lines: [...lines, ...s.added], warnings: s.warnings };
 }
 
-/** A fresh vCard 4.0 from friendly properties. */
+/** A fresh card from friendly properties, every property in the form `version` uses (4.0 unless asked otherwise). */
 export function newCard(
   props: Record<string, FriendlyValue>,
   rows: MappingRow[],
   ctx: RelationContext,
+  version: '3.0' | '4.0' = '4.0',
 ): PatchResult {
-  const base: VCardLine[] = [{ name: 'VERSION', params: [], value: '4.0' }];
+  const base: VCardLine[] = [{ name: 'VERSION', params: [], value: version }];
   if (text(props.uid) === '') base.push({ name: 'UID', params: [], value: `urn:uuid:${generateUUID()}` });
   if (text(props.name) === '') {
     const fn = derivedName(props);

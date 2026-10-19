@@ -165,6 +165,11 @@ describe('renderFriendlyNote', () => {
     expect(keys).toEqual(['name', 'mobile', 'email', 'email-2', 'uid']);
   });
 
+  it('writes the address book chosen on create as source', () => {
+    const md = renderFriendlyNote({ uid: 'u1', name: 'Jan', source: 'Family: home' }, '', DEFAULT_MAPPING);
+    expect(md).toBe('---\nname: Jan\nsource: "Family: home"\nuid: u1\n---\n\n');
+  });
+
   it('body is an empty line plus hashtags', () => {
     expect(renderFriendlyNote({ name: 'Jan' }, '#people', DEFAULT_MAPPING)).toBe('---\nname: Jan\n---\n\n#people\n');
     expect(renderFriendlyNote({ name: 'Jan' }, '', DEFAULT_MAPPING)).toBe('---\nname: Jan\n---\n\n');

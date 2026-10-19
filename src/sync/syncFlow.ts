@@ -89,6 +89,8 @@ export interface SyncFlowDeps {
   renameBlocked(name: string): string | undefined;
   /** True when a rename renames the contact's folder too (the note is in its own folder). */
   renamesFolder?: boolean;
+  /** The vCard version a card created in this book gets; asked only when creating (absent: 4.0). */
+  newCardVersion?(source: Source): Promise<'3.0' | '4.0'>;
 }
 
 export type FlowResult =
@@ -224,6 +226,8 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       readOnlyCtx: contexts.readOnlyCtx,
       notify: deps.notify,
     };
+    const { newCardVersion } = deps;
+    if (newCardVersion) syncDeps.newCardVersion = () => newCardVersion(target);
     const moveFrom = move && { from: move.location, adapter: deps.adapterFor(move.from), state: deps.stateFor(move.from.id) };
     const prepared = await prepareSync(deps.note, syncDeps, { sourceId: target.id, move: moveFrom, frontmatter });
     if (prepared.kind === 'failed') {

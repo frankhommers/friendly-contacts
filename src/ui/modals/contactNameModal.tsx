@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, Root } from "react-dom/client"
 import { VCardKind } from "src/contacts/vcard";
 import { VCardKinds } from "src/contacts/vcard/shared/structuredFields";
+import type { BookChoice } from "src/sync/sources";
 
 type IndividualPayload = {
   kind: typeof VCardKinds.Individual;
@@ -19,15 +20,20 @@ type NonIndividualPayload = {
   fn: string;
 };
 
-export type NamingPayload = IndividualPayload | NonIndividualPayload;
+/** The name asked for; `source`: the address book chosen (only when there was a choice). */
+export type NamingPayload = (IndividualPayload | NonIndividualPayload) & { source?: string };
 
 interface ContactNameModalProps {
 	onClose: () => void;
 	onSubmit: (nameData: NamingPayload) => void;
+	/** Address books to choose from; no dropdown without. */
+	books?: BookChoice;
 }
 
-const ContactNameModalContent: React.FC<ContactNameModalProps> = ({ onClose, onSubmit }) => {
+const ContactNameModalContent: React.FC<ContactNameModalProps> = ({ onClose, onSubmit, books }) => {
   const [kind, setKind] = useState<"individual" | "org" | "location" | "group">("individual");
+  const [book, setBook] = useState(books?.selected ?? "");
+  const chosen = books ? { source: book } : {};
   const givenRef = React.useRef<HTMLInputElement>(null);
 	const familyRef = React.useRef<HTMLInputElement>(null);
   const fnRef = React.useRef<HTMLInputElement>(null);
@@ -46,6 +52,7 @@ const ContactNameModalContent: React.FC<ContactNameModalProps> = ({ onClose, onS
         kind: VCardKinds.Individual,
         given,
         family,
+        ...chosen,
       });
 		} else {
       if(!fn) {
@@ -54,7 +61,8 @@ const ContactNameModalContent: React.FC<ContactNameModalProps> = ({ onClose, onS
       }
       onSubmit({
         kind,
-        fn
+        fn,
+        ...chosen,
       });
     }
 
@@ -89,6 +97,24 @@ const ContactNameModalContent: React.FC<ContactNameModalProps> = ({ onClose, onS
           ))}
         </select>
       </div>
+      {books ? (
+        <div className="contact-modal-field">
+          <label className="contact-modal-label" htmlFor="book-select">
+            Address book:
+          </label>
+          <select
+            id="book-select"
+            className="dropdown contact-modal-input"
+            value={book}
+            onChange={(e) => setBook(e.target.value)}>
+            {books.names.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       {kind === VCardKinds.Individual ? (
         <>
           <div className="contact-modal-field">
@@ -139,10 +165,13 @@ const ContactNameModalContent: React.FC<ContactNameModalProps> = ({ onClose, onS
 export class ContactNameModal extends Modal {
   private reactRoot: Root | null = null;
   private callback: (nameData: NamingPayload) => void;
+  private books?: BookChoice;
 
-	constructor(app: App, callback: (nameData: NamingPayload) => void) {
+	/** `books`: offer these address books (for a new contact); without, only the name is asked. */
+	constructor(app: App, callback: (nameData: NamingPayload) => void, books?: BookChoice) {
 		super(app);
 		this.callback = callback;
+		this.books = books;
 	}
 
 	onOpen() {
@@ -153,6 +182,7 @@ export class ContactNameModal extends Modal {
 			<ContactNameModalContent
 				onClose={() => this.close()}
 				onSubmit={(nameData: NamingPayload) => this.callback(nameData)}
+				books={this.books}
 			/>
 		);
 	}

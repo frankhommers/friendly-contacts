@@ -4,6 +4,7 @@ import {Contact} from "src/contacts";
 import {hasVCardValues} from "src/contacts/friendlyNotes";
 import {linkTarget, relationSnapshot} from "src/contacts/friendly/relations";
 import {
+  cardVersions,
   contactNotes,
   contactSyncState,
   importRemoteCard,
@@ -21,7 +22,7 @@ import { Source } from "src/settings/settings";
 import { activeSources, adapterFor, isSyncAvailable } from "src/sync/adapters";
 import { AdapterInterface } from "src/sync/adapters/adapterInterface";
 import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
-import {BaseHolder, noteSourceId} from "src/sync/sources";
+import {BaseHolder, CardVersion, followsBook, newCardVersion, noteSourceId} from "src/sync/sources";
 import {ReviewRow} from "src/sync/review";
 import {FlowResult, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps} from "src/sync/syncFlow";
 import {SyncReviewModal} from "src/ui/modals/syncReviewModal";
@@ -199,8 +200,23 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
     mirror: mirrorLookup(app, file),
     renameBlocked: (newName) => renameBlocked(app, file, newName),
     renamesFolder: renamesFolder(app, file),
+    newCardVersion: newCardVersionIn,
   };
   return syncFlow(deps);
+}
+
+/**
+ * The vCard version of a new card in this book: its setting, or with Automatic what most of its cards have (from
+ * the book's listing, cached for a few minutes). A book that cannot be read counts as empty: 3.0.
+ */
+async function newCardVersionIn(source: Source): Promise<CardVersion> {
+  if (!followsBook(source)) return newCardVersion(source, []);
+  try {
+    return newCardVersion(source, await cardVersions(source));
+  } catch (error) {
+    new Notice(`Could not read ${source.name} to choose the card version (${error instanceof Error ? error.message : String(error)}); the new card is vCard 3.0.`);
+    return newCardVersion(source, []);
+  }
 }
 
 /** Opens the review modal; resolves once with Apply, Cancel (or Escape) or "reopen" after an Import. */

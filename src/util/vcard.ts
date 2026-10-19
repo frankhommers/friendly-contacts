@@ -24,6 +24,13 @@ export function orgOutOfString(messyString: string): string | undefined {
   return org === '' ? undefined : org;
 }
 
+/** The card's VERSION (e.g. `3.0`), trimmed; undefined when the text has none. */
+export function versionOutOfString(messyString: string): string | undefined {
+  const match = /^version(?:;[^:\r\n]*)?:(.*)$/im.exec(messyString);
+  const version = match?.[1].replace(/\r$/, '').trim();
+  return version ? version : undefined;
+}
+
 /**
  * The UID as compared and stored: without a leading `urn:uuid:` and trimmed. Anything else is kept:
  * legacy macOS UIDs such as `XXXX:ABPerson` differ only before the colon.

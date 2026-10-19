@@ -27,7 +27,7 @@ import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { carddavAdapter } from 'src/sync/adapters/carddavGeneric';
 import { moveCard } from 'src/sync/moveCard';
 import { canApply, Choice } from 'src/sync/review';
-import { importCandidates, SyncPlan } from 'src/sync/sources';
+import { importCandidates, newCardVersion, SyncPlan } from 'src/sync/sources';
 import { NoteIO, SyncOutcome } from 'src/sync/syncContact';
 import { FlowResult, syncFlow } from 'src/sync/syncFlow';
 import { createSyncState, FileStore, SyncState } from 'src/sync/syncState';
@@ -327,6 +327,12 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       },
       notify: (msg) => void notices.push(msg),
       renameBlocked: () => undefined,
+      // As src/sync/sync.ts: the setting, else what most cards in the book's listing are.
+      newCardVersion: async (source) => {
+        const metas = await bookOf(source.id).adapter.getMetaList();
+        if (!Array.isArray(metas)) throw new Error(`getMetaList failed: ${metas.errorMessage}`);
+        return newCardVersion(source, metas.map((meta) => meta.version));
+      },
     });
   }
 
@@ -408,8 +414,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     await putCard(JAN_HREF, readVcfFixture('appleV3.vcf'));
 
     const metas = await adapter.getMetaList();
-    expect(Array.isArray(metas) && metas.map((m) => ({ href: m.href, uid: m.uid, fn: m.fn }))).toEqual([
-      { href: JAN_HREF, uid: JAN_UID, fn: 'Jan de Vries' },
+    expect(Array.isArray(metas) && metas.map((m) => ({ href: m.href, uid: m.uid, fn: m.fn, version: m.version }))).toEqual([
+      { href: JAN_HREF, uid: JAN_UID, fn: 'Jan de Vries', version: '3.0' },
     ]);
 
     jan = await importCard(JAN_HREF);
@@ -557,6 +563,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(href).toMatch(new RegExp(`^${BOOK}[^/]+\\.vcf$`));
 
     const card = unfolded(await serverCard(href));
+    // Automatic: the book holds only vCard 3.0 cards.
+    expect(card).toContain('VERSION:3.0');
     expect(card.some((l) => /^UID:/.test(l) && cleanUid(l.slice(4)) === id)).toBe(true);
     expect(card.some((l) => /^TEL\b.*:06-55555555$/.test(l))).toBe(true);
 
@@ -771,5 +779,35 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await state.get(uid)).toEqual(radicaleBase);
     expect(await serverCard(`${FAMILY}twin.vcf`)).toContain(`UID:${uid}`);
     expect((await family.state.get(uid))?.href).toBe(`${FAMILY}twin.vcf`);
+  });
+  it("14. a new card follows its book's version: Automatic takes the majority, the setting wins", async () => {
+    const book = '/frank/versions/';
+    await createAddressBook(book);
+    const v4 = (n: number) => SEM_CARD.replace('VERSION:3.0', 'VERSION:4.0').replace(SEM_UID, `C0FFEE00-0000-4000-8000-00000000004${n}`);
+    await putCard(`${book}a.vcf`, v4(1));
+    await putCard(`${book}b.vcf`, v4(2));
+    await putCard(`${book}c.vcf`, SEM_CARD.replace(SEM_UID, 'C0FFEE00-0000-4000-8000-000000000043'));
+    const source: Source = { ...radicaleSource, id: 'versions', name: 'Versions', addressBookUrl: radicaleSource.addressBookUrl.replace(BOOK, book) };
+    const versions: Book = { source, adapter: carddavAdapter(source), state: createSyncState(store, 'sync-state/versions') };
+    bookList = [...bookList, versions];
+
+    const metas = await versions.adapter.getMetaList();
+    expect(Array.isArray(metas) && metas.map((m) => m.version).sort()).toEqual(['3.0', '4.0', '4.0']);
+
+    const created = async (name: string) => {
+      const note = memoryNote({ name, firstname: name, lastname: 'Nieuw', birthday: '--03-15', source: 'Versions' });
+      expect(await sync(note)).toBe('created');
+      const uid = cleanUid(String(note.frontmatter.uid));
+      const href = (await versions.state.get(uid))?.href ?? '';
+      return unfolded(await serverCard(href));
+    };
+    const auto = await created('Vier');
+    expect(auto).toContain('VERSION:4.0');
+    expect(auto).toContain('BDAY:--0315');
+
+    source.newCardVersion = '3.0';
+    const fixed = await created('Drie');
+    expect(fixed).toContain('VERSION:3.0');
+    expect(fixed).toContain('BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-15');
   });
 });

@@ -269,6 +269,21 @@ describe('syncFlow: which address book', () => {
   });
 });
 
+describe("syncFlow: a new card follows its book's version", () => {
+  it('asks the target book for the version of the new card', async () => {
+    const { uid: _uid, ...withoutUid } = JAN;
+    const t = setup({ local: { ...withoutUid, source: 'Family' } });
+    const asked: string[] = [];
+    t.deps.newCardVersion = async (source) => {
+      asked.push(source.id);
+      return '3.0';
+    };
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'created' });
+    expect(asked).toEqual(['family']);
+    expect([...t.family.cards.values()][0].raw).toContain('VERSION:3.0');
+  });
+});
+
 describe('syncFlow: review outcomes', () => {
   it('a new card never takes values from the server: choosing the server side fails and writes nothing', async () => {
     const { uid: _uid, ...withoutUid } = JAN;

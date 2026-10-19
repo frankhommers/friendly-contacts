@@ -44,6 +44,8 @@ export interface SyncDeps {
   readOnlyCtx: RelationContext;
   /** Warnings (note coercion, patch, a skipped rename); results come back as values. */
   notify(msg: string): void;
+  /** The vCard version of a card created in the target book; asked only when creating. 4.0 when absent. */
+  newCardVersion?(): Promise<'3.0' | '4.0'>;
 }
 
 export type SyncOutcome = 'unchanged' | 'pulled' | 'pushed' | 'both' | 'created' | 'failed';
@@ -212,7 +214,8 @@ export async function applySync(
     let serverChanged: boolean;
     let oldKept: boolean | undefined;
     if (!server) {
-      const card = newCard(result, deps.rows, deps.ctx);
+      const version = deps.newCardVersion ? await deps.newCardVersion() : '4.0';
+      const card = newCard(result, deps.rows, deps.ctx, version);
       const raw = serializeCard(card.lines);
       const id = cleanUid(prepared.uid);
       const res = await deps.adapter.push({ uid: id, raw }, { ifNoneMatch: true });

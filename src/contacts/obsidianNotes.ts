@@ -203,8 +203,11 @@ export async function renamePropertyInNotes(app: App, renames: Rename[]): Promis
 }
 
 const REMOTE_TTL_MS = 5 * 60 * 1000;
-/** Per source (keyed by id, url and credentials); only sources that loaded are cached, a failed one is retried. */
-const remoteCache = new Map<string, { key: string; at: number; list: RemoteContact[] }>();
+/**
+ * Per source (keyed by id, url and credentials); only sources that loaded are cached, a failed one is retried.
+ * `versions`: the VERSION of every card in the listing (also those without a UID or name).
+ */
+const remoteCache = new Map<string, { key: string; at: number; list: RemoteContact[]; versions: (string | undefined)[] }>();
 /** When the user was last told that a source could not be read, so a retry does not repeat the Notice. */
 const lastFailureNotice = new Map<string, number>();
 
@@ -220,6 +223,45 @@ function failureText(reason: unknown, source: Source): string {
     if (secret) text = text.split(secret).join("…");
   }
   return text;
+}
+
+const listingKey = (source: Source): string => JSON.stringify([source.addressBookUrl, source.authType, source.authKey]);
+
+/** The cached listing of a source while it is fresh and its connection unchanged. */
+function cachedListing(source: Source) {
+  const cached = remoteCache.get(source.id);
+  return cached?.key === listingKey(source) && Date.now() - cached.at < REMOTE_TTL_MS ? cached : undefined;
+}
+
+/** Reads the listing of one source and caches it; throws when it cannot be read. */
+async function loadListing(source: Source): Promise<{ list: RemoteContact[]; versions: (string | undefined)[] }> {
+  const metas = await adapterFor(source).getMetaList();
+  if (!Array.isArray(metas)) {
+    throw new Error(metas.errorMessage || (metas.status ? `HTTP ${metas.status}` : "unknown error"));
+  }
+  const list = metas.flatMap((meta) => {
+    const fileName = contactFileName(meta.n, meta.fn);
+    return meta.uid && fileName
+      ? [{ uid: cleanUid(meta.uid), fileName, sourceId: source.id, href: meta.href, etag: meta.etag, org: meta.org }]
+      : [];
+  });
+  const entry = { key: listingKey(source), at: Date.now(), list, versions: metas.map((meta) => meta.version) };
+  remoteCache.set(source.id, entry);
+  return entry;
+}
+
+/**
+ * The vCard version of every card in the address book, from its listing: the cached one unless `fresh`.
+ * Throws (a message without the URL or credentials) when the book cannot be read.
+ */
+export async function cardVersions(source: Source, opts: { fresh?: boolean } = {}): Promise<(string | undefined)[]> {
+  const cached = opts.fresh ? undefined : cachedListing(source);
+  if (cached) return cached.versions;
+  try {
+    return (await loadListing(source)).versions;
+  } catch (error) {
+    throw new Error(failureText(error, source));
+  }
 }
 
 /**
@@ -238,21 +280,10 @@ export async function remoteContactsWithFailures(): Promise<{ contacts: RemoteCo
   const failed: string[] = [];
   const lists = await Promise.all(
     sources.map(async (source): Promise<RemoteContact[]> => {
-      const key = JSON.stringify([source.addressBookUrl, source.authType, source.authKey]);
-      const cached = remoteCache.get(source.id);
-      if (cached?.key === key && Date.now() - cached.at < REMOTE_TTL_MS) return cached.list;
+      const cached = cachedListing(source);
+      if (cached) return cached.list;
       try {
-        const metas = await adapterFor(source).getMetaList();
-        if (!Array.isArray(metas)) {
-          throw new Error(metas.errorMessage || (metas.status ? `HTTP ${metas.status}` : "unknown error"));
-        }
-        const list = metas.flatMap((meta) => {
-          const fileName = contactFileName(meta.n, meta.fn);
-          return meta.uid && fileName
-            ? [{ uid: cleanUid(meta.uid), fileName, sourceId: source.id, href: meta.href, etag: meta.etag, org: meta.org }]
-            : [];
-        });
-        remoteCache.set(source.id, { key, at: Date.now(), list });
+        const { list } = await loadListing(source);
         lastFailureNotice.delete(source.id);
         return list;
       } catch (error) {

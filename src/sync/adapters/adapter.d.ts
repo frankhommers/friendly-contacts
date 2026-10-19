@@ -19,4 +19,5 @@ export interface VCardMeta {
   fn: string | undefined;
   n: string | undefined;
   org?: string; // First ORG component, unescaped
+  version?: string; // VERSION, e.g. 3.0; from the listing only
 }

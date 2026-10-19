@@ -1,7 +1,11 @@
 import {
+  bookChoice,
   CardLocation,
+  cardVersionStats,
+  countCardVersions,
   findSourceByName,
   migrateSources,
+  newCardVersion,
   noteSourceId,
   patchSource,
   normalizeBookUrl,
@@ -264,5 +268,58 @@ describe('sourceForExport', () => {
     const off = { ...settings, sources: [settings.sources[0], { ...settings.sources[1], enabled: false }] };
     expect((await sourceForExport('Family', off, holds()))?.id).toBe('f');
     expect(await sourceForExport(undefined, { sources: [], defaultSource: '' }, holds())).toBeUndefined();
+  });
+});
+
+describe('newCardVersion', () => {
+  const book = (newCardVersion?: Source['newCardVersion']): Source => ({ ...source('a', 'A'), newCardVersion });
+
+  it('automatic follows the majority', () => {
+    expect(newCardVersion(book('auto'), ['4.0', '3.0', '4.0'])).toBe('4.0');
+    expect(newCardVersion(book(), ['3.0', '3.0', '4.0'])).toBe('3.0');
+    // A stored source without the setting is Automatic; versions are compared trimmed.
+    expect(newCardVersion(book(), [' 4.0 ', '4.0', '3.0'])).toBe('4.0');
+  });
+
+  it('tie and empty use 3.0', () => {
+    expect(newCardVersion(book('auto'), [])).toBe('3.0');
+    expect(newCardVersion(book(), ['3.0', '4.0'])).toBe('3.0');
+    // Cards of other versions (or without one) do not vote.
+    expect(newCardVersion(book(), ['2.1', undefined, '2.1', '4.0'])).toBe('4.0');
+  });
+
+  it('explicit setting wins', () => {
+    expect(newCardVersion(book('3.0'), ['4.0', '4.0'])).toBe('3.0');
+    expect(newCardVersion(book('4.0'), ['3.0', '3.0'])).toBe('4.0');
+    expect(newCardVersion(book('4.0'), [])).toBe('4.0');
+  });
+});
+
+describe('card version statistics', () => {
+  it('counts 3.0, 4.0 and other versions', () => {
+    expect(countCardVersions(['3.0', '4.0', '3.0', ' 3.0', '2.1', undefined])).toEqual({ v3: 3, v4: 1, other: 2 });
+  });
+
+  it('reads as "<n> × vCard 3.0, <m> × vCard 4.0"', () => {
+    expect(cardVersionStats(['3.0', '3.0', '4.0'])).toBe('2 × vCard 3.0, 1 × vCard 4.0');
+    expect(cardVersionStats([])).toBe('0 × vCard 3.0, 0 × vCard 4.0');
+    expect(cardVersionStats(['4.0', '2.1'])).toBe('0 × vCard 3.0, 1 × vCard 4.0, 1 × another version');
+  });
+});
+
+describe('bookChoice', () => {
+  it('lists the books by name with the default selected', () => {
+    const sources = [source('a', 'Work'), source('b', 'Family')];
+    expect(bookChoice({ sources, defaultSource: 'b' })).toEqual({ names: ['Work', 'Family'], selected: 'Family' });
+  });
+
+  it('selects the first book when the default is unknown', () => {
+    const sources = [source('a', 'Work'), source('b', 'Family')];
+    expect(bookChoice({ sources, defaultSource: 'gone' })).toEqual({ names: ['Work', 'Family'], selected: 'Work' });
+  });
+
+  it('is no choice with one or no book', () => {
+    expect(bookChoice({ sources: [source('a', 'Work')], defaultSource: 'a' })).toBeUndefined();
+    expect(bookChoice({ sources: [], defaultSource: '' })).toBeUndefined();
   });
 });
