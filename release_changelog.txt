@@ -1,24 +1,5 @@
-## Friendly Contacts 3.0.0-alpha.2 (second test release)
+## Friendly Contacts 3.0.0-alpha.3
 
-This test release adds a folder per contact, relationships in the sidebar and a people graph. It is still an alpha: please try it on a copy of your vault first.
+Fix: the settings screen showed "[object DocumentFragment]" under "Contacts folder location" and "Default hashtags" (and the "Field blocked" notice could show the same). The descriptions are now built in the settings window's own document.
 
-### Before you install
-
-- **Back up your vault**, at least `.obsidian/plugins/friendly-contacts/data.json`.
-- Coming from VCF Contacts: settings migrate **one way** to the list of address books.
-- **Sync works on desktop only.** The sidebar, relationships and the people graph also work on mobile.
-
-### New in this release
-
-- **A folder per contact (optional).** Each person can get their own folder with the contact note as folder note, so poems, speeches and photos live next to them. Choose the folder note name (`{{name}}` or a fixed name such as `index`) and whether it sits inside or next to the folder, or copy the settings from the Folder Notes plugin. Commands **Put each contact in its own folder** and **Take contacts out of their folders** never touch other files; folders are only removed when empty. **Move contacts to folder…** moves whole folders, and renaming through Sync renames folder and note together.
-- **Relationships in the sidebar.** Each contact shows its relationships by kind. **+ Relationship** picks a person and a kind, **×** removes one, and mirroring updates the other person. People who are only on the server get an **Import** button (or **Link** when they already have a note). Also as the command **Add relationship…**.
-- **People graph.** A view of people and how they relate, centred on you ("This is me" in the settings) or on a contact. Lines are coloured by kind (partner, family, friends, work, other) and labelled from the viewing person's side. Choose the depth, filter kinds, drag and zoom; tap the person in the middle (or **Open note**) to open their note. People without a note show dashed and can be imported.
-
-### Also in this release (from 3.0.0-alpha.1)
-
-- Friendly property names, lossless CardDAV sync per contact with a review screen (nothing is written before Apply), several address books with `source:` per contact, **Import contact from server…**, relationships as `[[links]]` with mirroring and **Check relationships**, birthdays without a year (`--MM-DD`).
-
-### Known limits
-
-- Not yet tried inside a running Obsidian by the author on every platform; especially the people graph on mobile needs your feedback.
-- The manual test list is in `tests/scripts/radicale-e2e.md`.
+Everything else is as in 3.0.0-alpha.2: a folder per contact, relationships in the sidebar, the people graph, several address books, Sync with a review screen, and birthdays without a year. Back up your vault before installing.
