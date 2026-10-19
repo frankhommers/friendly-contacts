@@ -1,5 +1,12 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { addRelation, planAdd, relationGroups, removeRelationEntry } from 'src/contacts/relationEdit';
+import {
+  addRelation,
+  linkRelationEntry,
+  otherSideTaken,
+  planAdd,
+  relationGroups,
+  removeRelationEntry,
+} from 'src/contacts/relationEdit';
 import { makeEnv } from 'tests/fakes/mirrorEnv';
 import { describe, expect, it } from 'vitest';
 
@@ -58,7 +65,11 @@ describe('planAdd', () => {
 
   it('single relation is replaced, not appended', async () => {
     const { env, files } = makeEnv({ 'Jan.md': { spouse: '[[Sem]]' }, 'Sem.md': {}, 'Lot.md': {} });
-    expect(planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Lot.md', nameOf)).toEqual({ replaces: 'SEM' });
+    expect(planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Lot.md', nameOf)).toEqual({
+      replaces: 'SEM',
+      text: '[[Sem]]',
+      sameName: false,
+    });
     await addRelation(env, rows, 'Jan.md', 'spouse', 'Lot.md');
     expect(files['Jan.md'].spouse).toBe('[[Lot]]');
   });
@@ -71,7 +82,64 @@ describe('planAdd', () => {
 
   it('names a replaced ghost by its text', () => {
     const { env, files } = makeEnv({ 'Jan.md': { spouse: '[[Ghost|Gina]]' }, 'Sem.md': {} });
-    expect(planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Sem.md')).toEqual({ replaces: 'Gina' });
+    expect(planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Sem.md')).toEqual({
+      replaces: 'Gina',
+      text: '[[Ghost|Gina]]',
+      sameName: false,
+    });
+  });
+
+  it('an unresolved entry with the contact\'s name is replaced, not duplicated', async () => {
+    const semName = (path: string) => (path === 'People/Sem.md' ? 'Sem de Vries' : nameOf(path));
+    const { env, files } = makeEnv({
+      'Jan.md': { friends: ['[[Piet]]', '[[sem de vries]]'] },
+      'Piet.md': {},
+      'People/Sem.md': {},
+    });
+    const plan = planAdd(env, rows, 'Jan.md', files['Jan.md'], 'friends', 'People/Sem.md', semName);
+    expect(plan).toEqual({ replaces: 'sem de vries', text: '[[sem de vries]]', sameName: true });
+    await addRelation(env, rows, 'Jan.md', 'friends', 'People/Sem.md', '[[sem de vries]]');
+    expect(files['Jan.md'].friends).toEqual(['[[Piet]]', '[[Sem]]']);
+  });
+
+  it('an unresolved entry whose alias is the contact\'s name counts as the same person', () => {
+    const { env, files } = makeEnv({ 'Jan.md': { spouse: '[[Ghost|Sem]]' }, 'Sem.md': {} });
+    expect(planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Sem.md')).toEqual({
+      replaces: 'Sem',
+      text: '[[Ghost|Sem]]',
+      sameName: true,
+    });
+  });
+});
+
+describe('otherSideTaken', () => {
+  it('names who already holds the new person\'s single relation', () => {
+    const { env, files } = makeEnv({ 'Jan.md': {}, 'Lot.md': { spouse: '[[Piet]]' }, 'Piet.md': {} });
+    expect(otherSideTaken(env, rows, 'Jan.md', 'spouse', 'Lot.md', files['Lot.md'], nameOf)).toEqual({
+      property: 'spouse',
+      name: 'PIET',
+    });
+  });
+
+  it('an unresolved entry also takes it', () => {
+    const { env, files } = makeEnv({ 'Jan.md': {}, 'Lot.md': { spouse: '[[Ghost|Gina]]' } });
+    expect(otherSideTaken(env, rows, 'Jan.md', 'spouse', 'Lot.md', files['Lot.md'], nameOf)).toEqual({
+      property: 'spouse',
+      name: 'Gina',
+    });
+  });
+
+  it('is undefined when free, pointing back, or a list', () => {
+    const { env, files } = makeEnv({
+      'Jan.md': {},
+      'Lot.md': { spouse: '[[Jan]]', parents: ['[[Piet]]'] },
+      'Sem.md': { spouse: '' },
+      'Piet.md': {},
+    });
+    expect(otherSideTaken(env, rows, 'Jan.md', 'spouse', 'Lot.md', files['Lot.md'], nameOf)).toBeUndefined();
+    expect(otherSideTaken(env, rows, 'Jan.md', 'spouse', 'Sem.md', files['Sem.md'], nameOf)).toBeUndefined();
+    expect(otherSideTaken(env, rows, 'Jan.md', 'children', 'Lot.md', files['Lot.md'], nameOf)).toBeUndefined();
+    expect(otherSideTaken(env, rows, 'Jan.md', 'emergency', 'Lot.md', files['Lot.md'], nameOf)).toBeUndefined();
   });
 });
 
@@ -98,6 +166,12 @@ describe('addRelation', () => {
     const { env, files } = makeEnv({ 'Jan.md': { friends: [['Piet']] }, 'Piet.md': {}, 'Sem.md': {} });
     await addRelation(env, rows, 'Jan.md', 'friends', 'Sem.md');
     expect(files['Jan.md'].friends).toEqual(['[[Piet]]', '[[Sem]]']);
+  });
+
+  it('keeps entries that are not text', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { friends: ['[[Piet]]', 42] }, 'Piet.md': {}, 'Sem.md': {} });
+    await addRelation(env, rows, 'Jan.md', 'friends', 'Sem.md');
+    expect(files['Jan.md'].friends).toEqual(['[[Piet]]', 42, '[[Sem]]']);
   });
 
   it('uses the link text the env writes', async () => {
@@ -140,5 +214,32 @@ describe('removeRelationEntry', () => {
     expect(calls).toEqual([]);
     await removeRelationEntry(env, rows, 'Jan.md', 'friends', '[[Piet]]');
     expect(files['Jan.md']).not.toHaveProperty('friends');
+  });
+});
+
+describe('linkRelationEntry', () => {
+  it('link replaces the unresolved entry', async () => {
+    const { env, files } = makeEnv({
+      'Jan.md': { friends: ['[[Sem de Vries]]', '[[Piet]]'], spouse: '[[Lotje]]' },
+      'Piet.md': {},
+      'People/Sem.md': {},
+      'Lot.md': {},
+    });
+    await linkRelationEntry(env, rows, 'Jan.md', 'friends', '[[Sem de Vries]]', 'People/Sem.md');
+    expect(files['Jan.md'].friends).toEqual(['[[Sem]]', '[[Piet]]']);
+    await linkRelationEntry(env, rows, 'Jan.md', 'spouse', '[[Lotje]]', 'Lot.md');
+    expect(files['Jan.md'].spouse).toBe('[[Lot]]');
+  });
+
+  it('drops the unresolved entry when the note is already listed', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { friends: ['[[Sem]]', '[[Sem de Vries]]'] }, 'Sem.md': {} });
+    await linkRelationEntry(env, rows, 'Jan.md', 'friends', '[[Sem de Vries]]', 'Sem.md');
+    expect(files['Jan.md'].friends).toEqual(['[[Sem]]']);
+  });
+
+  it('keeps an unquoted entry and appends when the unresolved entry is gone', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { friends: [[['Piet']]] }, 'Piet.md': {}, 'Sem.md': {} });
+    await linkRelationEntry(env, rows, 'Jan.md', 'friends', '[[Sem de Vries]]', 'Sem.md');
+    expect(files['Jan.md'].friends).toEqual(['[[Piet]]', '[[Sem]]']);
   });
 });

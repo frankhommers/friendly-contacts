@@ -45,6 +45,15 @@ export function relationItems(value: unknown): unknown[] {
   return (whole !== undefined ? [whole] : asItems(value)).map((item) => recoverWikilink(item) ?? item);
 }
 
+/**
+ * What is left of a relation property after a removal: nothing deletes it; a single relation keeps one entry
+ * as a string, but one hand-edited into a list keeps every remaining entry.
+ */
+function remaining(kept: unknown[], single: boolean): string | string[] | undefined {
+  if (kept.length === 0) return undefined;
+  return single && kept.length === 1 ? (kept[0] as string) : (kept as string[]);
+}
+
 export class RelationMirror {
   private snapshots = new Map<string, RelationSnapshot>();
 
@@ -160,7 +169,7 @@ export class RelationMirror {
       } else {
         const kept = items.filter((item) => !pointsToSource(item));
         if (kept.length === items.length) return current as string | string[] | undefined;
-        value = kept.length === 0 ? undefined : single ? (kept[0] as string) : (kept as string[]);
+        value = remaining(kept, single);
       }
       // Record the expected state before the file is written: the `changed` event of this write must diff to nothing.
       const snapshot = { ...(this.snapshots.get(targetPath) ?? {}) };
@@ -220,8 +229,7 @@ export async function removeEntries(
     const items = relationItems(current);
     const kept = items.filter((entry) => !(typeof entry === 'string' && matches(entry)));
     if (kept.length === items.length) return current as string | string[] | undefined;
-    if (kept.length === 0) return undefined;
-    return single ? (kept[0] as string) : (kept as string[]);
+    return remaining(kept, single);
   });
 }
 

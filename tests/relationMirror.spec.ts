@@ -124,6 +124,20 @@ describe('RelationMirror', () => {
     expect(calls).toEqual([{ path: 'Anna.md', property: 'spouse', value: undefined }]);
   });
 
+  it('removing from a spouse hand-edited into a list keeps the others', async () => {
+    const { env, files } = makeEnv({
+      'Jan.md': { name: 'Jan', spouse: '[[Anna]]' },
+      'Anna.md': { name: 'Anna', spouse: ['[[Jan]]', '[[Piet]]', '[[Kees]]'] },
+      'Piet.md': { name: 'Piet' },
+      'Kees.md': { name: 'Kees' },
+    });
+    const mirror = new RelationMirror(env, rows);
+    mirror.init();
+    delete files['Jan.md'].spouse;
+    await mirror.onChanged('Jan.md', files['Jan.md']);
+    expect(files['Anna.md'].spouse).toEqual(['[[Piet]]', '[[Kees]]']);
+  });
+
   it('rename keeps the snapshot consistent', async () => {
     const { env, files, calls } = makeEnv({
       'Jan.md': { name: 'Jan', children: ['[[Sem]]'] },
@@ -208,6 +222,31 @@ describe('fixing one-sided relations', () => {
     });
     await removeRelation(env, DEFAULT_MAPPING, item);
     expect(files['Jan.md'].children).toEqual(['[[Lot]]']);
+  });
+
+  it('removes an unquoted [[Name]] entry', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { children: [[['Sem']], '[[Lot]]'] }, 'Sem.md': {}, 'Lot.md': {} });
+    await removeRelation(env, DEFAULT_MAPPING, item);
+    expect(files['Jan.md'].children).toEqual(['[[Lot]]']);
+  });
+
+  it('removes a whole property written as an unquoted [[Name]]', async () => {
+    const { env, files } = makeEnv({ 'Jan.md': { children: [['Sem']] }, 'Sem.md': {} });
+    await removeRelation(env, DEFAULT_MAPPING, item);
+    expect(files['Jan.md']).not.toHaveProperty('children');
+  });
+
+  it('removing from a single relation hand-edited into a list keeps the rest', async () => {
+    const { env, files } = makeEnv({
+      'Jan.md': { spouse: ['[[Sem]]', '[[Lot]]', '[[Piet]]'] },
+      'Sem.md': {},
+      'Lot.md': {},
+      'Piet.md': {},
+    });
+    await removeRelation(env, DEFAULT_MAPPING, { path: 'Jan.md', property: 'spouse', target: 'Sem.md' });
+    expect(files['Jan.md'].spouse).toEqual(['[[Lot]]', '[[Piet]]']);
+    await removeRelation(env, DEFAULT_MAPPING, { path: 'Jan.md', property: 'spouse', target: 'Lot.md' });
+    expect(files['Jan.md'].spouse).toBe('[[Piet]]');
   });
 
   it('deletes the property when the last item goes', async () => {

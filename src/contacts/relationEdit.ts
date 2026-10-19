@@ -4,7 +4,7 @@
  */
 
 import { MappingRow } from 'src/contacts/friendly/mapping';
-import { linkTarget, resolveRemoteName } from 'src/contacts/friendly/relations';
+import { inverseProperty, linkTarget, resolveRemoteName } from 'src/contacts/friendly/relations';
 import { MirrorEnv, relationItems, removeEntries } from 'src/contacts/relationMirror';
 
 export interface RelationPerson {
@@ -19,7 +19,11 @@ export interface RelationGroup {
   type: string;
   people: RelationPerson[];
 }
-export type AddResult = 'added' | 'exists' | { replaces: string };
+/**
+ * `replaces`: the name shown for the entry the add takes the place of (stored as `text`). `sameName`: that entry
+ * is an unresolved name for the added contact itself, so nobody is lost by replacing it.
+ */
+export type AddResult = 'added' | 'exists' | { replaces: string; text: string; sameName: boolean };
 
 type RelationRow = Extract<MappingRow, { kind: 'relation' }>;
 
@@ -44,6 +48,8 @@ function fallbackDisplay(text: string): string {
 }
 
 const baseName = (path: string): string => path.replace(/^.*\//, '').replace(/\.md$/, '');
+
+const sameText = (a: string, b: string): boolean => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 
 function personOf(env: MirrorEnv, fromPath: string, text: string, nameOf: (path: string) => string): RelationPerson {
   const path = resolveEntry(env, text, fromPath);
@@ -80,26 +86,80 @@ export function planAdd(
   const row = relationRow(rows, property);
   const texts = entryTexts(frontmatter[property]);
   if (texts.some((text) => resolveEntry(env, text, path) === targetPath)) return 'exists';
-  if (row.single === true && texts.length > 0) return { replaces: personOf(env, path, texts[0], nameOf).display };
+  const targetName = nameOf(targetPath);
+  const sameName = texts.find(
+    (text) =>
+      resolveEntry(env, text, path) === undefined &&
+      (sameText(fallbackDisplay(text), targetName) || sameText(linkTarget(text.trim()), targetName)),
+  );
+  if (sameName !== undefined) return { replaces: fallbackDisplay(sameName), text: sameName, sameName: true };
+  if (row.single === true && texts.length > 0) {
+    return { replaces: personOf(env, path, texts[0], nameOf).display, text: texts[0], sameName: false };
+  }
   return 'added';
 }
 
-/** Adds the contact under `property`; a single relation is replaced. The link text is the env's. */
+/**
+ * When `targetPath`'s side of a single relation (e.g. their `spouse`) already names someone other than `path`,
+ * the mirror cannot write it: that property and the name it holds. Undefined when the other side is free.
+ */
+export function otherSideTaken(
+  env: MirrorEnv,
+  rows: MappingRow[],
+  path: string,
+  property: string,
+  targetPath: string,
+  targetFrontmatter: Record<string, unknown>,
+  nameOf: (path: string) => string = baseName,
+): { property: string; name: string } | undefined {
+  const inverse = inverseProperty(property, rows);
+  const inverseRow = rows.find((r): r is RelationRow => r.kind === 'relation' && r.property === inverse);
+  if (inverse === undefined || inverseRow?.single !== true) return undefined;
+  const texts = entryTexts(targetFrontmatter[inverse]);
+  if (texts.length === 0 || texts.some((text) => resolveEntry(env, text, targetPath) === path)) return undefined;
+  return { property: inverse, name: personOf(env, targetPath, texts[0], nameOf).display };
+}
+
+/**
+ * Adds the contact under `property`; a single relation is replaced. The link text is the env's. `replacing`: the
+ * stored text of the entry the link takes the place of (see `planAdd`); it is dropped when the contact is listed.
+ * Entries that are not text are kept as they are.
+ */
 export async function addRelation(
   env: MirrorEnv,
   rows: MappingRow[],
   path: string,
   property: string,
   targetPath: string,
+  replacing?: string,
 ): Promise<void> {
   const row = relationRow(rows, property);
+  const replaced = (item: unknown) => replacing !== undefined && typeof item === 'string' && item.trim() === replacing.trim();
   await env.updateProperty(path, property, (current) => {
     const items = relationItems(current);
     const listed = items.some((item) => typeof item === 'string' && resolveEntry(env, item, path) === targetPath);
-    if (listed) return current as string | string[] | undefined;
+    if (listed) {
+      if (!items.some(replaced)) return current as string | string[] | undefined;
+      const kept = items.filter((item) => !replaced(item)) as string[];
+      return row.single === true && kept.length === 1 ? kept[0] : kept;
+    }
     const link = env.linkTo(targetPath, path);
-    return row.single === true ? link : [...(items.filter((i) => typeof i === 'string') as string[]), link];
+    if (row.single === true) return link;
+    const at = items.findIndex(replaced);
+    return (at === -1 ? [...items, link] : items.map((item, i) => (i === at ? link : item))) as string[];
   });
+}
+
+/** Turns the unresolved entry stored as `text` into a link to the contact note `targetPath`, in its place. */
+export function linkRelationEntry(
+  env: MirrorEnv,
+  rows: MappingRow[],
+  path: string,
+  property: string,
+  text: string,
+  targetPath: string,
+): Promise<void> {
+  return addRelation(env, rows, path, property, targetPath, text);
 }
 
 /** Removes the entry stored as `text`, or any entry resolving to the same note. */
@@ -131,4 +191,22 @@ export function remoteCardFor<T extends { uid: string; fileName: string }>(text:
   if (name === '') return undefined;
   const resolved = resolveRemoteName(name, remote);
   return 'uid' in resolved ? remote.find((r) => r.uid === resolved.uid) : undefined;
+}
+
+/**
+ * What the sidebar offers for an unresolved entry: Import when its card (see `remoteCardFor`, judged on every card)
+ * has no note yet, Link to the note when it has one (`notePathOf`: card UID -> note), nothing when that note is the
+ * contact's own (`selfPath`).
+ */
+export function ghostAction<T extends { uid: string; fileName: string }>(
+  text: string,
+  remote: T[],
+  notePathOf: (uid: string) => string | undefined,
+  selfPath: string,
+): { import: T } | { link: string } | undefined {
+  const card = remoteCardFor(text, remote);
+  if (card === undefined) return undefined;
+  const notePath = notePathOf(card.uid);
+  if (notePath === undefined) return { import: card };
+  return notePath === selfPath ? undefined : { link: notePath };
 }

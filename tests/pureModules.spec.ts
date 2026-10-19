@@ -21,7 +21,7 @@ async function bundleOf(entry: string): Promise<{ inputs: string[]; external: st
   return { inputs: Object.keys(result.metafile.inputs), external: output.imports.filter((i) => i.external).map((i) => i.path) };
 }
 
-describe('the sync core and the layout model load without Obsidian', () => {
+describe('the sync core, the layout model and relationship editing load without Obsidian', () => {
   for (const entry of [
     'src/sync/syncFlow.ts',
     'src/sync/reviewExtras.ts',
@@ -30,6 +30,8 @@ describe('the sync core and the layout model load without Obsidian', () => {
     'src/sync/syncContact.ts',
     'src/contacts/layout.ts',
     'src/contacts/moveContacts.ts',
+    'src/contacts/relationMirror.ts',
+    'src/contacts/relationEdit.ts',
   ]) {
     it(`${entry} pulls in neither obsidian nor src/context`, async () => {
       const { inputs, external } = await bundleOf(entry);

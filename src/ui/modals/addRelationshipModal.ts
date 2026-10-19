@@ -2,7 +2,7 @@ import { App, FuzzyMatch, FuzzySuggestModal, Notice, SuggestModal, TFile } from 
 import { MappingRow } from "src/contacts/friendly/mapping";
 import { contactDisplayName } from "src/contacts/layoutNotes";
 import { contactNotes, obsidianMirrorEnv } from "src/contacts/obsidianNotes";
-import { addRelation, planAdd } from "src/contacts/relationEdit";
+import { addRelation, otherSideTaken, planAdd } from "src/contacts/relationEdit";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 
@@ -66,19 +66,44 @@ async function applyRelation(app: App, contactPath: string, target: PickableCont
   }
   const env = obsidianMirrorEnv(app);
   const rows = getSettings().friendly.mapping;
-  const frontmatter = { ...(app.metadataCache.getFileCache(file)?.frontmatter ?? {}) };
-  const add = async () => {
+  const nameOf = (path: string) => nameOfPath(app, path);
+  const frontmatterOf = (note: unknown) =>
+    note instanceof TFile ? { ...(app.metadataCache.getFileCache(note)?.frontmatter ?? {}) } : {};
+  const frontmatter = frontmatterOf(file);
+  const taken = otherSideTaken(
+    env,
+    rows,
+    contactPath,
+    property,
+    target.path,
+    frontmatterOf(app.vault.getAbstractFileByPath(target.path)),
+    nameOf,
+  );
+  // The mirror never overwrites a single relation that names someone else.
+  const takenText =
+    taken === undefined
+      ? ""
+      : `${target.name} already has ${taken.name} as ${taken.property}, so ${target.name}'s ${taken.property} stays as it is.`;
+  /** `tell`: say afterwards that the other side stayed as it was (not when the confirm already said so). */
+  const add = async (replacing?: string, tell = true) => {
     try {
-      await addRelation(env, rows, contactPath, property, target.path);
+      await addRelation(env, rows, contactPath, property, target.path, replacing);
     } catch (error) {
       console.error("Friendly Contacts: adding the relationship failed", error);
       new Notice(`Adding ${target.name} failed, see console`);
+      return;
     }
+    if (tell && takenText !== "") new Notice(`Added ${target.name} as ${property}. ${takenText}`);
   };
-  const plan = planAdd(env, rows, contactPath, frontmatter, property, target.path, (path) => nameOfPath(app, path));
+  const plan = planAdd(env, rows, contactPath, frontmatter, property, target.path, nameOf);
   if (plan === "exists") new Notice(`${target.name} is already listed under ${property}.`);
   else if (plan === "added") await add();
-  else new ConfirmModal(app, `Replace ${plan.replaces} with ${target.name} as ${property}?`, "Replace", () => void add()).open();
+  // An unlinked entry with this contact's name is the same person: link it up without asking.
+  else if (plan.sameName) await add(plan.text);
+  else {
+    const message = `Replace ${plan.replaces} with ${target.name} as ${property}?${takenText === "" ? "" : ` ${takenText}`}`;
+    new ConfirmModal(app, message, "Replace", () => void add(plan.text, false)).open();
+  }
 }
 
 /** Step 1: pick the contact to relate to; then the kind of relationship. */
