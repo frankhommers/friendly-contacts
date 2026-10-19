@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { parseKey } from "src/contacts";
 import { isMappedProperty } from "src/contacts/friendly/mapping";
 import { VCardSupportedKey } from "src/contacts/vcard";
+import { noticeFragment } from "src/ui/dom";
 
 type ValidateAddFieldResult = {
   valid: boolean;
@@ -87,15 +88,16 @@ export function CardFieldSettings() {
   }
 
   const showFieldRejectedNotice = (message: string) => {
-    const fragment = document.createDocumentFragment();
+    const fragment = noticeFragment();
+    const doc = fragment.ownerDocument;
 
-    const title = document.createElement("strong");
+    const title = doc.createElement("strong");
     title.textContent = "Field blocked";
     title.style.color = "var(--text-error)";
 
-    const br = document.createElement("br");
+    const br = doc.createElement("br");
 
-    const text = document.createElement("span");
+    const text = doc.createElement("span");
     text.textContent = message;
 
     fragment.appendChild(title);

@@ -7,6 +7,7 @@ import { insightQueueStore } from "src/insights/insightsQueStore";
 import { FolderSuggest } from "src/settings/FolderSuggest";
 import { contactNameByUid } from "src/graph/vaultGraph";
 import { MePickerModal } from "src/ui/modals/mePickerModal";
+import { fragmentFor } from "src/ui/dom";
 import { confirmMoveContacts } from "src/ui/modals/moveContactsModal";
 
 interface MasterSettingProps {
@@ -22,7 +23,7 @@ export function MasterSetting({ app }: MasterSettingProps) {
     if (containerRef.current) {
       containerRef.current.innerHTML = "";
 
-      const folderDesc = document.createDocumentFragment();
+      const folderDesc = fragmentFor(containerRef.current);
       folderDesc.append(
         "New contacts will be saved here.",
         folderDesc.createEl("br"),
@@ -87,7 +88,7 @@ export function MasterSetting({ app }: MasterSettingProps) {
             });
         });
 
-      const hashtagDesc = document.createDocumentFragment();
+      const hashtagDesc = fragmentFor(containerRef.current);
       hashtagDesc.append(
         "New contacts are automatically tagged with this hashtags.",
         hashtagDesc.createEl("br"),
