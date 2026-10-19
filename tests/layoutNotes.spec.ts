@@ -110,8 +110,15 @@ function dirname(path: string): string {
   return i < 0 ? "" : path.slice(0, i);
 }
 
-function fakeApp() {
+/**
+ * `caseInsensitive`: the disk ignores case (macOS, Windows) while Obsidian looks paths up by exact case. Creating
+ * `Contacts/Jan` when `Contacts/jan` exists then gives no error and is the same folder (what lands in it is merged),
+ * and a move onto a path that differs only in case from another file fails.
+ */
+function fakeApp(options: { caseInsensitive?: boolean } = {}) {
   const nodes = new Map<string, Node>();
+  const sameOnDisk = (path: string): Node | undefined =>
+    options.caseInsensitive ? [...nodes.entries()].find(([p]) => p.toLowerCase() === path.toLowerCase())?.[1] : nodes.get(path);
   const root = new h.TFolder("");
   nodes.set("", root);
   let active: File | null = null;
@@ -151,7 +158,8 @@ function fakeApp() {
     return file;
   };
   const move = (node: Node, to: string) => {
-    if (nodes.has(to) && nodes.get(to) !== node) throw new Error(`exists: ${to}`);
+    const there = sameOnDisk(to);
+    if (there && there !== node) throw new Error(`exists: ${to}`);
     const from = node.path;
     const parent = node.parent as Folder;
     parent.children = parent.children.filter((c) => c !== node);
@@ -207,6 +215,11 @@ function fakeApp() {
       getRoot: () => root,
       createFolder: async (p: string) => {
         if (nodes.has(p)) throw new Error("Folder already exists.");
+        const onDisk = sameOnDisk(p);
+        if (onDisk instanceof h.TFolder) {
+          nodes.set(p, onDisk); // Obsidian now knows the folder under both names; it is one folder on disk
+          return onDisk;
+        }
         parentOf(p);
         const created = new h.TFolder(p);
         attach(created);
@@ -222,7 +235,7 @@ function fakeApp() {
       },
       read: async (file: File) => file.content,
       adapter: {
-        exists: async (p: string) => nodes.has(p),
+        exists: async (p: string) => sameOnDisk(p) !== undefined,
         list: async (p: string) => {
           const children = (nodes.get(p) as Folder | undefined)?.children ?? [];
           return {
@@ -590,6 +603,67 @@ describe("rename", () => {
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan Bakker.md"]);
     v.note("Contacts/Sem.md");
     expect(await noteIO(v.app, jan as never).rename("Sem")).toBe("exists");
+  });
+});
+
+describe("vaults that ignore case", () => {
+  it("into folders skips a folder that differs only in case, and never merges", async () => {
+    useLayout(inside);
+    const v = fakeApp({ caseInsensitive: true });
+    v.note("Contacts/Jan.md");
+    v.note("Contacts/jan/Poem.md", null);
+    v.folder("Contacts/sem"); // empty, but not the folder this contact would get: not used either
+    v.note("Contacts/Sem.md");
+    const result = await changeLayout(v.app, "into");
+    expect(result.moved).toBe(0);
+    expect(result.skipped).toEqual([
+      { path: "Contacts/Jan.md", reason: "folder exists: Contacts/Jan" },
+      { path: "Contacts/Sem.md", reason: "folder exists: Contacts/Sem" },
+    ]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md", "Contacts/Sem.md", "Contacts/jan", "Contacts/jan/Poem.md", "Contacts/sem"]);
+  });
+
+  it("moving the contacts into a folder that differs only in case from a contact's folder is refused", async () => {
+    useLayout(inside);
+    const v = fakeApp({ caseInsensitive: true });
+    v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/Sem/Sem.md");
+    const before = v.paths();
+    const result = await moveContacts(v.app, "contacts/jan", "Contacts");
+    expect(result.moved).toBe(0);
+    expect(result.skipped[0].reason).toBe("target is inside a contact's folder: Contacts/Jan");
+    expect(v.paths()).toEqual(before);
+  });
+
+  it("a rename onto a name that differs only in case from another folder is refused", async () => {
+    useLayout(inside);
+    const v = fakeApp({ caseInsensitive: true });
+    const jan = v.note("Contacts/Jan/Jan.md");
+    v.note("Contacts/sem/Poem.md", null);
+    expect(await renameContact(v.app, jan as never, "Sem")).toBe("exists");
+    expect(renameBlocked(v.app, jan as never, "Sem")).toBe('A folder or note named "Sem" already exists.');
+    // a case-only rename of the contact itself is fine
+    expect(await renameContact(v.app, jan as never, "JAN")).toBe("renamed");
+    expect(jan.path).toBe("Contacts/JAN/JAN.md");
+  });
+
+  it("one-note layout: a note whose target differs only in case from another file is skipped", async () => {
+    const v = fakeApp({ caseInsensitive: true });
+    v.note("Contacts/Jan.md", CONTACT, "jan");
+    v.note("Areas/jan.md", null, "other");
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result.moved).toBe(0);
+    // found while planning, not left to the disk (which may overwrite a file that differs only in case)
+    expect(result.skipped).toEqual([{ from: "Contacts/Jan.md", reason: "target exists: Areas/Jan.md" }]);
+    expect((v.nodes.get("Areas/jan.md") as File).content).toBe("other");
+  });
+
+  it("a step onto a path that differs only in case is not run", async () => {
+    const v = fakeApp({ caseInsensitive: true });
+    v.note("Contacts/Jan.md", CONTACT, "jan");
+    v.note("Contacts/sem.md", CONTACT, "sem");
+    const result = await runSteps(v.app, [{ kind: "move", from: "Contacts/Jan.md", to: "Contacts/Sem.md" }]);
+    expect(result.failed.map((f) => f.reason)).toEqual(["target exists: Contacts/Sem.md"]);
   });
 });
 

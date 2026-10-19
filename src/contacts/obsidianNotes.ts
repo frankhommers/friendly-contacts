@@ -19,6 +19,7 @@ import {
   contactNameFor,
   effectiveLayout,
   ensureFolder,
+  existsIgnoringCase,
   moveContactFolders,
   newContactLocation,
   renameContact,
@@ -537,7 +538,7 @@ export async function moveContacts(
 
 async function moveNotes(app: App, from: string, to: string): Promise<{ moved: number; skipped: SkippedMove[] }> {
   const files = new Map(contactNotes(app, from).map(({ file }) => [file.path, file]));
-  const plan = planMoves([...files.keys()], from, to, (path) => app.vault.getAbstractFileByPath(path) !== null);
+  const plan = planMoves([...files.keys()], from, to, existsIgnoringCase(app));
   const skipped = [...plan.skipped];
   let moved = 0;
   for (const move of plan.moves) {

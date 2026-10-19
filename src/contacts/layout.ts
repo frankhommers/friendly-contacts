@@ -119,9 +119,14 @@ export function contactFolderOf(
   return folderExists(folder) ? folder : undefined;
 }
 
-/** True when `path` is `folder` itself or lies inside it; the vault root ('') holds everything. */
+/**
+ * True when `path` is `folder` itself or lies inside it; the vault root ('') holds everything. Case does not matter:
+ * on a disk that ignores case (macOS, Windows) `contacts/jan` is the folder `Contacts/Jan`.
+ */
 export function isInsideOrAt(path: string, folder: string): boolean {
-  return folder === "" || path === folder || path.startsWith(`${folder}/`);
+  const p = path.toLowerCase();
+  const f = folder.toLowerCase();
+  return f === "" || p === f || p.startsWith(`${f}/`);
 }
 
 /**

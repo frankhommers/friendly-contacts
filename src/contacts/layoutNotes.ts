@@ -58,6 +58,26 @@ function byPath(app: App, path: string): TAbstractFile | null {
   return app.vault.getAbstractFileByPath(path === "" ? "/" : path);
 }
 
+/**
+ * The file or folder at `path`, also when it differs only in case: Obsidian looks paths up by exact case, but on a
+ * disk that ignores case (macOS, Windows) `Contacts/jan` is taken when `Contacts/Jan` exists.
+ */
+function byPathIgnoringCase(app: App, path: string): TAbstractFile | null {
+  const exact = byPath(app, path);
+  if (exact !== null || path === "") return exact;
+  let node: TAbstractFile | null = byPath(app, "");
+  for (const part of path.toLowerCase().split("/")) {
+    if (!(node instanceof TFolder)) return null;
+    node = node.children.find((child) => child.name.toLowerCase() === part) ?? null;
+  }
+  return node;
+}
+
+/** True when something is at `path`, whatever its case. */
+export function existsIgnoringCase(app: App): (path: string) => boolean {
+  return (path) => byPathIgnoringCase(app, path) !== null;
+}
+
 function folderExists(app: App): (path: string) => boolean {
   return (path) => byPath(app, path) instanceof TFolder;
 }
@@ -91,9 +111,9 @@ function contactNamesIn(app: App, folder: string): string[] {
   return node.children.flatMap((child) => (isContactFile(app, child) ? contactNamesOf(app, child) : []));
 }
 
-/** True when `path` lies strictly inside `folder` (the vault root '' holds every other path). */
+/** True when `path` lies strictly inside `folder` (the vault root '' holds every other path); case does not matter. */
 function strictlyInside(path: string, folder: string): boolean {
-  return path !== folder && isInsideOrAt(path, folder);
+  return path.toLowerCase() !== folder.toLowerCase() && isInsideOrAt(path, folder);
 }
 
 /**
@@ -144,7 +164,7 @@ function otherContactsIn(app: App, folder: TFolder, except?: TFile): TFile[] {
 
 /** The contact notes in the folder at `path` (and its sub-folders); empty when there is no such folder. */
 export function contactsInFolder(app: App, path: string): TFile[] {
-  const folder = byPath(app, path);
+  const folder = byPathIgnoringCase(app, path);
   return folder instanceof TFolder ? otherContactsIn(app, folder) : [];
 }
 
@@ -297,7 +317,7 @@ function contactFolder(app: App, file: TFile): string | undefined {
 
 function planFor(app: App, file: TFile, newName: string): { steps: FsStep[]; skipped?: string } {
   const s = effectiveLayout();
-  const exists = (path: string) => byPath(app, path) !== null;
+  const exists = existsIgnoringCase(app);
   // A note that is not in a folder of its own below the contacts folder (e.g. `Contacts/Contacts.md`) is renamed as
   // a single note: the contacts folder, or anything above it, never moves.
   const asNote = s.layout === "folder" && contactFolder(app, file) === undefined;
@@ -389,7 +409,8 @@ async function runStep(app: App, step: FsStep, base: string): Promise<string | {
       case "createFolder": {
         const existing = byPath(app, step.to);
         if (existing instanceof TFolder) return undefined;
-        if (existing) return `target exists: ${step.to}`;
+        // Also one that differs only in case: on such a disk it is the same folder, and things would be merged.
+        if (existing || byPathIgnoringCase(app, step.to)) return `target exists: ${step.to}`;
         await ensureFolder(app, step.to);
         return undefined;
       }
@@ -398,7 +419,7 @@ async function runStep(app: App, step: FsStep, base: string): Promise<string | {
         // The contacts folder, or a folder holding it, never moves.
         if (isInsideOrAt(base, step.from)) return `refused: ${step.from} is the contacts folder`;
         const source = byPath(app, step.from);
-        const target = byPath(app, step.to);
+        const target = byPathIgnoringCase(app, step.to);
         if (!source) return target ? undefined : `missing: ${step.from}`;
         // A case-only rename finds the source itself on a case-insensitive vault; that is no other file.
         if (target && target !== source) return `target exists: ${step.to}`;
@@ -535,7 +556,7 @@ function planLayoutChange(app: App, direction: LayoutDirection): LayoutPlan | { 
   const { s } = target;
   const base = contactsBase();
   const isFolder = folderExists(app);
-  const exists = (path: string) => byPath(app, path) !== null;
+  const exists = existsIgnoringCase(app);
   const files = contactsInFolder(app, base).sort((a, b) => (a.path < b.path ? -1 : 1));
   const skipped: LayoutPlan["skipped"] = [];
   const notes: { path: string; name: string }[] = [];
@@ -702,7 +723,7 @@ export async function moveContactFolders(
   }
 
   const links = hasFixedNoteName(s) ? recordRelationLinks(app, files) : [];
-  const plan = planUnitMoves(list.map((u) => u.paths), from, to, (path) => byPath(app, path) !== null);
+  const plan = planUnitMoves(list.map((u) => u.paths), from, to, existsIgnoringCase(app));
   const groups = plan.groups.map((g) =>
     g.moves.flatMap((move): FsStep[] => [
       { kind: "createFolder", to: dirnameOf(move.to) },
