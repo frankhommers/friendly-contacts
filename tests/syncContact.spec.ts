@@ -347,6 +347,19 @@ describe('prepareSync', () => {
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
+  it('a relation with a fixed-name note path and an alias is no difference', async () => {
+    // What ObsidianRelationContext gives for a contact whose note is `Contacts/Sem/index.md` (see relationLinks.spec.ts).
+    const sem: RelationContext = {
+      uidToName: (uid) => (uid === 'sem-uid' ? 'Contacts/Sem/index|Sem' : undefined),
+      resolveLink: (name) => (name === 'Contacts/Sem/index' || name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
+    };
+    const server = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nRELATED;TYPE=spouse:urn:uuid:sem-uid\r\n');
+    for (const spouse of ['[[Contacts/Sem/index|Sem]]', '[[Contacts/Sem/index]]', '[[Contacts/Sem/index|Sem Jr]]']) {
+      const t = setup({ server, base: server, local: { ...friendlyOf(server), spouse }, ctx: sem });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    }
+  });
+
   it('note coercion warnings are notified', async () => {
     // The note's list is read as its first item, which equals the server value.
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: ['Baker', 'Chef'] } });

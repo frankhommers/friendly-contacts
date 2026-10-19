@@ -71,6 +71,11 @@ export function validateLayout(s: LayoutSettings): string | undefined {
   return undefined;
 }
 
+/** True in folder layout when every contact's note has the same file name (a pattern without `{{name}}`). */
+export function hasFixedNoteName(s: LayoutSettings): boolean {
+  return s.layout === "folder" && !s.noteName.includes(NAME_TOKEN);
+}
+
 /**
  * The note's file name without `.md`. In one-note layout that is the contact name; in folder layout the pattern
  * with `{{name}}` replaced.

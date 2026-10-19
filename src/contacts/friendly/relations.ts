@@ -14,6 +14,18 @@ export function toLink(name: string): string {
 }
 
 /**
+ * Link text for a note whose file name does not say who it is (a fixed folder note name such as `index`):
+ * `Contacts/Jan de Vries/index` -> `Contacts/Jan de Vries/index|Jan de Vries`. The link text as it is when its last
+ * path segment already is the display name (or the name cannot be used as an alias). Characters that would break
+ * a link (`|`, `[`, `]`) are left out of the alias.
+ */
+export function linkWithAlias(linktext: string, displayName: string): string {
+  const alias = displayName.replace(/[|[\]\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
+  const last = linktext.slice(linktext.lastIndexOf('/') + 1);
+  return alias === '' || last === alias ? linktext : `${linktext}|${alias}`;
+}
+
+/**
  * Link text -> link path. `[[Path/Name|alias]]` / `[[Path/Name#heading]]` -> `Path/Name`;
  * `[Alias](Path/Name%20X.md)` -> `Path/Name X`; plain text passes through.
  */

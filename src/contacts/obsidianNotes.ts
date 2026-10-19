@@ -9,11 +9,12 @@ import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, techn
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
-import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
+import { linkTarget, linkWithAlias, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
+import { hasFixedNoteName } from "src/contacts/layout";
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
-import { effectiveLayout, ensureFolder, moveContactFolders, newContactLocation, renameContact } from "src/contacts/layoutNotes";
+import { contactNameFor, effectiveLayout, ensureFolder, moveContactFolders, newContactLocation, renameContact } from "src/contacts/layoutNotes";
 import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import type { Source } from "src/settings/settings";
@@ -76,6 +77,18 @@ export function contactNotes(app: App, folderPath: string = getSettings().contac
   });
 }
 
+/**
+ * Link text to a contact note as written into a relationship property, without the brackets. With a fixed note
+ * name (`index`) the path alone says nothing, so the contact's name is the alias:
+ * `Contacts/Jan de Vries/index|Jan de Vries`. Links are compared by `linkTarget`, which drops the alias.
+ */
+function contactLinktext(app: App, file: TFile, fromPath: string, omitMdExtension?: boolean): string {
+  const linktext = app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
+  if (!hasFixedNoteName(effectiveLayout())) return linktext;
+  const name: unknown = app.metadataCache.getFileCache(file)?.frontmatter?.name;
+  return linkWithAlias(linktext, typeof name === "string" && name.trim() !== "" ? name.trim() : contactNameFor(app, file));
+}
+
 /** Relationship mirroring against the vault: contact notes, link resolution and property writes. */
 export function obsidianMirrorEnv(app: App): MirrorEnv {
   const contactFrontmatter = (file: TFile) => {
@@ -100,7 +113,7 @@ export function obsidianMirrorEnv(app: App): MirrorEnv {
     linkTo(targetPath, fromPath) {
       const file = app.vault.getAbstractFileByPath(targetPath);
       if (!(file instanceof TFile)) throw new Error(`Contact note not found: ${targetPath}`);
-      return `[[${app.metadataCache.fileToLinktext(file, fromPath)}]]`;
+      return `[[${contactLinktext(app, file, fromPath)}]]`;
     },
     async updateProperty(path, property, fn) {
       const file = app.vault.getAbstractFileByPath(path);
@@ -273,7 +286,7 @@ export class ObsidianRelationContext implements RelationContext {
   uidToName(uid: string): string | undefined {
     const id = cleanUid(uid);
     const note = this.contacts.find((c) => c.uid !== undefined && cleanUid(c.uid) === id);
-    if (note) return this.app.metadataCache.fileToLinktext(note.file, this.sourcePath, true);
+    if (note) return contactLinktext(this.app, note.file, this.sourcePath, true);
     // A contact in several address books under different names has no one name to show.
     const names = new Set(this.remote.filter((r) => r.uid === id).map((r) => r.fileName));
     return names.size === 1 ? [...names][0] : undefined;
@@ -388,7 +401,7 @@ export async function importCard(
   app: App,
   card: string,
   extra: Record<string, FriendlyValue> = {},
-): Promise<{ uid: string; written: boolean } | undefined> {
+): Promise<{ uid: string; written: boolean; path?: string } | undefined> {
   const { contactsFolder, defaultHashtag, friendly } = getSettings();
   const lines = parseCard(card);
   const value = (name: string) => lines.find((line) => line.name === name)?.value;
@@ -399,7 +412,7 @@ export async function importCard(
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;
-  return { uid: cleanUid(value("UID")), written };
+  return { uid: cleanUid(value("UID")), written, path };
 }
 
 /** 'skipped': a note with that name exists and was kept (the user chose Skip or closed the dialog); 'unnamed': the card has no name. */
@@ -422,7 +435,85 @@ export async function importRemoteCard(
       href: pulled.href || meta.href,
     });
   }
+  if (imported.written && imported.path !== undefined && hasFixedNoteName(effectiveLayout())) {
+    // Relationships to this contact that had no note to point to can point to this one now. Only with a fixed note
+    // name: a note named for the contact is found by the plain `[[Name]]` already. All imports end up here.
+    await relinkNewContact(app, imported.uid, imported.path);
+  }
   return imported.written ? "imported" : "skipped";
+}
+
+/** `relinkAfterImport` for a note just written to `path`; a failure is logged, never fails the import. */
+async function relinkNewContact(app: App, uid: string, path: string): Promise<void> {
+  try {
+    // The note was written through the adapter; the vault learns about the file a moment later.
+    let file = app.vault.getAbstractFileByPath(path);
+    for (let tries = 0; !(file instanceof TFile) && tries < 20; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      file = app.vault.getAbstractFileByPath(path);
+    }
+    if (!(file instanceof TFile)) return;
+    const count = await relinkAfterImport(app, uid, file);
+    if (count > 0) new Notice(`Linked ${count} relationship${count === 1 ? "" : "s"} to ${contactNameFor(app, file)}.`);
+  } catch (error) {
+    console.error("Friendly Contacts: could not link relationships to the imported contact", error);
+  }
+}
+
+/**
+ * After the contact with `uid` was imported as `file`: relationship entries in contact notes that point to no note
+ * but whose name is this contact on the server become links to `file` (an alias the user wrote is kept). Other
+ * links, and everything but the relationship properties, are left alone. Returns the number of entries changed.
+ */
+export async function relinkAfterImport(app: App, uid: string, file: TFile): Promise<number> {
+  const id = cleanUid(uid);
+  if (id === "") return 0;
+  const remote = await remoteContacts();
+  const relationProperties = getSettings().friendly.mapping.flatMap((row) => (row.kind === "relation" ? [row.property] : []));
+  /** The entry as it should be now, or undefined when it stays. */
+  const relinked = (entry: unknown, notePath: string): string | undefined => {
+    if (typeof entry !== "string") return undefined;
+    const name = linkTarget(entry.trim()).trim();
+    if (name === "" || app.metadataCache.getFirstLinkpathDest(name, notePath)) return undefined;
+    const resolved = resolveRemoteName(name, remote);
+    if (!("uid" in resolved) || resolved.uid !== id) return undefined;
+    const linktext = contactLinktext(app, file, notePath, true);
+    const alias = /^\[\[[^|\]]*\|([^\]]+)\]\]$/.exec(entry.trim())?.[1];
+    return `[[${alias === undefined ? linktext : `${linktext.split("|")[0]}|${alias}`}]]`;
+  };
+  let count = 0;
+  for (const { file: note } of contactNotes(app)) {
+    if (note.path === file.path) continue;
+    const cached = app.metadataCache.getFileCache(note)?.frontmatter;
+    const needs = relationProperties.some((property) => {
+      const value: unknown = cached?.[property];
+      return (Array.isArray(value) ? value : [value]).some((entry) => relinked(entry, note.path) !== undefined);
+    });
+    if (!needs) continue;
+    try {
+      await app.fileManager.processFrontMatter(note, (fm: Record<string, unknown>) => {
+        for (const property of relationProperties) {
+          const value = fm[property];
+          if (Array.isArray(value)) {
+            fm[property] = value.map((entry: unknown) => {
+              const next = relinked(entry, note.path);
+              if (next !== undefined) count++;
+              return next ?? entry;
+            });
+          } else {
+            const next = relinked(value, note.path);
+            if (next !== undefined) {
+              fm[property] = next;
+              count++;
+            }
+          }
+        }
+      });
+    } catch (error) {
+      console.error(`Friendly Contacts: could not link relationships in ${note.path}`, error);
+    }
+  }
+  return count;
 }
 
 /**
