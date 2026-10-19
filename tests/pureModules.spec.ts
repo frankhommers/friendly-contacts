@@ -22,11 +22,23 @@ async function bundleOf(entry: string): Promise<{ inputs: string[]; external: st
 }
 
 describe('the sync core loads without Obsidian', () => {
-  for (const entry of ['src/sync/syncFlow.ts', 'src/sync/reviewExtras.ts', 'src/sync/review.ts', 'src/sync/syncContact.ts']) {
+  for (const entry of [
+    'src/sync/syncFlow.ts',
+    'src/sync/reviewExtras.ts',
+    'src/sync/review.ts',
+    'src/sync/reviewDisplay.ts',
+    'src/sync/syncContact.ts',
+  ]) {
     it(`${entry} pulls in neither obsidian nor src/context`, async () => {
       const { inputs, external } = await bundleOf(entry);
       expect(external).not.toContain('obsidian');
       expect(inputs.filter((input) => input.includes('src/context/'))).toEqual([]);
     });
   }
+
+  it('the check sees obsidian and src/context where they are used (src/sync/sync.ts)', async () => {
+    const { inputs, external } = await bundleOf('src/sync/sync.ts');
+    expect(external).toContain('obsidian');
+    expect(inputs.filter((input) => input.includes('src/context/'))).not.toEqual([]);
+  });
 });

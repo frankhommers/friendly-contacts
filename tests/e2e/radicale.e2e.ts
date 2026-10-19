@@ -313,6 +313,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       contexts: async () => ({ ctx: lookups, readOnlyCtx: lookups, settle: async () => {} }), // these lookups never write
       review: async (request) => {
         const { rows } = request.prepared;
+        // The server column is labelled with an address book's name, never a fixed server name.
+        expect(sources.map((s) => s.name)).toContain(request.serverName);
         const picked =
           typeof choices === 'string'
             ? new Map(rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, choices as Choice]))
@@ -490,6 +492,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await serverCard(JAN_HREF)).toBe(serverVersion);
   });
 
+  // Relies on scenario 4's server state: the card's TITLE is "Head baker" (and the base matches it) when this starts.
   it('4b. the same field edited on both sides is decided by the user: Obsidian', async () => {
     await putCard(JAN_HREF, (await serverCard(JAN_HREF)).replace('TITLE:Head baker', 'TITLE:Master baker'));
     const before = unfolded(await serverCard(JAN_HREF));
