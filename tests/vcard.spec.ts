@@ -27,7 +27,7 @@ setApp({
 } as unknown as App);
 
 const books = vi.hoisted(() => ({
-  sources: [] as { id: string; name: string }[],
+  sources: [] as { id: string; name: string; enabled: boolean }[],
   defaultSource: '',
   /** What the modal was offered, and the book the user picks. */
   offered: [] as unknown[],
@@ -100,7 +100,7 @@ describe('vcard creatEmpty', () => {
   });
 
   it('with one address book there is nothing to choose', async () => {
-    books.sources = [{ id: 'a', name: 'Work' }];
+    books.sources = [{ id: 'a', name: 'Work', enabled: true }];
     books.defaultSource = 'a';
     const empty = await vcard.createEmpty();
     expect(books.offered).toEqual([undefined]);
@@ -108,12 +108,25 @@ describe('vcard creatEmpty', () => {
   });
 
   it('offers the address books, the default selected, and writes the one chosen as source', async () => {
-    books.sources = [{ id: 'a', name: 'Work' }, { id: 'b', name: 'Family' }];
+    books.sources = [{ id: 'a', name: 'Work', enabled: true }, { id: 'b', name: 'Family', enabled: true }];
     books.defaultSource = 'b';
     books.pick = 'Work';
     const empty = await vcard.createEmpty();
     expect(books.offered).toEqual([{ names: ['Work', 'Family'], selected: 'Family' }]);
     expect(empty['source']).toBe('Work');
+  });
+
+  it('a disabled address book is not offered', async () => {
+    books.sources = [
+      { id: 'a', name: 'Old', enabled: false },
+      { id: 'b', name: 'Work', enabled: true },
+      { id: 'c', name: 'Family', enabled: true },
+    ];
+    books.defaultSource = 'a';
+    books.pick = 'Family';
+    const empty = await vcard.createEmpty();
+    expect(books.offered).toEqual([{ names: ['Work', 'Family'], selected: 'Work' }]);
+    expect(empty['source']).toBe('Family');
   });
 });
 

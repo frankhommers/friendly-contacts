@@ -201,7 +201,7 @@ With a contact note open: pick another contact, then the relationship (see [Rela
 2. Fill in:
    - `Given Name`
    - `Family Name`
-   - `Address book`, when you have two or more: the default address book is preselected, and your choice is written as `source:` in the new note. With one address book (or none) the field is not shown.
+   - `Address book`, when two or more address books are enabled: the default address book is preselected (when it is disabled, the first enabled one), and your choice is written as `source:` in the new note. Disabled address books are not listed. With one enabled address book (or none) the field is not shown.
 3. Add any extra details:
    - Phone numbers, emails, websites, etc.
 4. Your contact is now saved as a markdown file and export-ready!

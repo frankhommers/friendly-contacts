@@ -442,8 +442,9 @@ Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Androi
 - Each address book gets "New contacts: Automatic / vCard 3.0 / vCard 4.0" (default Automatic). Automatic = the
   version most cards in that address book have (ties and empty books: 3.0, the most widely understood).
 - The settings show per address book, on request ("Count card versions"), e.g. "118 × vCard 3.0, 4 × vCard 4.0".
-- "Create Contact" gets an **Address book** dropdown (default address book preselected; hidden with one address book;
-  absent without address books); the choice is written as `source:` in the new note.
+- "Create Contact" gets an **Address book** dropdown listing the enabled address books (default address book
+  preselected, or the first enabled one when the default is disabled; hidden with fewer than two enabled address
+  books); the choice is written as `source:` in the new note.
 
 ### Testing
 

@@ -322,4 +322,14 @@ describe('bookChoice', () => {
     expect(bookChoice({ sources: [source('a', 'Work')], defaultSource: 'a' })).toBeUndefined();
     expect(bookChoice({ sources: [], defaultSource: '' })).toBeUndefined();
   });
+
+  it('lists enabled books only; a disabled default selects the first enabled book', () => {
+    const off = (s: Source): Source => ({ ...s, enabled: false });
+    const sources = [off(source('a', 'Old')), source('b', 'Work'), source('c', 'Family')];
+    expect(bookChoice({ sources, defaultSource: 'c' })).toEqual({ names: ['Work', 'Family'], selected: 'Family' });
+    expect(bookChoice({ sources, defaultSource: 'a' })).toEqual({ names: ['Work', 'Family'], selected: 'Work' });
+    // Fewer than two enabled books: nothing to choose.
+    expect(bookChoice({ sources: [source('a', 'Work'), off(source('b', 'Old'))], defaultSource: 'b' })).toBeUndefined();
+    expect(bookChoice({ sources: [off(source('a', 'Work')), off(source('b', 'Old'))], defaultSource: 'a' })).toBeUndefined();
+  });
 });

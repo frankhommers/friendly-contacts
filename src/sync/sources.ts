@@ -301,11 +301,14 @@ export function newCardVersion(source: Pick<Source, 'newCardVersion'>, versions:
 export type BookChoice = { names: string[]; selected: string };
 
 /**
- * The address books "Create Contact" offers: every book by name, the default selected (else the first).
- * undefined with one book or none: there is nothing to choose.
+ * The address books "Create Contact" offers: the enabled books by name (a disabled book cannot take a new card),
+ * the default selected when it is enabled, else the first. undefined with fewer than two enabled books: there is
+ * nothing to choose.
  */
 export function bookChoice(settings: SourceList): BookChoice | undefined {
-  if (settings.sources.length < 2) return undefined;
-  const selected = (defaultSourceOf(settings) ?? settings.sources[0]).name;
-  return { names: settings.sources.map((s) => s.name), selected };
+  const enabled = settings.sources.filter((s) => s.enabled);
+  if (enabled.length < 2) return undefined;
+  const preferred = defaultSourceOf(settings);
+  const selected = (preferred?.enabled ? preferred : enabled[0]).name;
+  return { names: enabled.map((s) => s.name), selected };
 }
