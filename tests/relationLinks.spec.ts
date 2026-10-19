@@ -381,12 +381,32 @@ describe("a link Obsidian cannot resolve finds the contact note by its name", ()
     expect(v.processed).toEqual([]);
   });
 
-  it("a contact note without a UID: plain text when read-only, a new UID otherwise", async () => {
+  it("a link Obsidian resolves to another note is not taken for the contact with that name", () => {
+    const { v, contacts } = vault();
+    v.note("Projects/Sem de Vries.md", { status: "open" });
+    const listed = [{ uid: "listed-uid", fileName: "Sem de Vries", sourceId: "s1", href: "", etag: "" }];
+    for (const readOnly of [true, false]) {
+      for (const link of ["Projects/Sem de Vries", "Sem de Vries"]) {
+        // as before: the address book listing, else text
+        expect(new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, [], readOnly).resolveLink(link)).toEqual({ text: link });
+        const ctx = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, listed, readOnly);
+        expect(ctx.resolveLink(link)).toEqual(link === "Sem de Vries" ? { uid: "listed-uid" } : { text: link });
+      }
+    }
+    expect(v.processed).toEqual([]);
+  });
+
+  it("a contact note without a UID: the address book listing (else text) when read-only, a new UID otherwise", async () => {
     const { v, contacts } = vault();
     h.app = v.app;
     const readOnly = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, [], true);
     expect(readOnly.resolveLink("Anna Smit")).toEqual({ text: "Anna Smit" });
+    const listed = [{ uid: "anna-remote", fileName: "Anna Smit", sourceId: "s1", href: "", etag: "" }];
+    const readOnlyListed = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, listed, true);
+    expect(readOnlyListed.resolveLink("Anna Smit")).toEqual({ uid: "anna-remote" });
+    await readOnlyListed.settle();
     expect(v.processed).toEqual([]);
+    expect(contacts[1].uid).toBeUndefined();
     const writing = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, []);
     const resolved = writing.resolveLink("anna smit");
     expect(resolved).toEqual({ uid: expect.stringMatching(/^[0-9a-f-]{36}$/) });

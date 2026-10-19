@@ -336,18 +336,18 @@ export class ObsidianRelationContext implements RelationContext {
   }
 
   /**
-   * A link target as Obsidian resolves it; when that is no contact note (a contact in its own folder is not found
-   * by its name, its note is `index`), the one contact note with that display name, then the address book listing.
+   * A link target as Obsidian resolves it. When Obsidian finds no note at all (a contact in its own folder is not
+   * found by its name, its note is `index`): the one contact note with that display name. Else (also for a link to
+   * a note that is no contact note) the address book listing.
    */
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true } {
     const dest = this.app.metadataCache.getFirstLinkpathDest(name, this.sourcePath);
     let note = dest ? this.contacts.find((c) => c.file.path === dest.path) : undefined;
-    if (!note) {
+    if (!note && !dest) {
       const wanted = name.trim().toLowerCase();
       const named = this.contacts.filter((c) => contactDisplayName(this.app, c.file).trim().toLowerCase() === wanted);
       if (named.length > 1) return { ambiguous: true };
       note = named[0];
-      if (note && note.uid === undefined && this.readOnly) return { text: name };
     }
     if (!note || (note.uid === undefined && this.readOnly)) return resolveRemoteName(name, this.remote);
     if (note.uid === undefined) {
