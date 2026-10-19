@@ -32,6 +32,8 @@ describe('the sync core, the layout model and relationship editing load without 
     'src/contacts/moveContacts.ts',
     'src/contacts/relationMirror.ts',
     'src/contacts/relationEdit.ts',
+    'src/util/versionStore.ts',
+    'src/util/sharedListing.ts',
   ]) {
     it(`${entry} pulls in neither obsidian nor src/context`, async () => {
       const { inputs, external } = await bundleOf(entry);

@@ -10,7 +10,7 @@ vi.mock('obsidian', () => ({
 }));
 
 import { ghostAction, remoteCardFor } from 'src/contacts/relationEdit';
-import { pickableContacts } from 'src/ui/modals/addRelationshipModal';
+import { pickableContacts, pickerLabel } from 'src/ui/modals/addRelationshipModal';
 
 describe('pickableContacts', () => {
   const notes = [
@@ -25,6 +25,15 @@ describe('pickableContacts', () => {
 
   it('picker sorts by name', () => {
     expect(pickableContacts(notes, 'Other.md').map((n) => n.name)).toEqual(['anna', 'Jan', 'Sem']);
+  });
+
+  it('same names show their folder', () => {
+    const picked = pickableContacts(
+      [...notes, { path: 'Work/sem/index.md', name: 'sem' }, { path: 'Sem.md', name: 'Sem' }],
+      'People/Jan.md',
+    );
+    expect(picked.map(pickerLabel)).toEqual(['anna', 'Sem (People)', 'Sem (/)', 'sem (Work/sem)']);
+    expect(pickableContacts(notes, 'Other.md').every((n) => n.folder === undefined)).toBe(true);
   });
 });
 

@@ -134,7 +134,8 @@ export async function addRelation(
   replacing?: string,
 ): Promise<void> {
   const row = relationRow(rows, property);
-  const replaced = (item: unknown) => replacing !== undefined && typeof item === 'string' && item.trim() === replacing.trim();
+  const replaced = (item: unknown) =>
+    replacing !== undefined && typeof item === 'string' && item.trim() === replacing.trim();
   await env.updateProperty(path, property, (current) => {
     const items = relationItems(current);
     const listed = items.some((item) => typeof item === 'string' && resolveEntry(env, item, path) === targetPath);

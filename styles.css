@@ -654,7 +654,8 @@ textarea.friendly-review-edit {
 }
 
 .friendly-relationships-add,
-.friendly-relationships-import {
+.friendly-relationships-import,
+.friendly-relationships-link {
 	font-size: var(--font-ui-smaller);
 	height: auto;
 	padding: 2px 8px;

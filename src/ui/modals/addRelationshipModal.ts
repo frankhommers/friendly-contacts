@@ -9,14 +9,27 @@ import { ConfirmModal } from "src/ui/modals/confirmModal";
 export interface PickableContact {
   path: string;
   name: string;
+  /** The note's folder, set when another contact in the list has the same name. */
+  folder?: string;
 }
 
-/** Every contact note except the contact itself, sorted by name. */
+const nameKey = (name: string) => name.trim().toLocaleLowerCase();
+
+/** Every contact note except the contact itself, sorted by name; contacts sharing a name get their folder. */
 export function pickableContacts(notes: PickableContact[], selfPath: string): PickableContact[] {
-  return notes
-    .filter((note) => note.path !== selfPath)
+  const picked = notes.filter((note) => note.path !== selfPath);
+  const count = new Map<string, number>();
+  for (const note of picked) count.set(nameKey(note.name), (count.get(nameKey(note.name)) ?? 0) + 1);
+  const shared = (name: string) => (count.get(nameKey(name)) ?? 0) > 1;
+  const folderOf = (path: string) => (path.includes("/") ? path.replace(/\/[^/]*$/, "") : "/");
+  return picked
+    .map(({ path, name }) => (shared(name) ? { path, name, folder: folderOf(path) } : { path, name }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.path.localeCompare(b.path));
 }
+
+/** The contact as the picker lists it (and searches it): its name, with its folder when the name is shared. */
+export const pickerLabel = (item: PickableContact): string =>
+  item.folder === undefined ? item.name : `${item.name} (${item.folder})`;
 
 type RelationRow = Extract<MappingRow, { kind: "relation" }>;
 
@@ -83,7 +96,8 @@ async function applyRelation(app: App, contactPath: string, target: PickableCont
   const takenText =
     taken === undefined
       ? ""
-      : `${target.name} already has ${taken.name} as ${taken.property}, so ${target.name}'s ${taken.property} stays as it is.`;
+      : `${target.name} already has ${taken.name} as ${taken.property}, ` +
+        `so ${target.name}'s ${taken.property} stays as it is.`;
   /** `tell`: say afterwards that the other side stayed as it was (not when the confirm already said so). */
   const add = async (replacing?: string, tell = true) => {
     try {
@@ -101,34 +115,39 @@ async function applyRelation(app: App, contactPath: string, target: PickableCont
   // An unlinked entry with this contact's name is the same person: link it up without asking.
   else if (plan.sameName) await add(plan.text);
   else {
-    const message = `Replace ${plan.replaces} with ${target.name} as ${property}?${takenText === "" ? "" : ` ${takenText}`}`;
+    const question = `Replace ${plan.replaces} with ${target.name} as ${property}?`;
+    const message = takenText === "" ? question : `${question} ${takenText}`;
     new ConfirmModal(app, message, "Replace", () => void add(plan.text, false)).open();
   }
 }
 
 /** Step 1: pick the contact to relate to; then the kind of relationship. */
 export class AddRelationshipModal extends FuzzySuggestModal<PickableContact> {
+  /** Read once when the picker opens, not on every key typed. */
+  private items: PickableContact[];
+
   constructor(
     app: App,
     private contactPath: string,
   ) {
     super(app);
     this.setPlaceholder("Add relationship to…");
-  }
-
-  getItems(): PickableContact[] {
-    return pickableContacts(
-      contactNotes(this.app).map(({ file }) => ({ path: file.path, name: contactDisplayName(this.app, file) })),
-      this.contactPath,
+    this.items = pickableContacts(
+      contactNotes(app).map(({ file }) => ({ path: file.path, name: contactDisplayName(app, file) })),
+      contactPath,
     );
   }
 
+  getItems(): PickableContact[] {
+    return this.items;
+  }
+
   getItemText(item: PickableContact): string {
-    return item.name;
+    return pickerLabel(item);
   }
 
   renderSuggestion(match: FuzzyMatch<PickableContact>, el: HTMLElement): void {
-    el.setText(match.item.name);
+    el.setText(pickerLabel(match.item));
   }
 
   onChooseItem(item: PickableContact): void {
