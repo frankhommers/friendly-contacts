@@ -1,6 +1,6 @@
 import * as React from "react";
 import {Contact} from "src/contacts";
-import {contactNotes, importRemoteCard} from "src/contacts/obsidianNotes";
+import {contactNotes, importRemoteCard, relinkImported} from "src/contacts/obsidianNotes";
 import {getApp} from "src/context/sharedAppContext";
 import {getSettings} from "src/context/sharedSettingsContext";
 import {InsightProcessor, InsightQueItem, PropsRenderGroup, RunType} from "src/insights/insight.d";
@@ -11,8 +11,15 @@ import {uidAlreadyImported} from "src/sync/sources";
 import {cleanUid} from "src/util/vcard";
 
 
-/** UIDs imported so far in one "Import All" run; the metadata cache may not show those notes yet. */
-const ImportUnknownVcardToVault = async (queItem: InsightQueItem, importedNow: Set<string> = new Set()) => {
+/**
+ * `importedNow`: UIDs imported so far in one "Import All" run; the metadata cache may not show those notes yet.
+ * `relinkLater`: in such a run the new notes are collected there and relinked once at the end.
+ */
+const ImportUnknownVcardToVault = async (
+  queItem: InsightQueItem,
+  importedNow: Set<string> = new Set(),
+  relinkLater?: { uid: string; path: string }[],
+) => {
   // The same card can be queued once per address book; a UID that has a note is not imported again.
   const noteUids = contactNotes(getApp()).map((note) => note.uid);
   if (uidAlreadyImported(queItem.data.uid, noteUids, importedNow)) {
@@ -28,7 +35,7 @@ const ImportUnknownVcardToVault = async (queItem: InsightQueItem, importedNow: S
   const rawCard = await sync.pullFromRemote(source, queItem.data.href);
   if (rawCard) {
     // #90 for now made the same as in the rootView skipping the record without notifying the user.
-    const outcome = await importRemoteCard(getApp(), rawCard, queItem.data, source);
+    const outcome = await importRemoteCard(getApp(), rawCard, queItem.data, source, {relinkLater});
     if (outcome === "unnamed") console.warn("Skipping contact without name", rawCard.raw);
     // A card that was skipped because its note exists stays in the list.
     if (outcome === "imported") importedNow.add(cleanUid(queItem.data.uid ?? rawCard.uid));
@@ -42,9 +49,11 @@ const renderGroup = ({queItems}: PropsRenderGroup): JSX.Element | null => {
       event.preventDefault();
       event.stopPropagation();
       const importedNow = new Set<string>();
+      const relinkLater: { uid: string; path: string }[] = [];
       for (const queItem of queItems) {
-        await ImportUnknownVcardToVault(queItem, importedNow);
+        await ImportUnknownVcardToVault(queItem, importedNow, relinkLater);
       }
+      await relinkImported(getApp(), relinkLater);
     }
   }
 

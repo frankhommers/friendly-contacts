@@ -64,7 +64,7 @@ vi.mock("src/context/sharedSettingsContext", () => ({
 
 import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { linkWithAlias } from "src/contacts/friendly/relations";
-import { importRemoteCard, obsidianMirrorEnv, ObsidianRelationContext, relinkAfterImport } from "src/contacts/obsidianNotes";
+import { importRemoteCard, obsidianMirrorEnv, ObsidianRelationContext, relinkAfterImport, relinkImported } from "src/contacts/obsidianNotes";
 import { resetLayoutWarning } from "src/contacts/layoutNotes";
 
 type File = InstanceType<typeof h.TFile>;
@@ -110,10 +110,12 @@ function fakeApp() {
   const stem = (f: File) => f.path.replace(/\.md$/, "");
   const processed: string[] = [];
   const other = new Map<string, string>();
+  /** Paths the vault has not picked up yet (written through the adapter a moment ago). */
+  const unseen = new Set<string>();
 
   const app = {
     vault: {
-      getAbstractFileByPath: (p: string) => nodes.get(p === "/" ? "" : p) ?? null,
+      getAbstractFileByPath: (p: string) => (unseen.has(p) ? null : (nodes.get(p === "/" ? "" : p) ?? null)),
       createFolder: async (p: string) => folder(p),
       adapter: {
         exists: async (p: string) => nodes.has(p) || other.has(p),
@@ -152,7 +154,7 @@ function fakeApp() {
     },
     workspace: { getActiveFile: () => null },
   };
-  return { app: app as never, note, folder, files, processed };
+  return { app: app as never, note, folder, files, processed, unseen };
 }
 
 const source: Source = { id: "s1", name: "Work", addressBookUrl: "http://x/", authType: "apikey", authKey: "k", enabled: true };
@@ -283,5 +285,50 @@ describe("links to a fixed note name are never short", () => {
     const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "a" });
     const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: anna as never, uid: "a" }], []);
     expect(ctx.uidToName("a")).toBe("Contacts/Anna");
+  });
+});
+
+describe("relinking after a bulk import", () => {
+  const pulled = { uid: "sem-uid", raw: SEM_CARD, etag: "e", href: "/sem-uid.vcf" };
+
+  it("Import All relinks once at the end, over every contact it imported", async () => {
+    useLayout(indexLayout);
+    const v = fakeApp();
+    v.folder("Contacts");
+    const jan = v.note("Contacts/Jan/index.md", { name: "Jan", uid: "jan-uid", friends: ["[[Sem de Vries]]"] });
+    const later: { uid: string; path: string }[] = [];
+    expect(await importRemoteCard(v.app, pulled, { href: "/sem-uid.vcf" }, source, { relinkLater: later })).toBe("imported");
+    // nothing relinked yet
+    expect(jan.frontmatter?.friends).toEqual(["[[Sem de Vries]]"]);
+    expect(later).toEqual([{ uid: "sem-uid", path: "Contacts/Sem de Vries/index.md" }]);
+    expect(await relinkImported(v.app, later)).toBe(1);
+    expect(jan.frontmatter?.friends).toEqual(["[[Contacts/Sem de Vries/index|Sem de Vries]]"]);
+  });
+
+  it("nothing is collected when the note is named for the contact", async () => {
+    useLayout(nameLayout);
+    const v = fakeApp();
+    v.folder("Contacts");
+    const later: { uid: string; path: string }[] = [];
+    expect(await importRemoteCard(v.app, pulled, { href: "/sem-uid.vcf" }, source, { relinkLater: later })).toBe("imported");
+    expect(later).toEqual([]);
+  });
+
+  it("a note the vault does not show within the wait is skipped with a warning", async () => {
+    useLayout(indexLayout);
+    const v = fakeApp();
+    v.folder("Contacts");
+    v.unseen.add("Contacts/Sem de Vries/index.md");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const done = importRemoteCard(v.app, pulled, { href: "/sem-uid.vcf" }, source);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await done).toBe("imported");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Contacts/Sem de Vries/index.md"));
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
   });
 });

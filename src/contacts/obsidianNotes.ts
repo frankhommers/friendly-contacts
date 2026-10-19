@@ -415,12 +415,17 @@ export async function importCard(
 /** 'skipped': a note with that name exists and was kept (the user chose Skip or closed the dialog); 'unnamed': the card has no name. */
 export type ImportOutcome = "imported" | "skipped" | "unnamed";
 
-/** Imports a card pulled from `source`: the note gets `source: <name>` and the card is that source's base for the next Sync. */
+/**
+ * Imports a card pulled from `source`: the note gets `source: <name>` and the card is that source's base for the next
+ * Sync. `relinkLater`: a bulk import collects the new notes there and calls `relinkImported` once at the end, instead
+ * of relinking after each card (a note imported a moment ago may not be in the metadata cache yet).
+ */
 export async function importRemoteCard(
   app: App,
   pulled: VCardRaw,
   meta: { href: string; etag?: string },
   source: Source,
+  options: { relinkLater?: { uid: string; path: string }[] } = {},
 ): Promise<ImportOutcome> {
   const imported = await importCard(app, pulled.raw, { source: source.name });
   if (!imported) return "unnamed";
@@ -435,26 +440,65 @@ export async function importRemoteCard(
   if (imported.written && imported.path !== undefined && hasFixedNoteName(effectiveLayout())) {
     // Relationships to this contact that had no note to point to can point to this one now. Only with a fixed note
     // name: a note named for the contact is found by the plain `[[Name]]` already. All imports end up here.
-    await relinkNewContact(app, imported.uid, imported.path);
+    if (options.relinkLater) options.relinkLater.push({ uid: imported.uid, path: imported.path });
+    else await relinkNewContact(app, imported.uid, imported.path);
   }
   return imported.written ? "imported" : "skipped";
+}
+
+/**
+ * The note just written to `path` once the vault and its metadata cache know it (they learn about a file written
+ * through the adapter a moment later); undefined, with a warning, when that takes longer than 2 seconds.
+ */
+async function settledNote(app: App, path: string): Promise<TFile | undefined> {
+  const ready = () => {
+    const file = app.vault.getAbstractFileByPath(path);
+    return file instanceof TFile && app.metadataCache.getFileCache(file)?.frontmatter ? file : undefined;
+  };
+  let file = ready();
+  for (let tries = 0; file === undefined && tries < 20; tries++) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    file = ready();
+  }
+  if (file === undefined) console.warn(`Friendly Contacts: relationships not linked to ${path}: the vault did not show the note within 2 seconds`);
+  return file;
 }
 
 /** `relinkAfterImport` for a note just written to `path`; a failure is logged, never fails the import. */
 async function relinkNewContact(app: App, uid: string, path: string): Promise<void> {
   try {
-    // The note was written through the adapter; the vault learns about the file a moment later.
-    let file = app.vault.getAbstractFileByPath(path);
-    for (let tries = 0; !(file instanceof TFile) && tries < 20; tries++) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      file = app.vault.getAbstractFileByPath(path);
-    }
-    if (!(file instanceof TFile)) return;
+    const file = await settledNote(app, path);
+    if (file === undefined) return;
     const count = await relinkAfterImport(app, uid, file);
     if (count > 0) new Notice(`Linked ${count} relationship${count === 1 ? "" : "s"} to ${contactNameFor(app, file)}.`);
   } catch (error) {
     console.error("Friendly Contacts: could not link relationships to the imported contact", error);
   }
+}
+
+/**
+ * After a bulk import (see `importRemoteCard`'s `relinkLater`): one relink pass over every contact imported, once
+ * all their notes are in the metadata cache, so relationships between contacts of the same import are found too.
+ * Returns the number of entries changed; a failure is logged, never fails the import.
+ */
+export async function relinkImported(app: App, imported: { uid: string; path: string }[]): Promise<number> {
+  const files = new Map<string, TFile>();
+  for (const { path } of imported) {
+    const file = await settledNote(app, path);
+    if (file) files.set(path, file);
+  }
+  let count = 0;
+  for (const { uid, path } of imported) {
+    const file = files.get(path);
+    if (!file) continue;
+    try {
+      count += await relinkAfterImport(app, uid, file);
+    } catch (error) {
+      console.error(`Friendly Contacts: could not link relationships to ${path}`, error);
+    }
+  }
+  if (count > 0) new Notice(`Linked ${count} relationship${count === 1 ? "" : "s"} to the imported contacts.`);
+  return count;
 }
 
 /**
