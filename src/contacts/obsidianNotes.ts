@@ -3,7 +3,7 @@
  * relationship links through the vault, and the card a note exports as.
  */
 
-import { App, normalizePath, Notice, parseYaml, TFile, TFolder } from "obsidian";
+import { App, normalizePath, Notice, parseYaml, TAbstractFile, TFile, TFolder } from "obsidian";
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
 import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
@@ -12,7 +12,7 @@ import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
-import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
+import { contactFileName, hasVCardValues, isContactFrontmatter, isContactNote, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
 import {
   contactLinktext,
@@ -70,6 +70,12 @@ export function noteIO(app: App, file: TFile): NoteIO {
       return renameContact(app, file, newName, displayName);
     },
   };
+}
+
+/** Whether the file is a contact note (see `isContactNote`), judged by the metadata cache. The one check behind Sync's command, button and menu item. */
+export function isContactNoteFile(app: App, file: TAbstractFile | null | undefined): file is TFile {
+  if (!(file instanceof TFile)) return false;
+  return isContactNote(file, app.metadataCache.getFileCache(file)?.frontmatter, getSettings().contactsFolder);
 }
 
 /** The contact notes in the contacts folder, with their UID (`uid`, or `UID` in old-style notes). */

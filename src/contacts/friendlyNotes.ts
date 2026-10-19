@@ -59,6 +59,18 @@ export function isContactFrontmatter(frontmatter: Record<string, unknown> | unde
 }
 
 /**
+ * Whether a file is a contact note: a Markdown file in the contacts folder whose frontmatter names a contact.
+ * The folder test is a path prefix, as everywhere else in the plugin (see `isFileInFolder`).
+ */
+export function isContactNote(
+  file: { extension: string; path: string } | null | undefined,
+  frontmatter: Record<string, unknown> | undefined | null,
+  contactsFolder: string,
+): boolean {
+  return !!file && file.extension === 'md' && file.path.startsWith(contactsFolder) && isContactFrontmatter(frontmatter);
+}
+
+/**
  * The `TEL[CELL]`-style record the sidebar, menus and avatar work with.
  * vCard keys in the note pass through unchanged; friendly properties are turned into a card and read back
  * with the upstream parser. A note without `uid` gives a record without `UID`.

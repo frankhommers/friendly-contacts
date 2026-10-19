@@ -6,6 +6,7 @@ import {
   contactFileName,
   friendlyKey,
   isContactFrontmatter,
+  isContactNote,
   hasVCardValues,
   legacyRecord,
   recordToFriendly,
@@ -265,5 +266,37 @@ describe('splitCards', () => {
       'BEGIN:VCARD\nFN:A\nEND:VCARD\n',
       'begin:vcard\nFN:B\nEND:VCARD\n',
     ]);
+  });
+});
+
+describe('isContactNote', () => {
+  const note = { extension: 'md', path: 'Contacts/Jan.md' };
+  const jan = { name: 'Jan' };
+
+  it('accepts a Markdown note in the contacts folder with a contact name', () => {
+    expect(isContactNote(note, jan, 'Contacts')).toBe(true);
+  });
+
+  it('accepts any folder when the contacts folder is empty', () => {
+    expect(isContactNote({ extension: 'md', path: 'Elsewhere/Jan.md' }, jan, '')).toBe(true);
+  });
+
+  it('refuses a note outside the contacts folder', () => {
+    expect(isContactNote({ extension: 'md', path: 'Elsewhere/Jan.md' }, jan, 'Contacts')).toBe(false);
+  });
+
+  it('refuses a file that is not Markdown', () => {
+    expect(isContactNote({ extension: 'png', path: 'Contacts/Jan.png' }, jan, 'Contacts')).toBe(false);
+  });
+
+  it('refuses a note without a contact name, or without frontmatter', () => {
+    expect(isContactNote(note, { company: 'ACME' }, 'Contacts')).toBe(false);
+    expect(isContactNote(note, undefined, 'Contacts')).toBe(false);
+    expect(isContactNote(note, null, 'Contacts')).toBe(false);
+  });
+
+  it('refuses when there is no file', () => {
+    expect(isContactNote(null, jan, 'Contacts')).toBe(false);
+    expect(isContactNote(undefined, jan, 'Contacts')).toBe(false);
   });
 });

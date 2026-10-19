@@ -12,14 +12,14 @@ import myScrollTo from "src/util/myScrollTo";
 
 import {updateFrontMatter} from "./contacts";
 import {vcard} from "./contacts/vcard";
-import { contactNotes, convertContactNotes, obsidianMirrorEnv } from "./contacts/obsidianNotes";
+import { contactNotes, convertContactNotes, isContactNoteFile, obsidianMirrorEnv } from "./contacts/obsidianNotes";
 import { RelationMirror } from "./contacts/relationMirror";
 import { isContactFrontmatter } from "./contacts/friendlyNotes";
 import { isFileInFolder } from "src/file/file";
 import { AddRelationshipModal } from "src/ui/modals/addRelationshipModal";
 import { openImportContactModal } from "src/ui/modals/importContactModal";
 import { isSyncAvailable } from "src/sync/adapters";
-import { sync } from "src/sync";
+import { registerNoteSyncAction, syncContactNote } from "src/ui/noteSyncAction";
 import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
 import { runLayoutCommand } from "src/ui/modals/layoutChangeModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
@@ -148,11 +148,9 @@ export default class ContactsPlugin extends Plugin {
       name: "Sync this contact",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
-        const frontmatter = file ? this.app.metadataCache.getFileCache(file)?.frontmatter : undefined;
-        const ok = !!file && file.extension === "md" && !!frontmatter && isContactFrontmatter(frontmatter) && isFileInFolder(file) && isSyncAvailable();
+        const ok = isContactNoteFile(this.app, file) && isSyncAvailable();
         if (!ok || checking) return ok;
-        void sync.syncContact(file);
-        return true;
+        return syncContactNote(this, file);
       },
     });
 
@@ -204,6 +202,7 @@ export default class ContactsPlugin extends Plugin {
       },
     });
 
+    registerNoteSyncAction(this);
     this.setupRelationMirror();
 	}
 

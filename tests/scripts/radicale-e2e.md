@@ -108,6 +108,11 @@ book's name; below that is written as **<book>**.
       that book. The same card in two books is imported once.
 - [ ] **Sync with no differences:** right after an import (or a Sync), run the command *Sync this contact* (or click
       the sidebar's sync icon and choose **Sync**). A notice says "Up to date" and no review screen opens.
+- [ ] **Sync button and menu item:** open a contact note: a **Sync contact** icon (refresh) is at the top right of the
+      note, and the note's "⋯" menu has **Sync contact**. Both start the same Sync as the command. Open a second
+      contact note in a split pane: each pane has one icon, and clicking one syncs that pane's note. A note that is not a
+      contact, or no contact note in the pane, has neither. Remove the `name` property of the contact: the icon goes away;
+      put it back: one icon returns. Disable every address book: the icon and menu item go away; enable one: they return.
 - [ ] **Server-only change:** change the email with `curl -T`, then Sync. The review screen lists only `email`, with
       **<book>** already selected as the result. Click **Apply**: the note shows the new email.
 - [ ] **Local-only change:** edit `mobile` in the note, then Sync. Only `mobile` is listed, with **Obsidian**
