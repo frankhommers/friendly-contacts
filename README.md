@@ -49,6 +49,7 @@ To try the test releases:
       + [➕ Create a New Contact](#-create-a-new-contact)
       + [📂 A folder per contact](#-a-folder-per-contact)
       + [👪 Relationships in the sidebar](#-relationships-in-the-sidebar)
+      + [🕸️ People graph](#-people-graph)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
    * [📖 Understanding the vCard (VCF) Format](#-understanding-the-vcard-vcf-format)
    * [📄 Example Contact Note (Foo Bar)](#-example-contact-note-foo-bar)
@@ -280,6 +281,38 @@ Each contact in the sidebar shows its relationships below its details, one line 
 The other side follows when relationships are mirrored (**Mirror relationships on this device**): adding Sem to Jan's `children` gives Sem `parents: [[Jan]]`, and removing it takes that away again. A single relationship on the other side is never overwritten: if Lot already has Piet as `spouse`, making Lot Jan's spouse leaves Lot's `spouse` as it is, and the plugin tells you so.
 
 If the server cannot be read, the sidebar does not ask again for a minute.
+
+---
+
+<!-- TOC --><a name="-people-graph"></a>
+### 🕸️ People graph
+
+The people graph draws your contacts as circles and their relationships as lines, coloured by kind: partner, family, friends, work and other. It is drawn from the relationship properties in the contact notes (`spouse`, `children`, `friends`, …) and follows them while you edit.
+
+**Opening it**
+
+- The ribbon icon **Open people graph** or the command of the same name draws the graph around you (see below), else around the contact note you have open, else everyone.
+- The command **Open people graph for this contact**, or the **Graph** button on a card in the sidebar, draws it around that contact.
+- An open graph is reused; it keeps its depth and kinds.
+
+**This is me**: Settings → **This is me** → **Choose** picks the contact that is you (only contacts with a UID are listed). The graph then opens around you. **Clear** forgets it.
+
+**Toolbar**
+
+- **Depth** (1–4, or *Everyone*): how many steps from the centre are drawn. *Everyone* draws every contact that has a relationship.
+- The kind pills turn a kind of relationship on or off. A person reached only through a kind that is off is not drawn.
+- **Open note** opens the centre's note. **Recenter** moves the centre back to the middle and lets go of every person you dragged.
+- With more than 500 people to draw the graph asks for a smaller depth. Without a centre it asks you to set "This is me" or to open the graph from a contact.
+
+**Clicking and dragging**
+
+- **Click or tap** a person to make them the centre. **Click or tap the centre** to open their note (this is the way on a phone). **Double-click** or **Ctrl/Cmd-click** a person opens their note directly.
+- **Drag** a person to put them somewhere; they stay there until **Recenter**. A click that hardly moves is a click, not a drag. Drag the background to pan, scroll or pinch to zoom.
+- Zoomed out the graph shows dots, closer in names and initials, close up photos.
+
+**Labels**: a line's label says what the person at that end is, seen from the end nearer the centre, and it sits near the person it describes. Centred on Jan with `children: [[Sem]]`, the line says `child` next to Sem; centred on Sem it says `parent` next to Jan, also when Sem's note does not list Jan under `parents`. A relationship without a mirror (`emergency`) reads the other way round from its other end: centred on Piet, Jan's `emergency: [[Piet]]` says `emergency contact of` next to Jan. Two people who both list the other as their child get two lines, so the contradiction shows.
+
+**People without a note (ghosts)**: a relationship that points to nobody is drawn as a dashed circle with its name in italics: the link's label, else the last part of the link (`[[Contacts/Jan/index|Jan]]` shows `Jan`). Clicking it, with Sync on, first says "Looking up <name>…", then opens that person's note when exactly one card on the server has that name and it already has a note, or offers to **Import** the card when it has none. Otherwise it says the person has no note.
 
 ---
 

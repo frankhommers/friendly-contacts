@@ -262,5 +262,24 @@ book's name; below that is written as **<book>**.
       `family: ['[[Anna]]']` to Jan and pick Anna via **+ Relationship** → `family (kin)`: the grey entry becomes the
       link, without a question, instead of a second entry. Stop the server: grey names show no button, and there is
       one "Could not read <book>" notice, not one per card.
+- [ ] **People graph (desktop):** Settings → **This is me** → **Choose** yourself; the description names you. Click
+      the ribbon icon **Open people graph**: the graph is drawn around you (larger circle with an accent ring), depth
+      2. Give Jan `children: [[Sem]]` and remove `parents` from Sem by hand: centred on Jan the line says `child` next
+      to Sem; click Sem (it becomes the centre) and the line says `parent` next to Jan. Add `emergency: [[Piet]]` to
+      Jan and centre on Piet: the line says `emergency contact of` next to Jan. Click the centre: its note opens; so do
+      **Open note**, a double-click and Ctrl/Cmd-click on any person. Depth 1 hides the people two steps away; turn
+      off **Family**: Sem is gone at depth 1. **Everyone** draws all contacts that have a relationship, not the ones
+      without. Drag a person: it stays where you drop it; a click that wobbles a few pixels does not pin it or shake
+      the graph. **Recenter** lets every dragged person go. Zoom out: dots; zoom in: names, then photos. Add
+      `friends: ['[[Contacts/Nobody/index|Nobody Here]]']` to Jan: a dashed ghost named `Nobody Here` appears. With
+      Sync on, click a ghost that is a server card without a note: "Looking up <name>…", then "Import <name>?".
+      Edit a relationship in a note: the graph follows within a second. Rename and delete a contact note: the graph
+      follows, and a deleted centre falls back to you. Close Obsidian with the graph open in a background tab and
+      start it again: the graph keeps its centre, depth and kinds and draws when you switch to its tab.
+- [ ] **People graph (mobile):** open the graph from the ribbon or the command palette. Tap a person: they become the
+      centre. Tap the centre: its note opens. **Open note** opens the centre's note too. Drag a person with one
+      finger: it moves and stays; a plain tap does not pin it. Pinch to zoom and drag the background to pan. Clear
+      **This is me**, close the graph and open it with no contact note open: with more than 500 contacts the message
+      says to set "This is me" or open the graph from a contact; otherwise everyone with a relationship is drawn.
 - [ ] **Mirror relationships on this device:** turn it off, then reload the plugin. Adding a child no longer
       touches the other note.
