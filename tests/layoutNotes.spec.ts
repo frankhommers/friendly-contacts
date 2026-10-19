@@ -938,7 +938,8 @@ describe("layout commands", () => {
     fm.renameFile = async () => {
       throw new Error("locked");
     };
-    await changeLayout(v.app, "into");
+    const failed = await changeLayout(v.app, "into");
+    expect(failed.keptEmpty).toEqual(["Contacts/Jan"]);
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md"]);
     fm.renameFile = renameFile;
     expect((await changeLayout(v.app, "into")).moved).toBe(1);
@@ -1075,6 +1076,17 @@ describe("move contacts", () => {
       "Contacts/Family",
     ]);
     expect((v.nodes.get("Areas/Jan/Poem.md") as File).content).toBe("roses");
+  });
+
+  it("a contact in a folder made with other settings moves with its whole folder", async () => {
+    useLayout(insideIndex);
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan/Jan.md", { name: "Jan", uid: "jan" }); // made with {{name}}
+    v.note("Contacts/Jan/Poem.md", null, "roses");
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result).toEqual({ moved: 1, skipped: [] });
+    expect(v.paths()).toEqual(["Areas", "Areas/Jan", "Areas/Jan/Jan.md", "Areas/Jan/Poem.md", "Contacts"]);
   });
 
   it("a second contact note in someone's folder travels with that folder", async () => {

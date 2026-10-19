@@ -648,8 +648,8 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
       const path = group.find((step) => step.from !== undefined)?.from ?? group[0].to;
       // Failed after the note had moved (to its temporary name): say where it is.
       const at = failure.step.kind === "move" ? failure.step.from : undefined;
-      const moved = at !== undefined && at !== path && byPath(app, at) !== null;
-      skipped.push({ path, reason: moved ? `${failure.reason} (the note is now ${at})` : failure.reason });
+      const elsewhere = at !== undefined && at !== path && byPath(app, at) !== null;
+      skipped.push({ path, reason: elsewhere ? `${failure.reason} (the note is now ${at})` : failure.reason });
       // A folder this run created for the contact stays behind empty: remove it (unless the note is beside it, see
       // runStep), so a re-run is not blocked. A re-run uses an empty folder that is left.
       const made = group.filter((step) => step.kind === "createFolder" && !result.failed.some((f) => f.step === step));
@@ -658,12 +658,12 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
       moved++;
     }
   }
-  if (leftovers.length > 0) await runSteps(app, leftovers);
+  const cleanup = leftovers.length > 0 ? await runSteps(app, leftovers) : undefined;
   return {
     moved,
     skipped,
     kept: [...new Set([...plan.kept, ...result.kept])],
-    keptEmpty: [...new Set([...plan.keptEmpty, ...result.keptEmpty])],
+    keptEmpty: [...new Set([...plan.keptEmpty, ...result.keptEmpty, ...(cleanup?.keptEmpty ?? [])])],
     alreadyDone: plan.alreadyDone,
     relinked,
   };
@@ -690,7 +690,9 @@ export async function moveContactFolders(
   const isFolder = folderExists(app);
   const ownFolder = new Map<string, string>();
   for (const file of files) {
-    const folder = contactFolderOf(file.path, s, isFolder);
+    // Also a folder made with other settings (named for the contact): the poem must not stay behind.
+    const dir = dirnameOf(file.path);
+    const folder = contactFolderOf(file.path, s, isFolder) ?? (isNamedForContact(dir, contactNamesOf(app, file)) ? dir : undefined);
     if (folder !== undefined && strictlyInside(folder, from)) ownFolder.set(file.path, folder);
   }
   const folders = new Set(ownFolder.values());
