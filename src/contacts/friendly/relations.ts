@@ -10,7 +10,7 @@ const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 export const HINT_PARAM = 'X-FRIENDLY-UID';
 
 /** True for a line holding a name: `X-ABRELATEDNAMES`, or `RELATED` with `VALUE=text`. */
-export const isNameLine = (line: VCardLine): boolean =>
+const isNameLine = (line: VCardLine): boolean =>
   line.name === 'X-ABRELATEDNAMES' || (getParam(line, 'VALUE') ?? '').toLowerCase() === 'text';
 
 /**
