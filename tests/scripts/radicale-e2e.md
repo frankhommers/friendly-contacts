@@ -3,7 +3,7 @@
 ## 1. Automated end-to-end suite
 
 `tests/e2e/radicale.e2e.ts` drives the real Sync core (`syncContact`, the CardDAV adapter, `PlatformHttpClient`)
-against a real Radicale 3.8.3. The note is in memory; the server card is checked with plain HTTP, like `curl`.
+against a real Radicale 3.8.3. The review screen is a fake that applies the preselections plus the choices the scenario names. The note is in memory; the server card is checked with plain HTTP, like `curl`.
 
 The suite starts its own Radicale:
 
@@ -38,8 +38,9 @@ Scenarios:
 2. A local `mobile` edit is pushed. On the server only the TEL value and REV change, and there is still one card at
    `ABC-DEF.vcf`. The next Sync is `unchanged`.
 3. A server email edit is pulled into the note, with no PUT.
-4. The same field is edited on both sides. The server value is kept, the local value goes into a callout, and a
-   notice is shown.
+4. The same field is edited on both sides. The review screen cannot be applied until it is decided; the fake review
+   picks Radicale (4) or Obsidian (4b). With Radicale the note takes the server value and nothing is sent. With
+   Obsidian the note's value ends up on the server card and only that line (and REV) differs.
 5. `children: ['[[Sem]]']` becomes `RELATED;TYPE=child:urn:uuid:<Sem's UID>` on the server.
 6. `met-via: '[[Piet]]'` is never sent to the server.
 7. A new note without `uid` is `created`. The card is on the server, and the base has the server's href.
@@ -96,11 +97,39 @@ Then check:
 
 - [ ] **Import:** Insights panel → import the unknown remote contact. The note shows `name`, `mobile`, `email`,
       `work-email`, `city`, … and no `X-CREATED`. `.obsidian/plugins/friendly-contacts/sync-state/<book id>/` holds the card.
-- [ ] **Sync menu item:** edit `mobile` → sidebar → the contact's sync icon → **Sync**. With `curl`, only the TEL
-      value (and REV) changed, and there is still one card.
-- [ ] **Server edit:** change the email with `curl -T`, then **Sync**. The note shows the new email.
-- [ ] **Conflict:** edit `title` in the note and on the server, then **Sync**. The server value is kept, a callout
-      with your value is at the end of the note, and a notice is shown.
+- [ ] **Sync with no differences:** right after an import (or a Sync), run the command *Sync this contact* (or the
+      sidebar's sync icon). A notice says "Up to date" and no review screen opens.
+- [ ] **Server-only change:** change the email with `curl -T`, then Sync. The review screen lists only `email`, with
+      **Radicale** already selected as the result. Click **Apply**: the note shows the new email.
+- [ ] **Local-only change:** edit `mobile` in the note, then Sync. Only `mobile` is listed, with **Obsidian**
+      selected. Apply. With `curl`, only the TEL value (and REV) changed, and there is still one card.
+- [ ] **Conflict:** edit `title` in the note and on the server, then Sync. The `title` row says "Conflict: choose
+      one", nothing is selected, and **Apply** is disabled. Choose a side: Apply is enabled. Check both choices
+      (Radicale: the note takes the server value; Obsidian: the server card gets the note's value).
+- [ ] **All from Radicale / All from Obsidian:** with a few differing properties (include a conflict), click each
+      button. Every listed row follows the button, and Apply is enabled.
+- [ ] **Cancel:** open the review with a difference, then click **Cancel** (and try Escape). The note and the server
+      card are unchanged, and the next Sync shows the same difference.
+- [ ] **Custom edit:** in a text row, type your own value in the "Edit result" field. The Result column shows it. Apply:
+      the note and the server card both have your text. Clear the field: the property is removed on both sides.
+- [ ] **New card:** make a contact note without `uid` and Sync. The title is "New card in <book name>", every row has
+      **Obsidian** selected, and Apply creates the card (check with `curl`).
+- [ ] **Show all:** tick **Show all**. The unchanged properties appear dimmed, with their value and no buttons.
+- [ ] **Photo difference:** put a different photo on the server card (or change `photo` in the note). The row shows
+      thumbnails of both photos, and the chosen one in Result.
+- [ ] **Relationship with a person only on the server:** add `RELATED;TYPE=child:urn:uuid:<uid of a card that has no
+      note>` to the server card, then Sync. The row lists that person with an **Import** button. Click it: the
+      review closes, a note is created for that person, and the review opens again, now showing the person by name.
+- [ ] **Also changes:** add a `children` link in the note to a contact note and Sync. The review lists the mirror
+      write under **Also changes** (for example `Sem: parents gets [[Jan de Vries]]`), and choosing the other side
+      changes that list.
+- [ ] **Rename checkbox:** change the name (`name`, or the given/family name) in the note and Sync. The screen offers
+      **Rename note to <new name>**, ticked. Apply with it ticked: the note file is renamed and links still resolve.
+      Repeat with it unticked: the note keeps its file name. With another note already named the same, the
+      checkbox is disabled and says why.
+- [ ] **Changed meanwhile (412):** open the review screen, then change the card on the phone or with `curl -T`
+      before clicking Apply. After Apply a notice says the contact changed on the server meanwhile, and the review
+      opens again with the new server values. Nothing was overwritten.
 - [ ] **Mirroring a child/parent:** create a note `Sem` (a contact). Add `children: [[Sem]]` to Jan. `Sem` gets
       `parents: [[Jan de Vries]]`. Remove the child: the parent link goes away too. After **Sync**, the server has
       a `RELATED;TYPE=child:urn:uuid:…` line.
@@ -131,9 +160,10 @@ Then check:
       cards, each with its book name (`<name> · Family`). Import the Family card: the note has `source: Family`,
       and `sync-state/<Family's id>/` holds its card (not the first book's folder). Import another card from the
       sidebar's import button too: same result, with the book that card came from.
-- [ ] **Move between books:** in the Family note change `source:` to the first book's name and **Sync**. Confirm
-      the move dialog (*Cancel* leaves everything as it was). With `curl` the card is in the new book and gone from
-      the old one, and the notice says it moved. A second **Sync** says the note is already in sync.
+- [ ] **Move between books:** in the Family note change `source:` to the first book's name and **Sync**. The review
+      screen shows the line "Address book: Family -> <first book's name>" (usually with no property rows to decide).
+      *Cancel* leaves everything as it was. **Apply** moves the card: with `curl` it is in the new book and gone from
+      the old one, and the notice says it moved. A second **Sync** says "Up to date".
 - [ ] **Sync refused:** set `source:` to a name that is not a book (or to a disabled book). **Sync** refuses with a
       notice and nothing changes on either server. A card that is in both books syncs with the book `source:` names
       and leaves the other copy alone.
