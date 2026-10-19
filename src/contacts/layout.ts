@@ -114,6 +114,65 @@ export function contactFolderOf(
   return folderExists(folder) ? folder : undefined;
 }
 
+/** True when `path` is `folder` itself or lies inside it; the vault root ('') holds everything. */
+export function isInsideOrAt(path: string, folder: string): boolean {
+  return folder === "" || path === folder || path.startsWith(`${folder}/`);
+}
+
+/**
+ * The note that makes `folder` a contact's folder in this layout: inside, the note named by the pattern for the
+ * folder's name; next, the note named like the folder next to it. Undefined in one-note layout or for the vault root.
+ */
+export function folderNotePath(folder: string, s: LayoutSettings): string | undefined {
+  if (s.layout !== "folder" || folder === "") return undefined;
+  return s.location === "inside" ? join(folder, `${noteBasename(fileName(folder), s)}.md`) : `${folder}.md`;
+}
+
+/**
+ * The folder a new contact goes in: the active note's folder when that lies inside the contacts folder, else the
+ * contacts folder. In folder layout never inside a contact's folder: then the parent of the outermost one.
+ * `isContactNote(path)` says whether a contact note exists at that path.
+ */
+export function newContactFolder(
+  baseFolder: string,
+  activeFolder: string | undefined,
+  s: LayoutSettings,
+  isContactNote: (path: string) => boolean,
+): string {
+  const base = normalizeFolder(baseFolder);
+  const active = activeFolder === undefined ? undefined : normalizeFolder(activeFolder);
+  if (active === undefined || !isInsideOrAt(active, base)) return base;
+  if (s.layout !== "folder") return active;
+  let result = active;
+  for (let folder = active; folder !== base && folder !== ""; folder = dirname(folder)) {
+    const note = folderNotePath(folder, s);
+    if (note !== undefined && isContactNote(note)) result = dirname(folder);
+  }
+  return result;
+}
+
+/**
+ * The contact's name for a note: the folder's name (inside) or the note's name without the pattern around
+ * `{{name}}` (next) when the note is in its folder below `baseFolder`; otherwise the note's file name.
+ */
+export function contactNameOf(
+  notePath: string,
+  baseFolder: string,
+  s: LayoutSettings,
+  folderExists: (path: string) => boolean,
+): string {
+  const basename = basenameNoExt(notePath);
+  const folder = contactFolderOf(notePath, s, folderExists);
+  const base = normalizeFolder(baseFolder);
+  if (folder === undefined || folder === base || !isInsideOrAt(folder, base)) return basename;
+  if (s.location === "inside") return fileName(folder);
+  const parts = s.noteName.trim().split(NAME_TOKEN);
+  if (parts.length !== 2) return basename;
+  const [prefix, suffix] = parts;
+  const ok = basename.length > prefix.length + suffix.length && basename.startsWith(prefix) && basename.endsWith(suffix);
+  return ok ? basename.slice(prefix.length, basename.length - suffix.length) : basename;
+}
+
 // ---------- planning ----------
 
 /** Plans the renames for a contact getting `newName`; each step is valid after the steps before it. */

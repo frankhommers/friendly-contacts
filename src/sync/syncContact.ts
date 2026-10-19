@@ -25,8 +25,11 @@ import { cleanUid, generateUUID } from 'src/util/vcard';
 export interface NoteIO {
   readFrontmatter(): Promise<Record<string, unknown>>;
   writeProps(set: Record<string, FriendlyValue>, remove: string[]): Promise<void>;
-  /** Renames the note in its own folder; 'exists' (and nothing renamed) when that name is taken. */
-  rename(newBasename: string): Promise<'renamed' | 'exists'>;
+  /**
+   * Renames the contact to `newName`: the note in its own folder, and in folder layout the contact's folder with it;
+   * 'exists' (and nothing renamed) when a target is taken.
+   */
+  rename(newName: string): Promise<'renamed' | 'exists'>;
 }
 
 export interface SyncDeps {

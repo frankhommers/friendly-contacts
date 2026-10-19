@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_LAYOUT,
   contactFolderOf,
+  contactNameOf,
   contactPaths,
   differsFromFolderNotes,
+  folderNotePath,
   fromFolderNotes,
+  newContactFolder,
   noteBasename,
   planIntoFolders,
   planOutOfFolders,
@@ -315,5 +318,40 @@ describe("Folder Notes", () => {
     expect(differsFromFolderNotes(raw, insideIndex)).toBe(true);
     expect(differsFromFolderNotes({ ...raw, storageLocation: "vaultFolder" }, inside)).toBe(true);
     expect(differsFromFolderNotes(undefined, inside)).toBe(false);
+  });
+});
+
+describe("new contacts and names", () => {
+  it("the note that owns a folder", () => {
+    expect(folderNotePath("Contacts/Jan", inside)).toBe("Contacts/Jan/Jan.md");
+    expect(folderNotePath("Contacts/Jan", insideIndex)).toBe("Contacts/Jan/index.md");
+    expect(folderNotePath("Contacts/Jan", next)).toBe("Contacts/Jan.md");
+    expect(folderNotePath("Contacts/Jan", DEFAULT_LAYOUT)).toBeUndefined();
+    expect(folderNotePath("", inside)).toBeUndefined();
+  });
+
+  it("new contact folder: active folder inside the contacts folder, never in a contact's folder", () => {
+    const contacts = existing("Contacts/Family/Sem/Sem.md", "Contacts/Family/Sem/Kid/Kid.md");
+    expect(newContactFolder("Contacts", undefined, inside, contacts)).toBe("Contacts");
+    expect(newContactFolder("Contacts", "Elsewhere", inside, contacts)).toBe("Contacts");
+    expect(newContactFolder("Contacts", "ContactsX", inside, contacts)).toBe("Contacts");
+    expect(newContactFolder("Contacts", "Contacts/Family", inside, contacts)).toBe("Contacts/Family");
+    expect(newContactFolder("Contacts", "Contacts/Family/Sem", inside, contacts)).toBe("Contacts/Family");
+    expect(newContactFolder("Contacts", "Contacts/Family/Sem/Kid/Photos", inside, contacts)).toBe("Contacts/Family");
+    expect(newContactFolder("Contacts", "Contacts/Family/Sem", DEFAULT_LAYOUT, contacts)).toBe("Contacts/Family/Sem");
+    expect(newContactFolder("", "/", inside, contacts)).toBe("");
+    expect(newContactFolder("", "Sem", inside, existing("Sem/Sem.md"))).toBe("");
+  });
+
+  it("contact name of a note", () => {
+    expect(contactNameOf("Contacts/Jan/index.md", "Contacts", insideIndex, none)).toBe("Jan");
+    expect(contactNameOf("Contacts/Jan/Jan.md", "Contacts", inside, none)).toBe("Jan");
+    expect(contactNameOf("Contacts/Jan.md", "Contacts", inside, none)).toBe("Jan");
+    expect(contactNameOf("Contacts/index.md", "Contacts", insideIndex, none)).toBe("index");
+    expect(contactNameOf("Other/Jan/index.md", "Contacts", insideIndex, none)).toBe("index");
+    const card: LayoutSettings = { layout: "folder", noteName: "{{name}} (card)", location: "next" };
+    expect(contactNameOf("Contacts/Jan (card).md", "Contacts", card, existing("Contacts/Jan (card)"))).toBe("Jan");
+    expect(contactNameOf("Contacts/Jan (card).md", "Contacts", card, none)).toBe("Jan (card)");
+    expect(contactNameOf("Contacts/Jan.md", "Contacts", DEFAULT_LAYOUT, none)).toBe("Jan");
   });
 });

@@ -17,6 +17,7 @@ import {
   willRemove,
 } from 'src/sync/reviewDisplay';
 import type { PreparedSync } from 'src/sync/syncContact';
+import type { RenameOffer } from 'src/sync/syncFlow';
 
 export interface SyncReviewInput {
   title: string;
@@ -29,8 +30,8 @@ export interface SyncReviewInput {
   prepared: PreparedSync;
   /** Mirror writes the result of these choices will trigger on other notes, worded ("Sem: parents gets [[Jan]]"). */
   also: (choices: Map<string, Choice>) => string[];
-  /** The result of these choices renames the note to `to`; `blocked` is the reason it cannot be. */
-  rename: (choices: Map<string, Choice>) => { to: string; blocked?: string } | undefined;
+  /** The result of these choices renames the note (and with `folder` its folder) to `to`; `blocked` is why it cannot be. */
+  rename: (choices: Map<string, Choice>) => RenameOffer | undefined;
   /** Relation targets of this row that exist only on the server; `import` makes them a note. */
   serverOnly: (row: ReviewRow) => { name: string; import(): Promise<void> }[];
   /** Called after an Import: the modal has closed and the caller should prepare and open the review again. */
@@ -238,7 +239,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
               disabled={!canRename}
               onChange={(e) => setRename(e.target.checked)}
             />{' '}
-            Rename note to {renameTo.to}
+            {renameTo.folder ? 'Rename folder and note to' : 'Rename note to'} {renameTo.to}
           </label>
           {renameTo.blocked ? <div className="friendly-review-blocked">{renameTo.blocked}</div> : null}
         </div>

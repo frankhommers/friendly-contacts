@@ -13,6 +13,7 @@ import { RelationContext, resolveRemoteName } from "src/contacts/friendly/relati
 import { FriendlyValue, newCard, patch, toFriendly } from "src/contacts/friendly/translate";
 import { contactFileName, hasVCardValues, isContactFrontmatter, renderFriendlyNote } from "src/contacts/friendlyNotes";
 import { getApp, getPluginDir } from "src/context/sharedAppContext";
+import { ensureFolder, newContactLocation, renameContact } from "src/contacts/layoutNotes";
 import { moveNotice, normalizeFolder, planMoves, SkippedMove } from "src/contacts/moveContacts";
 import { getSettings, updateSetting } from "src/context/sharedSettingsContext";
 import type { Source } from "src/settings/settings";
@@ -56,16 +57,9 @@ export function noteIO(app: App, file: TFile): NoteIO {
         for (const key of remove) delete frontmatter[key];
       });
     },
-    async rename(newBasename: string) {
-      const folder = file.parent && !file.parent.isRoot() ? `${file.parent.path}/` : "";
-      const target = normalizePath(`${folder}${newBasename}.${file.extension}`);
-      if (target === file.path) return "renamed";
-      const existing = app.vault.getAbstractFileByPath(target);
-      // A case-only rename finds the note itself on a case-insensitive vault; that is no other file.
-      if (existing && existing !== file) return "exists";
-      // Through the file manager, so links to the note are updated.
-      await app.fileManager.renameFile(file, target);
-      return "renamed";
+    /** Renames the contact in the layout: its folder too when the note is in one (see src/contacts/layoutNotes.ts). */
+    rename(newName: string) {
+      return renameContact(app, file, newName);
     },
   };
 }
@@ -400,7 +394,7 @@ export async function importCard(
   const value = (name: string) => lines.find((line) => line.name === name)?.value;
   const fileName = contactFileName(value("N"), value("FN"));
   if (!fileName) return undefined;
-  const ctx = await relationContextFor(app, normalizePath(`${contactsFolder}/${fileName}.md`));
+  const ctx = await relationContextFor(app, normalizePath(newContactLocation(app, fileName, contactsFolder).note));
   const props = { ...toFriendly(lines, friendly.mapping, ctx).props, ...extra };
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
@@ -460,19 +454,6 @@ export async function moveContacts(
     insightQueueStore.clear();
   }
   return { moved, skipped };
-}
-
-async function ensureFolder(app: App, path: string): Promise<void> {
-  let current = "";
-  for (const part of path.split("/").filter(Boolean)) {
-    current = current === "" ? part : `${current}/${part}`;
-    if (app.vault.getAbstractFileByPath(current)) continue;
-    try {
-      await app.vault.createFolder(current);
-    } catch (error) {
-      if (!app.vault.getAbstractFileByPath(current)) throw error; // "already exists" is fine
-    }
-  }
 }
 
 /** Tells the owner what a move did; skipped files are listed in the console. */

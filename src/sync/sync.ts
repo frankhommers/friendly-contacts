@@ -1,5 +1,5 @@
 import {computed} from "@preact/signals-core";
-import {App, normalizePath, Notice, TFile} from "obsidian";
+import {App, Notice, TFile} from "obsidian";
 import {Contact} from "src/contacts";
 import {hasVCardValues} from "src/contacts/friendlyNotes";
 import {linkTarget, relationSnapshot} from "src/contacts/friendly/relations";
@@ -13,6 +13,7 @@ import {
   remoteContacts,
   syncRelationContexts,
 } from "src/contacts/obsidianNotes";
+import {contactNameFor, renamesFolder, renameTaken} from "src/contacts/layoutNotes";
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -172,7 +173,8 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
   const settings = getSettings();
   const rows = settings.friendly.mapping;
   const note = noteIO(app, file);
-  const name = file.basename;
+  // The contact's name: with a fixed note name (`index`) that is its folder's name, not the file's.
+  const name = contactNameFor(app, file);
   if (hasVCardValues(await note.readFrontmatter(), rows)) {
     // Sync reads only friendly properties: a UID kept in `UID` is not seen, and syncing would create a second card.
     new Notice(`${name} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.`);
@@ -195,11 +197,8 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
     review: (request) => openReview(app, file, request),
     notify: (message) => new Notice(message),
     mirror: mirrorLookup(app, file),
-    nameTaken: (basename) => {
-      const folder = file.parent && !file.parent.isRoot() ? `${file.parent.path}/` : "";
-      const existing = app.vault.getAbstractFileByPath(normalizePath(`${folder}${basename}.${file.extension}`));
-      return existing !== null && existing !== file;
-    },
+    nameTaken: (newName) => renameTaken(app, file, newName),
+    renamesFolder: renamesFolder(app, file),
   };
   return syncFlow(deps);
 }

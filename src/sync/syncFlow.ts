@@ -30,8 +30,17 @@ export interface ReviewRequest {
   prepared: PreparedSync;
   /** "Also changes" for the result of these choices. */
   also(choices: Map<string, Choice>): string[];
-  /** The rename the result of these choices brings; `blocked` says why it cannot be done. */
-  rename(choices: Map<string, Choice>): { to: string; blocked?: string } | undefined;
+  /**
+   * The rename the result of these choices brings; `blocked` says why it cannot be done; `folder` when the
+   * contact's folder is renamed with the note (folder per contact).
+   */
+  rename(choices: Map<string, Choice>): RenameOffer | undefined;
+}
+
+export interface RenameOffer {
+  to: string;
+  folder?: true;
+  blocked?: string;
 }
 
 export type ReviewDecision =
@@ -70,8 +79,10 @@ export interface SyncFlowDeps {
   notify(message: string): void;
   /** Mirroring as it runs on this device; absent when it does not (then there are no "Also changes"). */
   mirror?: MirrorLookup & { nameOf(path: string): string };
-  /** True when a note with this file name exists next to the synced note (not the note itself). */
-  nameTaken(basename: string): boolean;
+  /** True when renaming the contact to this name would land on another note (or folder, in folder layout). */
+  nameTaken(name: string): boolean;
+  /** True when a rename renames the contact's folder too (the note is in its own folder). */
+  renamesFolder?: boolean;
 }
 
 export type FlowResult =
@@ -223,13 +234,18 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     const result = (choices: Map<string, Choice>) => resultProps(review.rows, choices, server);
     // While conflicts are open, "Also changes" and the rename preview keep the note's value for them.
     const preview = (choices: Map<string, Choice>) => result(previewChoices(review.rows, choices));
-    const renameTo = (choices: Map<string, Choice>): { to: string; blocked?: string } | undefined => {
+    const renameTo = (choices: Map<string, Choice>): RenameOffer | undefined => {
       // A name changed since the last Sync on either side (against the base; without one, the note's values)
       // renames; a note renamed by hand with unchanged names is left alone, and a declined rename is not offered
       // again (the base then holds the new name).
       const to = renameTarget(review.base ?? review.local, preview(choices), deps.rows);
       if (to === undefined || to === deps.name) return undefined;
-      return deps.nameTaken(to) ? { to, blocked: `A note named "${to}" already exists in this folder.` } : { to };
+      const offer: RenameOffer = deps.renamesFolder ? { to, folder: true } : { to };
+      if (!deps.nameTaken(to)) return offer;
+      const blocked = deps.renamesFolder
+        ? `A folder or note named "${to}" already exists.`
+        : `A note named "${to}" already exists in this folder.`;
+      return { ...offer, blocked };
     };
     const { mirror } = deps;
     const sourceName = sourceNameIn(deps.sources);

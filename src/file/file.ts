@@ -1,4 +1,5 @@
 import {App, normalizePath, Notice, Platform, TFile, TFolder, Vault, Workspace} from "obsidian";
+import {ensureFolder, newContactLocation} from "src/contacts/layoutNotes";
 import {getSettings} from "src/context/sharedSettingsContext";
 import {FileExistsModal} from "src/ui/modals/fileExistsModal";
 import {createNameSlug} from "src/util/nameUtils";
@@ -28,11 +29,16 @@ async function openCreatedFile(app: App, filePath: string) {
   }
 }
 
-/** Writes the file; when it exists, waits for the user to pick Replace or Skip, so callers see the real outcome. */
-async function handleFileCreation(app: App, filePath: string, content: string): Promise<void> {
+/**
+ * Writes the file; when it exists, waits for the user to pick Replace or Skip, so callers see the real outcome.
+ * `folder` (a contact's own folder) is created right before the note is written, so a Skip leaves nothing behind;
+ * an existing folder is used as it is.
+ */
+async function handleFileCreation(app: App, filePath: string, content: string, folder?: string): Promise<void> {
   const fileExists = await app.vault.adapter.exists(filePath);
 
   if (!fileExists) {
+    if (folder !== undefined) await ensureFolder(app, folder);
     await app.vault.adapter.write(filePath, content);
     return;
   }
@@ -43,6 +49,7 @@ async function handleFileCreation(app: App, filePath: string, content: string): 
           new Notice("File creation skipped.");
           return;
         }
+        if (folder !== undefined) await ensureFolder(app, folder);
         await app.vault.adapter.write(filePath, content);
         await openCreatedFile(app, filePath);
         new Notice(`File overwritten.`);
@@ -56,6 +63,11 @@ async function handleFileCreation(app: App, filePath: string, content: string): 
   });
 }
 
+/**
+ * Creates a contact note named `filename` (with `.md`) in the contact layout: next to the active note when that is
+ * inside `folderPath` (the contacts folder), else in `folderPath`; in folder layout with its own folder, never
+ * inside another contact's folder. Returns the note's path, or undefined when the contacts folder is missing.
+ */
 export async function createContactFile(
   app: App,
   folderPath: string,
@@ -67,18 +79,11 @@ export async function createContactFile(
     new Notice(`Can not find path: '${folderPath}'. Please update "Contacts" plugin settings`);
     return;
   }
-  const activeFile = app.workspace.getActiveFile();
-  const parentFolder = activeFile?.parent; // Get the parent folder if it's a file
-
-  if (parentFolder?.path?.contains(folderPath)) {
-    const filePath = normalizePath(fileJoin(parentFolder.path, filename));
-    await handleFileCreation(app, filePath, content);
-    return filePath;
-  } else {
-    const filePath = normalizePath(fileJoin(folderPath, filename));
-    await handleFileCreation(app, filePath, content);
-    return filePath;
-  }
+  const name = filename.replace(/\.md$/i, "");
+  const location = newContactLocation(app, name, folderPath);
+  const filePath = normalizePath(location.note);
+  await handleFileCreation(app, filePath, content, location.folder);
+  return filePath;
 }
 
 export function fileId(file: TFile): string {

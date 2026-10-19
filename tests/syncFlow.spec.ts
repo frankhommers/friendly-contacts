@@ -605,6 +605,26 @@ describe('syncFlow: also changes and rename', () => {
     expect(t.note.frontmatter.lastname).toBe('Bakker');
   });
 
+  it('in folder layout the rename says folder and note', async () => {
+    const t = setup({ local: { ...JAN, source: 'Radicale' } });
+    t.deps.renamesFolder = true;
+    renamedOnServer(t);
+    const offered: ReturnType<ReviewRequest['rename']>[] = [];
+    t.setScript([
+      (r) => {
+        offered.push(r.rename(new Map()));
+        t.taken.add('Jan Bakker');
+        offered.push(r.rename(new Map()));
+        return { kind: 'cancel' };
+      },
+    ]);
+    await t.run();
+    expect(offered).toEqual([
+      { to: 'Jan Bakker', folder: true },
+      { to: 'Jan Bakker', folder: true, blocked: 'A folder or note named "Jan Bakker" already exists.' },
+    ]);
+  });
+
   it('local name edit with a base offers the rename', async () => {
     const t = setup({ local: { ...JAN, lastname: 'Bakker', name: 'Jan Bakker', source: 'Radicale' } });
     t.radicale.seed(card());
