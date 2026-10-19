@@ -512,7 +512,10 @@ export function patch(
   return { lines: [...lines, ...s.added], warnings: s.warnings };
 }
 
-/** A fresh card from friendly properties, every property in the form `version` uses (4.0 unless asked otherwise). */
+/**
+ * A fresh card from friendly properties, every property in the form `version` uses (4.0 unless asked otherwise).
+ * A 3.0 card always has N.
+ */
 export function newCard(
   props: Record<string, FriendlyValue>,
   rows: MappingRow[],
@@ -525,5 +528,11 @@ export function newCard(
     const fn = derivedName(props);
     if (fn !== '') base.push({ name: 'FN', params: [], value: escapeText(fn) });
   }
-  return patch(base, { props: {}, source: {} }, props, rows, ctx);
+  const card = patch(base, { props: {}, source: {} }, props, rows, ctx);
+  // vCard 3.0 requires N (RFC 2426; DAVx5 enforces it): without name parts, empty components, right after FN.
+  if (version === '3.0' && !card.lines.some((line) => !line.group && line.name === 'N')) {
+    const fn = card.lines.findIndex((line) => !line.group && line.name === 'FN');
+    card.lines.splice(fn >= 0 ? fn + 1 : 1, 0, { name: 'N', params: [], value: joinStructured(Array(COMPONENT_COUNT.N).fill('')) });
+  }
+  return card;
 }

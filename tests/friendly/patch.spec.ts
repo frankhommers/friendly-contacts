@@ -286,6 +286,7 @@ describe('newCard', () => {
     expect(texts(lines)).toEqual([
       'VERSION:3.0',
       'FN:Anna',
+      'N:;;;;',
       'BDAY;X-APPLE-OMIT-YEAR=1604:1604-03-15',
       'item1.X-ABDATE:2012-06-21',
       'item1.X-ABLabel:_$!<Anniversary>!$_',
@@ -300,6 +301,19 @@ describe('newCard', () => {
     // Read back as the same note.
     const back = toFriendly(parseCard(serializeCard(lines)), DEFAULT_MAPPING, people).props;
     expect(back).toMatchObject({ birthday: '--03-15', anniversary: '2012-06-21', spouse: '[[Sem]]', friends: ['[[Opa]]'] });
+  });
+
+  it('a new 3.0 card always has N (RFC 2426 requires it; DAVx5 enforces it), a 4.0 card only with name parts', () => {
+    const named = texts(newCard({ uid: 'a', firstname: 'Anna', lastname: 'Smit' }, DEFAULT_MAPPING, ctx, '3.0').lines);
+    expect(named.filter((l) => /^N[:;]/.test(l))).toEqual(['N:Smit;Anna;;;']);
+    expect(texts(newCard({ uid: 'a', name: 'Anna' }, DEFAULT_MAPPING, ctx, '3.0').lines)).toEqual([
+      'VERSION:3.0',
+      'FN:Anna',
+      'N:;;;;',
+      'UID:a',
+    ]);
+    expect(texts(newCard({ uid: 'a', company: 'Bakker' }, DEFAULT_MAPPING, ctx, '3.0').lines)).toContain('N:;;;;');
+    expect(texts(newCard({ uid: 'a', name: 'Anna' }, DEFAULT_MAPPING, ctx, '4.0').lines)).toEqual(['VERSION:4.0', 'FN:Anna', 'UID:a']);
   });
 
   it('a new card is vCard 4.0 unless asked otherwise', () => {
