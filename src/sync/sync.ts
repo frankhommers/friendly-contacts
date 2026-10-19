@@ -173,7 +173,7 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
   const settings = getSettings();
   const rows = settings.friendly.mapping;
   const note = noteIO(app, file);
-  // The contact's name: with a fixed note name (`index`) that is its folder's name, not the file's.
+  // The contact's name: with a fixed note name (`index`, also in a folder made with other settings) its folder's name.
   const name = contactNameFor(app, file);
   if (hasVCardValues(await note.readFrontmatter(), rows)) {
     // Sync reads only friendly properties: a UID kept in `UID` is not seen, and syncing would create a second card.

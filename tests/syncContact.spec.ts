@@ -133,6 +133,8 @@ function memoryNote(frontmatter: Record<string, unknown>) {
     basename: 'Jan de Vries',
     writes: [] as { set: Record<string, FriendlyValue>; remove: string[] }[],
     renames: [] as string[],
+    /** The display name each rename was given (for the links to the contact). */
+    displayNames: [] as (string | undefined)[],
     /** Basenames that already exist next to the note. */
     taken: new Set<string>(),
     /** Reads, writes and renames in the order they happened. */
@@ -149,10 +151,11 @@ function memoryNote(frontmatter: Record<string, unknown>) {
       for (const key of remove) delete note.frontmatter[key];
       Object.assign(note.frontmatter, set);
     },
-    rename: async (newBasename) => {
+    rename: async (newBasename, displayName) => {
       if (note.taken.has(newBasename)) return 'exists';
       note.log.push(`rename:${newBasename}`);
       note.renames.push(newBasename);
+      note.displayNames.push(displayName);
       note.basename = newBasename;
       return 'renamed';
     },
@@ -769,6 +772,17 @@ describe('applySync', () => {
     expect(taken.notices).toEqual(['Not renamed: "Jan Bakker" already exists.']);
     expect(taken.note.frontmatter.title).toBe('Master baker');
     expect(taken.entries.get(UID)?.raw).toBe(v2);
+  });
+
+  it('server rename refreshes aliases: the rename gets the new name before the note has it', async () => {
+    // The name changed on the server: the note is renamed before its `name` is written, so links to it must get the
+    // new name from Sync, not from the note.
+    const v2 = edit(edit(V1, 'FN:Jan de Vries', 'FN:Johan de Vries'), 'N:de Vries;Jan;;;', 'N:de Vries;Johan;;;');
+    const t = setup({ server: v2, base: V1 });
+    expect(await t.sync({}, { sourceName: 'Radicale', rename: 'Johan de Vries' })).toMatchObject({ kind: 'done' });
+    expect(t.note.renames).toEqual(['Johan de Vries']);
+    expect(t.note.displayNames).toEqual(['Johan de Vries']);
+    expect(t.note.frontmatter.name).toBe('Johan de Vries');
   });
 });
 

@@ -26,10 +26,11 @@ export interface NoteIO {
   readFrontmatter(): Promise<Record<string, unknown>>;
   writeProps(set: Record<string, FriendlyValue>, remove: string[]): Promise<void>;
   /**
-   * Renames the contact to `newName`: the note in its own folder, and in folder layout the contact's folder with it;
-   * 'exists' (and nothing renamed) when a target is taken.
+   * Renames the contact to `newName`: the note, and the contact's folder with it when the note is in its own folder;
+   * 'exists' (and nothing renamed) when a target is taken. `displayName`: the contact's new name for links to it (the
+   * note does not have it yet: it is written after the rename).
    */
-  rename(newName: string): Promise<'renamed' | 'exists'>;
+  rename(newName: string, displayName?: string): Promise<'renamed' | 'exists'>;
 }
 
 export interface SyncDeps {
@@ -241,7 +242,9 @@ export async function applySync(
     if (opts.rename !== undefined) {
       // The card is written by now: a rename problem is a warning, and the note and the base are still written.
       try {
-        if ((await note.rename(opts.rename)) === 'exists') deps.notify(`Not renamed: "${opts.rename}" already exists.`);
+        // The new name goes along: links to the contact are rewritten before the note gets its new `name`.
+        const displayName = typeof final.name === 'string' ? final.name : undefined;
+        if ((await note.rename(opts.rename, displayName)) === 'exists') deps.notify(`Not renamed: "${opts.rename}" already exists.`);
       } catch (e) {
         deps.notify(`Not renamed to "${opts.rename}": ${errorText(e)}`);
       }

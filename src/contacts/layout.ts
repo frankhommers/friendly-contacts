@@ -148,6 +148,16 @@ export function isNamedForContact(folder: string, names: string[]): boolean {
 }
 
 /**
+ * The folder settings a contact's folder made with other settings was made with, as far as its note (directly in the
+ * folder) tells: inside the folder, with `{{name}}` when the note is named like the folder (`Jan/Jan.md`), else the
+ * note's own name as a fixed note name (`Jan/index.md`). A rename with these keeps the note's naming.
+ */
+export function folderSettingsOf(notePath: string): LayoutSettings {
+  const base = basenameNoExt(notePath);
+  return { layout: "folder", location: "inside", noteName: base === fileName(dirname(notePath)) ? NAME_TOKEN : base };
+}
+
+/**
  * The folder a new contact goes in: the active note's folder when that lies inside the contacts folder, else the
  * contacts folder. Never inside a contact's folder (then the parent of the outermost one): in folder layout the
  * folder whose folder note (`isContactNote(path)`) is a contact note, and in any layout a folder named for a contact

@@ -103,7 +103,7 @@ export function LayoutSettingsSection({ app, onLayoutChanged }: LayoutSettingsPr
             <div className="setting-item-description">
               <div className="mod-warning">
                 {inOtherFolders} contacts are in folders made with other settings. They are not put in folders
-                again, and a rename through Sync renames only their note.
+                again; a rename through Sync renames their folder and keeps their note's naming.
               </div>
             </div>
           ) : null}

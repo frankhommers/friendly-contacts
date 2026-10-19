@@ -10,6 +10,7 @@ import {
   contactPaths,
   DEFAULT_LAYOUT,
   folderNotePath,
+  folderSettingsOf,
   FsStep,
   hasFixedNoteName,
   isInsideOrAt,
@@ -168,9 +169,39 @@ export function contactsInFolder(app: App, path: string): TFile[] {
   return folder instanceof TFolder ? otherContactsIn(app, folder) : [];
 }
 
-/** The contact's name for `file` in the current layout (the folder's name for a fixed note name such as `index`). */
+/** The folder settings the contacts were put in folders with, when usable (also in one-note layout). */
+function storedFolderLayout(): LayoutSettings | undefined {
+  const s: LayoutSettings = { ...(getSettings().layout ?? DEFAULT_LAYOUT), layout: "folder" };
+  return validateLayout(s) === undefined ? s : undefined;
+}
+
+/**
+ * The contact's own folder, strictly inside `base`, with the settings that make it the contact's: the current
+ * layout's; in one-note layout the stored folder settings (contacts not taken out); else, whatever the settings, a
+ * folder named for the contact that holds its note (see `isNamedForContact`, `folderSettingsOf`).
+ */
+function ownFolder(app: App, file: TFile, base: string = contactsBase()): { folder: string; s: LayoutSettings } | undefined {
+  const isFolder = folderExists(app);
+  const current = effectiveLayout();
+  const stored = current.layout === "note" ? storedFolderLayout() : undefined;
+  for (const s of stored ? [current, stored] : [current]) {
+    const folder = contactFolderOf(file.path, s, isFolder);
+    if (folder !== undefined && strictlyInside(folder, base)) return { folder, s };
+  }
+  const dir = dirnameOf(file.path);
+  if (strictlyInside(dir, base) && isNamedForContact(dir, contactNamesOf(app, file))) {
+    return { folder: dir, s: folderSettingsOf(file.path) };
+  }
+  return undefined;
+}
+
+/**
+ * The contact's name for `file`: the folder's name for a note in its own folder (for a fixed note name such as
+ * `index`, also in a folder made with other settings), else the note's file name.
+ */
 export function contactNameFor(app: App, file: TFile): string {
-  return contactNameOf(file.path, contactsBase(), effectiveLayout(), folderExists(app));
+  const own = ownFolder(app, file);
+  return own === undefined ? file.basename : contactNameOf(file.path, contactsBase(), own.s, folderExists(app));
 }
 
 /** The name a link to the contact shows: its `name` property, else its contact name in the layout. */
@@ -180,13 +211,22 @@ export function contactDisplayName(app: App, file: TFile): string {
 }
 
 /**
- * Link text to a contact note as written into a relationship property, without the brackets. With a fixed note
- * name (`index`) the file name says nothing and is not unique, so the link is always the full path with the contact's
- * name as the alias: `Contacts/Jan de Vries/index|Jan de Vries` (never Obsidian's short `index`, which points at
- * another contact as soon as a second `index.md` exists). Links are compared by `linkTarget`, which drops the alias.
+ * True when links to `file` must be the full path with an alias: in a layout with a fixed note name, and whenever the
+ * note's file name is not the contact's name (`Jan/index.md` left from other settings, also in one-note layout).
+ */
+function needsFullLink(app: App, file: TFile): boolean {
+  return hasFixedNoteName(effectiveLayout()) || file.basename.toLowerCase() !== contactNameFor(app, file).toLowerCase();
+}
+
+/**
+ * Link text to a contact note as written into a relationship property, without the brackets. When the file name is
+ * not the contact's name (a fixed note name such as `index`) it says nothing and is not unique, so the link is always
+ * the full path with the contact's name as the alias: `Contacts/Jan de Vries/index|Jan de Vries` (never Obsidian's
+ * short `index`, which points at another contact as soon as a second `index.md` exists). Links are compared by
+ * `linkTarget`, which drops the alias.
  */
 export function contactLinktext(app: App, file: TFile, fromPath: string, omitMdExtension?: boolean): string {
-  if (!hasFixedNoteName(effectiveLayout())) return app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
+  if (!needsFullLink(app, file)) return app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
   return linkWithAlias(file.path.replace(/\.md$/i, ""), contactDisplayName(app, file));
 }
 
@@ -201,6 +241,8 @@ interface RecordedLink {
   target: TFile;
   /** The alias the entry has, when it is not one of the target's names (the user wrote it). */
   userAlias?: string;
+  /** The link form, decided before the move (`full`); undefined: decided after it, for where the target is then. */
+  full?: boolean;
 }
 
 function relationProperties(): string[] {
@@ -212,12 +254,15 @@ function aliasOf(entry: string): string | undefined {
 }
 
 /**
- * Before contacts move (with a fixed note name): every relationship entry in a contact note that points to one of
- * `targets`. Recorded up front because after the move Obsidian may have written the ambiguous short form (`[[index]]`).
+ * Before contacts move: every relationship entry in a contact note that points to one of `targets`. Recorded up front
+ * because after the move Obsidian may have written the ambiguous short form (`[[index]]`), or (after the two renames
+ * of take-out) a link to the temporary name. `keepForm`: the link form stays what it is now (a move or rename keeps
+ * the contact's folder as it is); otherwise it follows where the target ends up.
  */
-export function recordRelationLinks(app: App, targets: TFile[]): RecordedLink[] {
+export function recordRelationLinks(app: App, targets: TFile[], keepForm = true): RecordedLink[] {
   const wanted = new Set(targets);
   if (wanted.size === 0) return [];
+  const full = new Map(targets.map((t) => [t, keepForm ? needsFullLink(app, t) : undefined] as const));
   const names = new Map(
     targets.map((t) => {
       const name: unknown = app.metadataCache.getFileCache(t)?.frontmatter?.name;
@@ -238,7 +283,8 @@ export function recordRelationLinks(app: App, targets: TFile[]): RecordedLink[] 
         if (!(target instanceof TFile) || !wanted.has(target)) return;
         const alias = aliasOf(entry.trim())?.trim();
         const userAlias = alias !== undefined && !names.get(target)?.has(alias.toLowerCase()) ? alias : undefined;
-        records.push({ note, property, index: Array.isArray(value) ? i : -1, length: entries.length, target, userAlias });
+        const index = Array.isArray(value) ? i : -1;
+        records.push({ note, property, index, length: entries.length, target, userAlias, full: full.get(target) });
       });
     }
   }
@@ -246,25 +292,41 @@ export function recordRelationLinks(app: App, targets: TFile[]): RecordedLink[] 
 }
 
 /**
- * After the move: the recorded entries become `[[full/path/index|name]]` with the contact's current name (an alias
- * the user wrote stays). Only relationship properties of contact notes change. Returns the number of entries changed.
+ * After the move: the recorded entries point to their contact again. In the full form `[[full/path/index|name]]`
+ * with the contact's current name (`names`: a name the note does not have yet, as when Sync renames before it writes
+ * the note); in the short form Obsidian's link text, where an entry that still opens the contact stays as it is. An
+ * alias the user wrote stays. Only relationship properties of contact notes change. Returns the number of entries
+ * changed.
  */
-export async function rewriteRelationLinks(app: App, records: RecordedLink[]): Promise<number> {
+export async function rewriteRelationLinks(app: App, records: RecordedLink[], names: Map<TFile, string> = new Map()): Promise<number> {
+  /** The entry as it should be now, or undefined when it stays. */
+  const wanted = (record: RecordedLink, entry: string): string | undefined => {
+    const { target, note, userAlias } = record;
+    if (record.full ?? needsFullLink(app, target)) {
+      const name = names.get(target)?.trim() || contactDisplayName(app, target);
+      const link = `[[${linkWithAlias(target.path.replace(/\.md$/i, ""), userAlias ?? name)}]]`;
+      return entry === link ? undefined : link;
+    }
+    const linkpath = linkTarget(entry.trim()).trim();
+    if (linkpath !== "" && app.metadataCache.getFirstLinkpathDest(linkpath, note.path) === target) return undefined;
+    const short = app.metadataCache.fileToLinktext(target, note.path, true);
+    return `[[${userAlias === undefined ? short : linkWithAlias(short, userAlias)}]]`;
+  };
   let count = 0;
   for (const note of new Set(records.map((r) => r.note))) {
     try {
       await app.fileManager.processFrontMatter(note, (fm: Record<string, unknown>) => {
         for (const record of records.filter((r) => r.note === note)) {
-          const stem = record.target.path.replace(/\.md$/i, "");
-          const link = `[[${linkWithAlias(stem, record.userAlias ?? contactDisplayName(app, record.target))}]]`;
           const value = fm[record.property];
           if (record.index < 0) {
-            if (typeof value !== "string" || value === link) continue;
-            fm[record.property] = link;
+            const next = typeof value === "string" ? wanted(record, value) : undefined;
+            if (next === undefined) continue;
+            fm[record.property] = next;
           } else {
             if (!Array.isArray(value) || value.length !== record.length || typeof value[record.index] !== "string") continue;
-            if (value[record.index] === link) continue;
-            value[record.index] = link;
+            const next = wanted(record, value[record.index] as string);
+            if (next === undefined) continue;
+            value[record.index] = next;
           }
           count++;
         }
@@ -308,32 +370,30 @@ export function renamesFolder(app: App, file: TFile): boolean {
   return contactFolder(app, file) !== undefined;
 }
 
-/** The note's own folder when it has one that may be renamed: strictly inside the contacts folder. */
+/** The note's own folder, made with any settings, when it has one that may be renamed (strictly inside the contacts folder). */
 function contactFolder(app: App, file: TFile): string | undefined {
-  const s = effectiveLayout();
-  const folder = contactFolderOf(file.path, s, folderExists(app));
-  return folder !== undefined && strictlyInside(folder, contactsBase()) ? folder : undefined;
+  return ownFolder(app, file)?.folder;
 }
 
 function planFor(app: App, file: TFile, newName: string): { steps: FsStep[]; skipped?: string } {
-  const s = effectiveLayout();
-  const exists = existsIgnoringCase(app);
-  // A note that is not in a folder of its own below the contacts folder (e.g. `Contacts/Contacts.md`) is renamed as
-  // a single note: the contacts folder, or anything above it, never moves.
-  const asNote = s.layout === "folder" && contactFolder(app, file) === undefined;
-  return planRename(file.path, newName, asNote ? { ...s, layout: "note" } : s, exists);
+  // In its own folder: renamed with the settings that made the folder (also other settings than the current ones).
+  // Otherwise (also e.g. `Contacts/Contacts.md`) as a single note: the contacts folder, or anything above it, never
+  // moves.
+  const s = ownFolder(app, file)?.s ?? { ...effectiveLayout(), layout: "note" };
+  return planRename(file.path, newName, s, existsIgnoringCase(app));
 }
 
 /**
  * Renames a contact to `newName` in the layout: its folder (when the note is in one) and its note. 'exists' when a
- * target is taken (nothing moved). Throws when a step fails or the folder holds other contacts.
+ * target is taken (nothing moved). Throws when a step fails or the folder holds other contacts. `displayName`: the
+ * contact's new name for links to it, when the note does not have it yet (Sync renames before it writes the note).
  */
-export async function renameContact(app: App, file: TFile, newName: string): Promise<"renamed" | "exists"> {
+export async function renameContact(app: App, file: TFile, newName: string, displayName?: string): Promise<"renamed" | "exists"> {
   const plan = planFor(app, file, newName);
   if (plan.skipped !== undefined) return "exists";
   const problem = folderMoveProblem(app, file, plan.steps);
   if (problem !== undefined) throw new Error(problem);
-  const links = hasFixedNoteName(effectiveLayout()) ? recordRelationLinks(app, [file]) : [];
+  const links = needsFullLink(app, file) ? recordRelationLinks(app, [file]) : [];
   try {
     const result = await runSteps(app, plan.steps);
     const failure = result.failed[0];
@@ -345,7 +405,7 @@ export async function renameContact(app: App, file: TFile, newName: string): Pro
       throw new Error(failure.reason);
     }
   } finally {
-    await rewriteRelationLinks(app, links);
+    await rewriteRelationLinks(app, links, displayName === undefined ? undefined : new Map([[file, displayName]]));
   }
   return "renamed";
 }
@@ -527,7 +587,8 @@ function inOtherFolder(app: App, file: TFile, s: LayoutSettings, base: string): 
 
 /**
  * How many contacts are in a folder of their own made with other folder settings (e.g. `Jan/Jan.md` while the
- * folder note name is `index`). Such contacts are not put in folders again, and are not renamed with their folder.
+ * folder note name is `index`). Such contacts are not put in folders again; they are renamed and moved with their
+ * folder.
  */
 export function contactsInOtherFolders(app: App): number {
   const s: LayoutSettings = { ...(getSettings().layout ?? DEFAULT_LAYOUT), layout: "folder" };
@@ -629,13 +690,16 @@ export function layoutChangeCount(app: App, direction: LayoutDirection): number 
 export async function changeLayout(app: App, direction: LayoutDirection): Promise<LayoutChangeResult> {
   const plan = planLayoutChange(app, direction);
   if ("problem" in plan) throw new Error(plan.problem);
-  // With a fixed note name Obsidian writes the moved notes' links as `[[index]]`: record them now, rewrite after.
+  // Record the links to the moving notes now, rewrite after. "into": to a fixed note name Obsidian writes them as
+  // `[[index]]`. "out": a note moves twice (via a temporary name), and an entry must not keep pointing at that name.
   const moving = plan.groups.flat().flatMap((step) => {
     const node = step.kind === "move" && step.from !== undefined ? byPath(app, step.from) : null;
     return node instanceof TFile ? [node] : [];
   });
-  const fixed = direction === "into" && hasFixedNoteName(getSettings().layout ?? DEFAULT_LAYOUT);
-  const links = fixed ? recordRelationLinks(app, moving) : [];
+  const links =
+    direction === "into"
+      ? recordRelationLinks(app, moving.filter((file) => needsFullLink(app, file)))
+      : recordRelationLinks(app, moving, false);
   const result = await runSteps(app, plan.groups);
   const relinked = await rewriteRelationLinks(app, links);
   const skipped = [...plan.skipped];
@@ -677,8 +741,9 @@ export function layoutNotice(result: LayoutChangeResult): string {
 
 /**
  * Moves the contacts in `files` (all in `from`) to `to`, keeping paths relative to the folder. A contact in its
- * folder moves as a whole with the folder and everything in it; "next to" layout moves the folder and its note
- * together. A contact whose target exists is skipped, never merged. `moved` counts contact notes.
+ * folder (in any layout, also one made with other settings, see `ownFolder`) moves as a whole with the folder and
+ * everything in it; "next to" layout moves the folder and its note together; any other contact note moves on its own.
+ * A contact whose target exists is skipped, never merged. `moved` counts contact notes.
  */
 export async function moveContactFolders(
   app: App,
@@ -686,16 +751,13 @@ export async function moveContactFolders(
   from: string,
   to: string,
 ): Promise<{ moved: number; skipped: SkippedMove[] }> {
-  const s = effectiveLayout();
-  const isFolder = folderExists(app);
-  const ownFolder = new Map<string, string>();
+  const folderOf = new Map<string, string>();
   for (const file of files) {
-    // Also a folder made with other settings (named for the contact): the poem must not stay behind.
-    const dir = dirnameOf(file.path);
-    const folder = contactFolderOf(file.path, s, isFolder) ?? (isNamedForContact(dir, contactNamesOf(app, file)) ? dir : undefined);
-    if (folder !== undefined && strictlyInside(folder, from)) ownFolder.set(file.path, folder);
+    // In any layout, also a folder made with other settings (named for the contact): the poem must not stay behind.
+    const folder = ownFolder(app, file, from)?.folder;
+    if (folder !== undefined) folderOf.set(file.path, folder);
   }
-  const folders = new Set(ownFolder.values());
+  const folders = new Set(folderOf.values());
   // A folder inside another contact folder travels with it.
   const roots = [...folders].filter((f) => ![...folders].some((other) => other !== f && strictlyInside(f, other)));
 
@@ -706,7 +768,7 @@ export async function moveContactFolders(
       (units.get(root) as { count: number }).count++;
       continue;
     }
-    const own = ownFolder.get(file.path);
+    const own = folderOf.get(file.path);
     const unit = own === undefined ? undefined : units.get(own);
     if (unit) {
       unit.paths.push(file.path); // "next to": the note lies beside its folder
@@ -724,7 +786,7 @@ export async function moveContactFolders(
     return { moved: 0, skipped: list.map((u) => ({ from: u.paths[0], reason })) };
   }
 
-  const links = hasFixedNoteName(s) ? recordRelationLinks(app, files) : [];
+  const links = recordRelationLinks(app, files.filter((file) => needsFullLink(app, file)));
   const plan = planUnitMoves(list.map((u) => u.paths), from, to, existsIgnoringCase(app));
   const groups = plan.groups.map((g) =>
     g.moves.flatMap((move): FsStep[] => [

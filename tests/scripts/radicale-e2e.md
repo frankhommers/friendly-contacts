@@ -195,6 +195,15 @@ book's name; below that is written as **<book>**.
 - [ ] **Folder per contact: take out:** with the poem still in Jan's folder, run *Take contacts out of their folders*.
       Every contact note is `<contacts folder>/<name>.md` again. Folders without other files are gone; Jan's folder
       stays with `poem.md` in it, and the notice counts it as kept.
+- [ ] **Folder per contact: relationships still open the contact after take-out:** with `index` as folder note name,
+      give Jan a child Sem (Sem gets `parents: [[<folder>/Jan/index|Jan]]`) and a label of your own on another
+      entry (`[[<folder>/Jan/index|Dad]]`). Switch to *One note per contact* and take the contacts out. Sem's entries
+      open Jan's note `<folder>/Jan.md`; none of them names `Jan (moving)`, and `Dad` is still the label.
+- [ ] **Folder per contact: left in folders after going back to one note:** with contacts in `<name>/index.md`
+      folders (a poem in Jan's), switch to *One note per contact* without taking them out. A relationship added to
+      Jan is written as `[[<folder>/Jan/index|Jan]]`. Change Jan's name on the server and Sync Jan with the rename
+      ticked: the folder is renamed (the note stays `index.md`, the poem stays with it) and links to Jan carry the
+      new name as their label. Run *Move contacts to folder…*: Jan's whole folder moves, the poem too.
 - [ ] **Folder per contact: take out with Folder Notes deleting folder notes:** set Folder Notes to *Storage
       location* "In the parent folder" with *Delete folder notes when deleting the folder* on. Put the contacts in
       folders (*Inside the folder* here), then run *Take contacts out of their folders*: every contact note survives

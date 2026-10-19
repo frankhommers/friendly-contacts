@@ -286,6 +286,20 @@ describe("links to a fixed note name are never short", () => {
     const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: anna as never, uid: "a" }], []);
     expect(ctx.uidToName("a")).toBe("Contacts/Anna");
   });
+
+  it("a contact left in a folder with a fixed note name gets the full path in any layout", () => {
+    for (const layout of [noteLayout, nameLayout]) {
+      useLayout(layout);
+      const v = fakeApp();
+      v.folder("Contacts");
+      const jan = v.note("Contacts/Jan de Vries/index.md", { name: "Jan de Vries", uid: "jan-uid" });
+      const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: jan as never, uid: "jan-uid" }], []);
+      expect(ctx.uidToName("jan-uid")).toBe("Contacts/Jan de Vries/index|Jan de Vries");
+      expect(obsidianMirrorEnv(v.app).linkTo("Contacts/Jan de Vries/index.md", "Contacts/Piet.md")).toBe(
+        "[[Contacts/Jan de Vries/index|Jan de Vries]]",
+      );
+    }
+  });
 });
 
 describe("relinking after a bulk import", () => {

@@ -88,12 +88,14 @@ import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { createContactFile } from "src/file/file";
 import {
   changeLayout,
+  contactNameFor,
   contactsInOtherFolders,
   layoutChangeCount,
   layoutNotice,
   newContactLocation,
   renameBlocked,
   renameContact,
+  renamesFolder,
   resetLayoutWarning,
   runSteps,
 } from "src/contacts/layoutNotes";
@@ -128,6 +130,8 @@ function fakeApp(options: { caseInsensitive?: boolean } = {}) {
   let afterDelete: ((node: Node) => Promise<void>) | undefined;
   /** Files Obsidian does not show (`.DS_Store`), per folder: only the adapter lists them, and they block a delete. */
   const hidden = new Map<string, string[]>();
+  /** Renames whose link update Obsidian misses (its cache had not indexed the links to that path yet). */
+  let missLinks: (from: string) => boolean = () => false;
 
   const parentOf = (path: string): Folder => {
     const parent = nodes.get(dirname(path));
@@ -254,7 +258,8 @@ function fakeApp(options: { caseInsensitive?: boolean } = {}) {
     fileManager: {
       renameFile: async (node: Node, to: string) => {
         const from = node.path;
-        updateLinks(node, () => move(node, to));
+        if (missLinks(from)) move(node, to);
+        else updateLinks(node, () => move(node, to));
         await afterRename?.(node, from);
       },
       processFrontMatter: async (file: File, fn: (fm: Record<string, unknown>) => void) => {
@@ -294,6 +299,9 @@ function fakeApp(options: { caseInsensitive?: boolean } = {}) {
         const folderNote = nodes.get(`${node.path}.md`);
         if (node instanceof h.TFolder && folderNote) await app.vault.delete(folderNote);
       };
+    },
+    missLinkUpdates: (fn: (from: string) => boolean) => {
+      missLinks = fn;
     },
     hide: (folder: string, name: string) => {
       hidden.set(folder, [...(hidden.get(folder) ?? []), name]);
@@ -594,6 +602,57 @@ describe("rename", () => {
     v.note("Contacts/Family/Sem.md");
     await expect(renameContact(v.app, family as never, "Jan")).rejects.toThrow(/other contacts/);
     expect(v.paths()).toEqual(["Contacts", "Contacts/Family", "Contacts/Family/Family.md", "Contacts/Family/Sem.md"]);
+  });
+
+  it("rename of an other-settings contact renames its folder", async () => {
+    // One note per contact, with folders left from folder layout: `{{name}}` and `index`.
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan/Jan.md", { name: "Jan", uid: "jan" });
+    v.note("Contacts/Jan/poem.md", null, "roses");
+    const piet = v.note("Contacts/Piet/index.md", { name: "Piet", uid: "piet" });
+    v.note("Contacts/Piet/photo.md", null);
+    expect(renamesFolder(v.app, jan as never)).toBe(true);
+    expect(contactNameFor(v.app, piet as never)).toBe("Piet");
+    expect(renameBlocked(v.app, jan as never, "Jan Bakker")).toBeUndefined();
+    expect(await renameContact(v.app, jan as never, "Jan Bakker")).toBe("renamed");
+    expect(await renameContact(v.app, piet as never, "Piet Bakker")).toBe("renamed");
+    expect(v.paths()).toEqual([
+      "Contacts",
+      "Contacts/Jan Bakker",
+      "Contacts/Jan Bakker/Jan Bakker.md",
+      "Contacts/Jan Bakker/poem.md",
+      "Contacts/Piet Bakker",
+      "Contacts/Piet Bakker/index.md",
+      "Contacts/Piet Bakker/photo.md",
+    ]);
+    // The folder is still the contact's: a new contact never goes in it.
+    v.setActive(jan);
+    expect(newContactLocation(v.app, "Kees")).toEqual({ note: "Contacts/Kees.md" });
+
+    // Folder layout with `index`, a folder made with `{{name}}`.
+    useLayout(insideIndex);
+    const w = fakeApp();
+    const sem = w.note("Contacts/Sem/Sem.md", { name: "Sem", uid: "sem" });
+    w.note("Contacts/Sem/poem.md", null);
+    expect(await renameContact(w.app, sem as never, "Sem Bakker")).toBe("renamed");
+    expect(w.paths()).toEqual(["Contacts", "Contacts/Sem Bakker", "Contacts/Sem Bakker/Sem Bakker.md", "Contacts/Sem Bakker/poem.md"]);
+    // Someone else in the folder: refused, as for folders made with the current settings.
+    const kees = w.note("Contacts/Kees/Kees.md", { name: "Kees", uid: "kees" });
+    w.note("Contacts/Kees/Kid.md", { name: "Kid", uid: "kid" });
+    expect(renameBlocked(w.app, kees as never, "Kees Bakker")).toBe("Contacts/Kees holds other contacts (Kid); rename it by hand.");
+    await expect(renameContact(w.app, kees as never, "Kees Bakker")).rejects.toThrow(/other contacts/);
+    // A taken target names the folder.
+    w.folder("Contacts/Sem de Vries");
+    expect(renameBlocked(w.app, sem as never, "Sem de Vries")).toBe('A folder or note named "Sem de Vries" already exists.');
+  });
+
+  it("one-note layout: a note made next to its folder is renamed with the folder", async () => {
+    useLayout({ ...next, layout: "note" });
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan.md", { name: "Jan", uid: "jan" });
+    v.note("Contacts/Jan/poem.md", null);
+    expect(await renameContact(v.app, jan as never, "Jan Bakker")).toBe("renamed");
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan Bakker", "Contacts/Jan Bakker.md", "Contacts/Jan Bakker/poem.md"]);
   });
 
   it("one-note layout renames the note in its folder", async () => {
@@ -1194,6 +1253,49 @@ describe("move contacts", () => {
     expect(v.paths()).toContain("Contacts/Jan de Vries.md");
   });
 
+  it("one-note move keeps a leftover folder with its poem", async () => {
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan/Jan.md", { name: "Jan", uid: "jan" }); // left from folder layout with {{name}}
+    v.note("Contacts/Jan/poem.md", null, "roses");
+    v.note("Contacts/Piet/index.md", { name: "Piet", uid: "piet" }); // left from folder layout with index
+    v.note("Contacts/Piet/photo.md", null);
+    v.note("Contacts/Family/Sem.md", { name: "Sem", uid: "sem" });
+    const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "anna", friends: ["[[Contacts/Piet/index|Piet]]"] });
+
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+
+    expect(result).toEqual({ moved: 4, skipped: [] });
+    expect(v.paths()).toEqual([
+      "Areas",
+      "Areas/Anna.md",
+      "Areas/Family",
+      "Areas/Family/Sem.md",
+      "Areas/Jan",
+      "Areas/Jan/Jan.md",
+      "Areas/Jan/poem.md",
+      "Areas/Piet",
+      "Areas/Piet/index.md",
+      "Areas/Piet/photo.md",
+      "Contacts",
+      "Contacts/Family",
+    ]);
+    expect((v.nodes.get("Areas/Jan/poem.md") as File).content).toBe("roses");
+    // The link to the leftover index note stays full, never the short `index`.
+    expect(anna.frontmatter?.friends).toEqual(["[[Areas/Piet/index|Piet]]"]);
+  });
+
+  it("one-note move keeps a folder beside a note made next to it", async () => {
+    useLayout({ ...next, layout: "note" });
+    const v = fakeApp();
+    v.folder("Areas");
+    v.note("Contacts/Jan.md", { name: "Jan", uid: "jan" });
+    v.note("Contacts/Jan/poem.md", null);
+    const result = await moveContacts(v.app, "Areas", "Contacts");
+    expect(result).toEqual({ moved: 1, skipped: [] });
+    expect(v.paths()).toEqual(["Areas", "Areas/Jan", "Areas/Jan.md", "Areas/Jan/poem.md", "Contacts"]);
+  });
+
   it("one-note layout moves notes one by one as before", async () => {
     const v = fakeApp();
     v.folder("Areas");
@@ -1240,6 +1342,51 @@ describe("links with a fixed note name", () => {
     expect(anna.frontmatter?.friends).toEqual(["[[Contacts/Johan/index|Johan]]"]);
     expect(anna.frontmatter?.parents).toBe("[[Contacts/Johan/index|Dad]]");
     expect((v.nodes.get("Contacts/Sem/index.md") as File).frontmatter?.friends).toEqual(["[[Contacts/Johan/index|Johan]]"]);
+  });
+
+  it("server rename refreshes aliases", async () => {
+    useLayout(insideIndex);
+    const v = fakeApp();
+    // The name changed on the server: the note still has the old name while it is renamed.
+    const jan = v.note("Contacts/Jan/index.md", { name: "Jan", uid: "jan" });
+    const anna = v.note("Contacts/Anna/index.md", { name: "Anna", uid: "anna", friends: ["[[Contacts/Jan/index|Jan]]"], parents: "[[Contacts/Jan/index|Dad]]" });
+
+    expect(await noteIO(v.app, jan as never).rename("Johan", "Johan de Vries")).toBe("renamed");
+
+    expect(anna.frontmatter?.friends).toEqual(["[[Contacts/Johan/index|Johan de Vries]]"]);
+    expect(anna.frontmatter?.parents).toBe("[[Contacts/Johan/index|Dad]]");
+  });
+
+  it("relationships still open the contact after take-out, also when Obsidian misses the temporary name", async () => {
+    useLayout({ ...insideIndex, layout: "note" });
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan/index.md", { name: "Jan", uid: "jan" });
+    const anna = v.note("Contacts/Anna/index.md", {
+      name: "Anna",
+      uid: "anna",
+      friends: ["[[Contacts/Jan/index|Jan]]"],
+      parents: "[[Contacts/Jan/index|Dad]]",
+    });
+    // Obsidian's cache had not indexed the links to `Jan (moving).md` yet when the note got its final name.
+    v.missLinkUpdates((from) => from.includes("(moving)"));
+
+    const result = await changeLayout(v.app, "out");
+
+    expect(result.moved).toBe(2);
+    expect(jan.path).toBe("Contacts/Jan.md");
+    expect(anna.frontmatter?.friends).toEqual(["[[Jan]]"]);
+    expect(anna.frontmatter?.parents).toBe("[[Jan|Dad]]");
+    expect(result.relinked).toBe(2);
+  });
+
+  it("rename of a contact left in an index folder keeps links full", async () => {
+    const v = fakeApp(); // one note per contact
+    const jan = v.note("Contacts/Jan/index.md", { name: "Jan", uid: "jan" });
+    const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "anna", friends: ["[[Contacts/Jan/index|Jan]]"] });
+    // As Sync does: the note gets its new name after the rename.
+    expect(await noteIO(v.app, jan as never).rename("Johan", "Johan")).toBe("renamed");
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Anna.md", "Contacts/Johan", "Contacts/Johan/index.md"]);
+    expect(anna.frontmatter?.friends).toEqual(["[[Contacts/Johan/index|Johan]]"]);
   });
 
   it("moving the contacts keeps links full", async () => {

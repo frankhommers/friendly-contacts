@@ -64,7 +64,7 @@ export interface SyncFlowDeps {
   note: NoteIO;
   /** The note's path. */
   path: string;
-  /** The contact's name: the note's file name, or in folder layout with a fixed note name its folder's name. */
+  /** The contact's name: the note's file name, or with a fixed note name (`index`) its folder's name. */
   name: string;
   rows: MappingRow[];
   /** Every configured address book, and the enabled ones. */
