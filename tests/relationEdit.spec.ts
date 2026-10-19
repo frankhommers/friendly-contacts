@@ -3,6 +3,7 @@ import {
   addRelation,
   linkRelationEntry,
   otherSideTaken,
+  otherSideNote,
   planAdd,
   relationGroups,
   removeRelationEntry,
@@ -109,6 +110,48 @@ describe('planAdd', () => {
       text: '[[Ghost|Sem]]',
       sameName: true,
     });
+  });
+});
+
+describe('planAdd, single relation hand-edited into a list', () => {
+  it('a same-name entry in the list asks before dropping the others', async () => {
+    const { env, files } = makeEnv({
+      'Jan.md': { spouse: ['[[Piet]]', '[[Sem]]'] },
+      'Piet.md': {},
+      'Lot.md': {},
+    });
+    const plan = planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Lot.md', nameOf);
+    expect(plan).toEqual({ replaces: 'PIET, Sem', text: '[[Piet]]', sameName: false });
+    const sem = planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'Sem.md', nameOf);
+    expect(sem).toEqual({ replaces: 'PIET, Sem', text: '[[Sem]]', sameName: false });
+    if (typeof sem === 'object') await addRelation(env, rows, 'Jan.md', 'spouse', 'Sem.md', sem.text);
+    expect(files['Jan.md'].spouse).toBe('[[Sem]]');
+  });
+
+  it('a lone same-name entry is still replaced without asking', () => {
+    const { env, files } = makeEnv({ 'Jan.md': { spouse: ['[[Sem de Vries]]'] }, 'People/Sem.md': {} });
+    expect(planAdd(env, rows, 'Jan.md', files['Jan.md'], 'spouse', 'People/Sem.md', () => 'Sem de Vries')).toEqual({
+      replaces: 'Sem de Vries',
+      text: '[[Sem de Vries]]',
+      sameName: true,
+    });
+  });
+
+  it('a list relation keeps its same-name replacement silent', () => {
+    const { env, files } = makeEnv({ 'Jan.md': { friends: ['[[Piet]]', '[[Sem de Vries]]'] }, 'Piet.md': {}, 'People/Sem.md': {} });
+    const plan = planAdd(env, rows, 'Jan.md', files['Jan.md'], 'friends', 'People/Sem.md', () => 'Sem de Vries');
+    expect(plan).toEqual({ replaces: 'Sem de Vries', text: '[[Sem de Vries]]', sameName: true });
+  });
+});
+
+describe('otherSideNote', () => {
+  const taken = { property: 'spouse', name: 'Sem' };
+  it('says the other side stays as it is when mirroring is on', () => {
+    expect(otherSideNote(true, taken, 'Lot')).toBe("Lot already has Sem as spouse, so Lot's spouse stays as it is.");
+  });
+  it('says nothing when mirroring is off or the other side is free', () => {
+    expect(otherSideNote(false, taken, 'Lot')).toBe('');
+    expect(otherSideNote(true, undefined, 'Lot')).toBe('');
   });
 });
 

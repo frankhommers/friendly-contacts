@@ -92,9 +92,15 @@ export function planAdd(
       resolveEntry(env, text, path) === undefined &&
       (sameText(fallbackDisplay(text), targetName) || sameText(linkTarget(text.trim()), targetName)),
   );
-  if (sameName !== undefined) return { replaces: fallbackDisplay(sameName), text: sameName, sameName: true };
+  // A single relation hand-edited into a list is replaced as a whole, so that is asked, not assumed.
+  const wholeList = row.single === true && texts.length > 1;
+  if (sameName !== undefined && !wholeList) {
+    return { replaces: fallbackDisplay(sameName), text: sameName, sameName: true };
+  }
   if (row.single === true && texts.length > 0) {
-    return { replaces: personOf(env, path, texts[0], nameOf).display, text: texts[0], sameName: false };
+    const first = sameName ?? texts[0];
+    const replaces = texts.map((text) => personOf(env, path, text, nameOf).display).join(', ');
+    return { replaces, text: first, sameName: false };
   }
   return 'added';
 }
@@ -118,6 +124,19 @@ export function otherSideTaken(
   const texts = entryTexts(targetFrontmatter[inverse]);
   if (texts.length === 0 || texts.some((text) => resolveEntry(env, text, targetPath) === path)) return undefined;
   return { property: inverse, name: personOf(env, targetPath, texts[0], nameOf).display };
+}
+
+/**
+ * What to tell about the other side of a single relation staying as it is (see `otherSideTaken`): only when
+ * mirroring is on for this device, since otherwise nothing would have been written there anyway. Empty for none.
+ */
+export function otherSideNote(
+  mirror: boolean,
+  taken: { property: string; name: string } | undefined,
+  targetName: string,
+): string {
+  if (!mirror || taken === undefined) return '';
+  return `${targetName} already has ${taken.name} as ${taken.property}, so ${targetName}'s ${taken.property} stays as it is.`;
 }
 
 /**

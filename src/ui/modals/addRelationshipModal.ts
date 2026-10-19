@@ -2,8 +2,9 @@ import { App, FuzzyMatch, FuzzySuggestModal, Notice, SuggestModal, TFile } from 
 import { MappingRow } from "src/contacts/friendly/mapping";
 import { contactDisplayName } from "src/contacts/layoutNotes";
 import { contactNotes, obsidianMirrorEnv } from "src/contacts/obsidianNotes";
-import { addRelation, otherSideTaken, planAdd } from "src/contacts/relationEdit";
+import { addRelation, otherSideNote, otherSideTaken, planAdd } from "src/contacts/relationEdit";
 import { getSettings } from "src/context/sharedSettingsContext";
+import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 
 export interface PickableContact {
@@ -92,12 +93,8 @@ async function applyRelation(app: App, contactPath: string, target: PickableCont
     frontmatterOf(app.vault.getAbstractFileByPath(target.path)),
     nameOf,
   );
-  // The mirror never overwrites a single relation that names someone else.
-  const takenText =
-    taken === undefined
-      ? ""
-      : `${target.name} already has ${taken.name} as ${taken.property}, ` +
-        `so ${target.name}'s ${taken.property} stays as it is.`;
+  // The mirror never overwrites a single relation that names someone else (and only runs when mirroring is on).
+  const takenText = otherSideNote(mirrorRelationsOnThisDevice(app), taken, target.name);
   /** `tell`: say afterwards that the other side stayed as it was (not when the confirm already said so). */
   const add = async (replacing?: string, tell = true) => {
     try {
