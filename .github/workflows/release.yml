@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "*.*.*"
+      - "*.*.*-*"
 
 permissions:
   contents: write
@@ -35,10 +36,11 @@ jobs:
         id: release_title
         run: echo "value=$(cat release_title.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release (Draft)
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           name: ${{ steps.release_title.outputs.value }}
           body_path: release_changelog.txt
           files: |
