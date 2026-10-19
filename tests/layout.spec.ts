@@ -183,6 +183,29 @@ describe("planIntoFolders", () => {
     ]);
   });
 
+  it("steps come grouped per note, also when the folder and the note have different names (next to)", () => {
+    const card: LayoutSettings = { layout: "folder", noteName: "{{name}} card", location: "next" };
+    const plan = planIntoFolders(
+      [
+        { path: "Contacts/Jan.md", name: "Jan" },
+        { path: "Contacts/Sem.md", name: "Sem" },
+      ],
+      card,
+      none,
+    );
+    expect(plan.groups).toEqual([
+      [
+        { kind: "createFolder", to: "Contacts/Jan card" },
+        { kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan card.md" },
+      ],
+      [
+        { kind: "createFolder", to: "Contacts/Sem card" },
+        { kind: "move", from: "Contacts/Sem.md", to: "Contacts/Sem card.md" },
+      ],
+    ]);
+    expect(plan.steps).toEqual(plan.groups.flat());
+  });
+
   it("next to: creates the folder only", () => {
     expect(planIntoFolders([{ path: "Contacts/Jan.md", name: "Jan" }], next, none).steps).toEqual([
       { kind: "createFolder", to: "Contacts/Jan" },
@@ -235,14 +258,31 @@ describe("planOutOfFolders", () => {
       none,
       () => ["Contacts/Jan/Jan.md"],
     );
-    expect(plan).toEqual({
-      steps: [
-        { kind: "move", from: "Contacts/Jan/Jan.md", to: "Contacts/Jan.md" },
-        { kind: "deleteFolderIfEmpty", to: "Contacts/Jan" },
+    // Under a temporary name first: Folder Notes (folder notes in the parent folder, delete synced) would delete
+    // `Contacts/Jan.md` together with the folder `Contacts/Jan`.
+    const steps = [
+      { kind: "move", from: "Contacts/Jan/Jan.md", to: "Contacts/Jan (moving).md" },
+      { kind: "deleteFolderIfEmpty", to: "Contacts/Jan" },
+      { kind: "move", from: "Contacts/Jan (moving).md", to: "Contacts/Jan.md" },
+    ];
+    expect(plan).toEqual({ steps, groups: [steps], kept: [], keptEmpty: [], skipped: [] });
+  });
+
+  it("the temporary name is one that is free", () => {
+    expect(
+      planOutOfFolders([{ path: "Contacts/Jan/Jan.md", name: "Jan" }], inside, existing("Contacts/Jan (moving).md"), () => []).groups[0][0].to,
+    ).toBe("Contacts/Jan (moving 2).md");
+    // nor another contact's target
+    const plan = planOutOfFolders(
+      [
+        { path: "Contacts/Jan/Jan.md", name: "Jan" },
+        { path: "Contacts/Jan (moving)/Jan (moving).md", name: "Jan (moving)" },
       ],
-      kept: [],
-      skipped: [],
-    });
+      inside,
+      none,
+      () => [],
+    );
+    expect(plan.groups.map((g) => g[0].to)).toEqual(["Contacts/Jan (moving 2).md", "Contacts/Jan (moving) (moving).md"]);
   });
 
   it("take out keeps folders with other files", () => {
@@ -256,10 +296,19 @@ describe("planOutOfFolders", () => {
     expect(plan.kept).toEqual(["Contacts/Jan"]);
   });
 
-  it("next to: the note stays, an empty folder goes", () => {
+  it("next to: the note stays and the folder is never deleted, even when empty", () => {
+    // Deleting `Contacts/Jan` would make Folder Notes (parent folder, delete synced) delete `Contacts/Jan.md`.
     const plan = planOutOfFolders([{ path: "Contacts/Jan.md", name: "Jan" }], next, existing("Contacts/Jan"), () => []);
-    expect(plan.steps).toEqual([{ kind: "deleteFolderIfEmpty", to: "Contacts/Jan" }]);
+    expect(plan.steps).toEqual([]);
+    expect(plan.keptEmpty).toEqual(["Contacts/Jan"]);
     expect(plan.kept).toEqual([]);
+  });
+
+  it("next to with another pattern: the note gets the contact's name, the folder stays", () => {
+    const card: LayoutSettings = { layout: "folder", noteName: "{{name}} card", location: "next" };
+    const plan = planOutOfFolders([{ path: "Contacts/Jan card.md", name: "Jan" }], card, existing("Contacts/Jan card"), () => ["Contacts/Jan card/Poem.md"]);
+    expect(plan.groups).toEqual([[{ kind: "move", from: "Contacts/Jan card.md", to: "Contacts/Jan.md" }]]);
+    expect(plan.kept).toEqual(["Contacts/Jan card"]);
   });
 
   it("skips a target that exists and notes not in their folder", () => {

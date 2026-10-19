@@ -17,6 +17,7 @@ export async function runLayoutCommand(app: App, direction: LayoutDirection): Pr
       ...(result.alreadyDone > 0 ? [`${result.alreadyDone} contacts were in this layout already`] : []),
       ...result.skipped.map((s) => `skipped ${s.path}: ${s.reason}`),
       ...result.kept.map((folder) => `kept ${folder}: other files are in it`),
+      ...result.keptEmpty.map((folder) => `kept ${folder}: empty, but not deleted, so Folder Notes cannot delete ${folder}.md with it`),
       ...(result.relinked > 0 ? [`${result.relinked} relationship links now name the contact's folder`] : []),
     ];
     if (lines.length > 0) console.log("Friendly Contacts: layout change:\n" + lines.join("\n"));

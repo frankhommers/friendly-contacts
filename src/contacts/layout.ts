@@ -242,18 +242,19 @@ export function planRename(
 
 /**
  * For notes in one-note layout: create each contact's folder and put the note in the layout. A folder that exists
- * and is empty (`isEmptyFolder`, e.g. left by an earlier run that failed half way) is used as it is.
+ * and is empty (`isEmptyFolder`, e.g. left by an earlier run that failed half way) is used as it is. `groups` holds
+ * each note's steps together (`steps` is the same, flat).
  */
 export function planIntoFolders(
   notes: { path: string; name: string }[],
   s: LayoutSettings,
   exists: (path: string) => boolean,
   isEmptyFolder: (path: string) => boolean = () => false,
-): { steps: FsStep[]; skipped: { path: string; reason: string }[] } {
-  const steps: FsStep[] = [];
+): { steps: FsStep[]; groups: FsStep[][]; skipped: { path: string; reason: string }[] } {
+  const groups: FsStep[][] = [];
   const skipped: { path: string; reason: string }[] = [];
   const invalid = s.layout !== "folder" ? "layout is one note per contact" : validateLayout(s);
-  if (invalid) return { steps, skipped: notes.map((n) => ({ path: n.path, reason: invalid })) };
+  if (invalid) return { steps: [], groups, skipped: notes.map((n) => ({ path: n.path, reason: invalid })) };
 
   const claimed = new Map<string, string>(); // folder (lower case) -> note path that takes it
   for (const note of notes) {
@@ -278,29 +279,35 @@ export function planIntoFolders(
       continue;
     }
     claimed.set(folder.toLowerCase(), note.path);
-    if (!reuse) steps.push({ kind: "createFolder", to: folder });
-    if (paths.note !== note.path) steps.push({ kind: "move", from: note.path, to: paths.note });
+    const group: FsStep[] = [];
+    if (!reuse) group.push({ kind: "createFolder", to: folder });
+    if (paths.note !== note.path) group.push({ kind: "move", from: note.path, to: paths.note });
+    if (group.length > 0) groups.push(group);
   }
-  return { steps, skipped };
+  return { steps: groups.flat(), groups, skipped };
 }
 
 /**
- * For notes in their folders: move each note out next to its folder (`<parent>/<name>.md`), then delete the folder
+ * For notes in their folders: move each note out next to its folder (`<parent>/<name>.md`) and delete the folder
  * when nothing else is in it. `folderFiles(folder)` lists everything in the folder (files and sub-folders; the note
  * itself may be included). Folders that still hold other things are listed in `kept`.
+ *
+ * Inside the folder: the note leaves under a temporary name, the folder is deleted, then the note gets its name.
+ * Moving it straight to `<parent>/<name>.md` would make it the folder note Folder Notes looks for in the parent
+ * folder, and Folder Notes (with "delete folder note with folder" on) would delete it together with the folder.
+ * Next to the folder: for the same reason the folder is never deleted; an empty one is listed in `keptEmpty`.
  */
 export function planOutOfFolders(
   notes: { path: string; name: string }[],
   s: LayoutSettings,
   exists: (path: string) => boolean,
   folderFiles: (folder: string) => string[],
-): { steps: FsStep[]; kept: string[]; skipped: { path: string; reason: string }[] } {
-  const steps: FsStep[] = [];
+): { steps: FsStep[]; groups: FsStep[][]; kept: string[]; keptEmpty: string[]; skipped: { path: string; reason: string }[] } {
   const kept: string[] = [];
+  const keptEmpty: string[] = [];
   const skipped: { path: string; reason: string }[] = [];
-  const leaving = new Set<string>(); // note paths that leave their folder
-  const folders = new Set<string>();
-  const targets = new Set<string>();
+  const leaving: { note: { path: string; name: string }; folder: string; target: string }[] = [];
+  const targets = new Set<string>(); // lower case
 
   for (const note of notes) {
     const folder = contactFolderOf(note.path, s, exists);
@@ -315,18 +322,43 @@ export function planOutOfFolders(
         continue;
       }
       targets.add(target.toLowerCase());
-      steps.push({ kind: "move", from: note.path, to: target });
     }
-    leaving.add(note.path);
-    folders.add(folder);
+    leaving.push({ note, folder, target });
   }
 
-  for (const folder of folders) {
-    const others = folderFiles(folder).filter((path) => !leaving.has(path));
-    if (others.length === 0) steps.push({ kind: "deleteFolderIfEmpty", to: folder });
-    else kept.push(folder);
+  const leavingPaths = new Set(leaving.map((l) => l.note.path));
+  const taken = new Set(targets);
+  /** A free name next to `target` for the note while its folder is deleted. */
+  const temporary = (target: string): string => {
+    const stem = target.slice(0, -3);
+    for (let n = 1; ; n++) {
+      const candidate = `${stem} (moving${n === 1 ? "" : ` ${n}`}).md`;
+      if (!exists(candidate) && !taken.has(candidate.toLowerCase())) {
+        taken.add(candidate.toLowerCase());
+        return candidate;
+      }
+    }
+  };
+
+  const groups: FsStep[][] = [];
+  for (const { note, folder, target } of leaving) {
+    const empty = folderFiles(folder).filter((path) => !leavingPaths.has(path)).length === 0;
+    const group: FsStep[] = [];
+    if (s.location === "inside" && empty) {
+      const temp = temporary(target);
+      group.push(
+        { kind: "move", from: note.path, to: temp },
+        { kind: "deleteFolderIfEmpty", to: folder },
+        { kind: "move", from: temp, to: target },
+      );
+    } else {
+      if (target !== note.path) group.push({ kind: "move", from: note.path, to: target });
+      if (empty) keptEmpty.push(folder);
+      else kept.push(folder);
+    }
+    if (group.length > 0) groups.push(group);
   }
-  return { steps, kept, skipped };
+  return { steps: groups.flat(), groups, kept, keptEmpty, skipped };
 }
 
 // ---------- Folder Notes plugin ----------

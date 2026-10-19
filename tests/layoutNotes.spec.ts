@@ -116,6 +116,10 @@ function fakeApp() {
   let active: File | null = null;
   /** Runs after each renameFile, like a plugin reacting to the rename (Folder Notes' syncFolderName). */
   let afterRename: ((node: Node, oldPath: string) => Promise<void>) | undefined;
+  /** Runs after a delete, like a plugin reacting to it (Folder Notes' syncDelete). */
+  let afterDelete: ((node: Node) => Promise<void>) | undefined;
+  /** Files Obsidian does not show (`.DS_Store`), per folder: only the adapter lists them, and they block a delete. */
+  const hidden = new Map<string, string[]>();
 
   const parentOf = (path: string): Folder => {
     const parent = nodes.get(dirname(path));
@@ -208,13 +212,23 @@ function fakeApp() {
         return created;
       },
       delete: async (node: Node) => {
-        if (node instanceof h.TFolder && node.children.length > 0) throw new Error("not empty");
+        if (node instanceof h.TFolder && (node.children.length > 0 || (hidden.get(node.path) ?? []).length > 0)) {
+          throw new Error("ENOTEMPTY: directory not empty");
+        }
         (node.parent as Folder).children = (node.parent as Folder).children.filter((c) => c !== node);
         nodes.delete(node.path);
+        await afterDelete?.(node);
       },
       read: async (file: File) => file.content,
       adapter: {
         exists: async (p: string) => nodes.has(p),
+        list: async (p: string) => {
+          const children = (nodes.get(p) as Folder | undefined)?.children ?? [];
+          return {
+            files: [...children.filter((c) => !(c instanceof h.TFolder)).map((c) => c.path), ...(hidden.get(p) ?? []).map((n) => `${p}/${n}`)],
+            folders: children.filter((c) => c instanceof h.TFolder).map((c) => c.path),
+          };
+        },
         read: async (p: string) => (nodes.get(p) as File).content,
         write: async (p: string, data: string) => {
           const existing = nodes.get(p);
@@ -256,6 +270,19 @@ function fakeApp() {
     },
     onRename: (fn: typeof afterRename) => {
       afterRename = fn;
+    },
+    onDelete: (fn: typeof afterDelete) => {
+      afterDelete = fn;
+    },
+    /** Folder Notes with folder notes in the parent folder and "delete folder note with folder" on. */
+    folderNotesParentSyncDelete: () => {
+      afterDelete = async (node) => {
+        const folderNote = nodes.get(`${node.path}.md`);
+        if (node instanceof h.TFolder && folderNote) await app.vault.delete(folderNote);
+      };
+    },
+    hide: (folder: string, name: string) => {
+      hidden.set(folder, [...(hidden.get(folder) ?? []), name]);
     },
   };
 }
@@ -519,7 +546,7 @@ describe("runSteps", () => {
   it("a missing source whose target exists counts as done", async () => {
     const v = fakeApp();
     v.note("Contacts/B/B.md");
-    expect(await runSteps(v.app, [{ kind: "move", from: "Contacts/A", to: "Contacts/B" }])).toEqual({ done: 1, failed: [], kept: [] });
+    expect(await runSteps(v.app, [{ kind: "move", from: "Contacts/A", to: "Contacts/B" }])).toEqual({ done: 1, failed: [], kept: [], keptEmpty: [] });
   });
 
   it("a failed step stops the rest of that contact; other contacts still run", async () => {
@@ -551,6 +578,7 @@ describe("runSteps", () => {
     expect(result).toEqual({
       done: 0,
       kept: [],
+      keptEmpty: [],
       failed: [
         { step: { kind: "move", from: "Contacts/Jan", to: "Contacts/Jan 2" }, reason: "missing: Contacts/Jan" },
         { step: { kind: "move", from: "Contacts/Jan.md", to: "Contacts/Jan 2.md" }, reason: "an earlier step failed" },
@@ -619,17 +647,78 @@ describe("layout commands", () => {
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Late.pdf"]);
   });
 
-  it("take out in next to layout deletes an empty sibling folder and keeps one with files", async () => {
+  it("take out in next to layout never deletes the folder beside the note", async () => {
     useLayout({ ...next, layout: "note" });
     const v = fakeApp();
+    v.folderNotesParentSyncDelete();
     v.note("Contacts/Jan.md");
     v.folder("Contacts/Jan");
     v.note("Contacts/Sem.md");
     v.note("Contacts/Sem/Photo.md", null);
+    expect(layoutChangeCount(v.app, "out")).toBe(0);
     const result = await changeLayout(v.app, "out");
+    expect(result).toEqual({ moved: 0, skipped: [], kept: ["Contacts/Sem"], keptEmpty: ["Contacts/Jan"], alreadyDone: 2, relinked: 0 });
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Sem", "Contacts/Sem.md", "Contacts/Sem/Photo.md"]);
+    expect(layoutNotice(result)).toBe("Moved 0, skipped 0, kept 1 folders with other files, left 1 empty folders (see console)");
+  });
+
+  it("take out with Folder Notes deleting the folder note with its folder keeps the contact note", async () => {
+    for (const layout of [inside, insideIndex]) {
+      useLayout({ ...layout, layout: "note" });
+      const v = fakeApp();
+      v.folderNotesParentSyncDelete();
+      v.note(layout === inside ? "Contacts/Jan/Jan.md" : "Contacts/Jan/index.md", CONTACT, "jan");
+      const result = await changeLayout(v.app, "out");
+      expect(result.moved).toBe(1);
+      expect(result.skipped).toEqual([]);
+      expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md"]);
+      expect((v.nodes.get("Contacts/Jan.md") as File).content).toBe("jan");
+    }
+  });
+
+  it("take out: a folder with hidden files, or one that cannot be deleted, is kept and the contact counts as moved", async () => {
+    useLayout({ ...inside, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    v.hide("Contacts/Jan", ".DS_Store");
+    v.note("Contacts/Sem/Sem.md");
+    const del = (v.app as unknown as { vault: { delete: (n: Node) => Promise<void> } }).vault;
+    const realDelete = del.delete;
+    del.delete = async (node) => {
+      if (node.path === "Contacts/Sem") throw new Error("busy");
+      await realDelete(node);
+    };
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(2);
+    expect(result.skipped).toEqual([]);
+    expect(result.kept).toEqual(["Contacts/Jan", "Contacts/Sem"]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Sem", "Contacts/Sem.md"]);
+  });
+
+  it("take out: when the last rename fails the reason says where the note is", async () => {
+    useLayout({ ...inside, layout: "note" });
+    const v = fakeApp();
+    v.note("Contacts/Jan/Jan.md");
+    const fm = (v.app as unknown as { fileManager: { renameFile: (n: Node, to: string) => Promise<void> } }).fileManager;
+    const renameFile = fm.renameFile;
+    fm.renameFile = async (node, to) => {
+      if (to === "Contacts/Jan.md") throw new Error("locked");
+      await renameFile(node, to);
+    };
+    const result = await changeLayout(v.app, "out");
+    expect(result.moved).toBe(0);
+    expect(result.skipped).toEqual([{ path: "Contacts/Jan/Jan.md", reason: "locked (the note is now Contacts/Jan (moving).md)" }]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan (moving).md"]);
+  });
+
+  it("into folders next to with another pattern: folder and note move as one contact", async () => {
+    useLayout({ layout: "folder", noteName: "{{name}} card", location: "next" });
+    const v = fakeApp();
+    v.note("Contacts/Jan.md");
+    expect(layoutChangeCount(v.app, "into")).toBe(1);
+    const result = await changeLayout(v.app, "into");
     expect(result.moved).toBe(1);
-    expect(result.kept).toEqual(["Contacts/Sem"]);
-    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md", "Contacts/Sem", "Contacts/Sem.md", "Contacts/Sem/Photo.md"]);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan card", "Contacts/Jan card.md"]);
   });
 
   it("take out never moves a note out of the contacts folder itself", async () => {
@@ -712,24 +801,23 @@ describe("layout commands", () => {
     expect(v.nodes.has("Contacts/Jan.md")).toBe(true);
   });
 
-  it("into folders: a failed contact leaves no empty folder, and a re-run finishes it", async () => {
-    useLayout(inside);
+  it("into folders: a failed contact's empty folder is removed only when no note is named like it", async () => {
+    // inside with a fixed name: `Contacts/Jan.md` is beside the new `Contacts/Jan`, and Folder Notes (parent folder,
+    // delete synced) would delete it with the folder. The folder stays; a re-run uses it.
+    useLayout(insideIndex);
     const v = fakeApp();
-    v.note("Contacts/Jan.md");
-    const rename = (v.app as unknown as { fileManager: { renameFile: (n: unknown, to: string) => Promise<void> } }).fileManager;
-    const renameFile = rename.renameFile;
-    rename.renameFile = async () => {
+    v.folderNotesParentSyncDelete();
+    v.note("Contacts/Jan.md", CONTACT, "jan");
+    const fm = (v.app as unknown as { fileManager: { renameFile: (n: unknown, to: string) => Promise<void> } }).fileManager;
+    const renameFile = fm.renameFile;
+    fm.renameFile = async () => {
       throw new Error("locked");
     };
-    const failed = await changeLayout(v.app, "into");
-    expect(failed.moved).toBe(0);
-    expect(failed.skipped).toEqual([{ path: "Contacts/Jan.md", reason: "locked" }]);
-    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md"]);
-
-    rename.renameFile = renameFile;
-    const again = await changeLayout(v.app, "into");
-    expect(again.moved).toBe(1);
-    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/Jan.md"]);
+    await changeLayout(v.app, "into");
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md"]);
+    fm.renameFile = renameFile;
+    expect((await changeLayout(v.app, "into")).moved).toBe(1);
+    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan/index.md"]);
   });
 
   it("into folders uses an existing empty folder but never one with files", async () => {
@@ -751,21 +839,10 @@ describe("layout commands", () => {
     v.note("Contacts/Jan.md");
     await changeLayout(v.app, "into");
     const again = await changeLayout(v.app, "into");
-    expect(again).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1, relinked: 0 });
+    expect(again).toEqual({ moved: 0, skipped: [], kept: [], keptEmpty: [], alreadyDone: 1, relinked: 0 });
     useLayout({ ...inside, layout: "note" });
     await changeLayout(v.app, "out");
-    expect(await changeLayout(v.app, "out")).toEqual({ moved: 0, skipped: [], kept: [], alreadyDone: 1, relinked: 0 });
-  });
-
-  it("take out in next to layout counts removing an empty sibling folder", async () => {
-    useLayout({ ...next, layout: "note" });
-    const v = fakeApp();
-    v.note("Contacts/Jan.md");
-    v.folder("Contacts/Jan");
-    expect(layoutChangeCount(v.app, "out")).toBe(1);
-    const result = await changeLayout(v.app, "out");
-    expect(result.moved).toBe(1);
-    expect(v.paths()).toEqual(["Contacts", "Contacts/Jan.md"]);
+    expect(await changeLayout(v.app, "out")).toEqual({ moved: 0, skipped: [], kept: [], keptEmpty: [], alreadyDone: 1, relinked: 0 });
   });
 
   it("into folders leaves a second contact note inside someone's folder alone", async () => {

@@ -292,8 +292,11 @@ export async function renameContact(app: App, file: TFile, newName: string): Pro
   return "renamed";
 }
 
-/** `kept`: folders a `deleteFolderIfEmpty` step found with other things in them; they stay and are no failure. */
-type StepResult = { done: number; failed: { step: FsStep; reason: string }[]; kept: string[] };
+/**
+ * `kept`: folders a `deleteFolderIfEmpty` step found with other things in them (also hidden ones, or a delete that
+ * failed); `keptEmpty`: empty folders left because a note named like them is beside them. Both stay and are no failure.
+ */
+type StepResult = { done: number; failed: { step: FsStep; reason: string }[]; kept: string[]; keptEmpty: string[] };
 
 /**
  * Applies the steps in order. `steps` is one contact's steps, or a list of them per contact. Before each move the
@@ -305,7 +308,7 @@ type StepResult = { done: number; failed: { step: FsStep; reason: string }[]; ke
 export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<StepResult> {
   const groups = (steps.length > 0 && Array.isArray(steps[0]) ? steps : [steps]) as FsStep[][];
   const base = contactsBase();
-  const result: StepResult = { done: 0, failed: [], kept: [] };
+  const result: StepResult = { done: 0, failed: [], kept: [], keptEmpty: [] };
   for (const group of groups) {
     let stopped = false;
     for (const step of group) {
@@ -317,7 +320,7 @@ export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<
       if (outcome === undefined) {
         result.done++;
       } else if (typeof outcome === "object") {
-        result.kept.push(outcome.kept);
+        (outcome.empty ? result.keptEmpty : result.kept).push(outcome.kept);
       } else {
         result.failed.push({ step, reason: outcome });
         stopped = true;
@@ -328,7 +331,7 @@ export async function runSteps(app: App, steps: FsStep[] | FsStep[][]): Promise<
 }
 
 /** Runs one step; undefined when done, a reason when it could not, `{ kept }` for a folder left in place. */
-async function runStep(app: App, step: FsStep, base: string): Promise<string | { kept: string } | undefined> {
+async function runStep(app: App, step: FsStep, base: string): Promise<string | { kept: string; empty?: boolean } | undefined> {
   try {
     switch (step.kind) {
       case "createFolder": {
@@ -356,7 +359,17 @@ async function runStep(app: App, step: FsStep, base: string): Promise<string | {
         if (!folder) return undefined;
         if (!(folder instanceof TFolder)) return `not a folder: ${step.to}`;
         if (folder.children.length > 0) return { kept: step.to };
-        await app.vault.delete(folder);
+        // Folder Notes with folder notes in the parent folder deletes `<folder>.md` with the folder: never risk that.
+        if (byPath(app, `${step.to}.md`) !== null) return { kept: step.to, empty: true };
+        // Files Obsidian does not show (`.DS_Store`) are not children, but they are in the folder.
+        const listed = await app.vault.adapter.list?.(step.to).catch(() => undefined);
+        if (listed && listed.files.length + listed.folders.length > 0) return { kept: step.to };
+        try {
+          await app.vault.delete(folder);
+        } catch (error) {
+          console.warn(`Friendly Contacts: kept ${step.to}, it could not be deleted`, error);
+          return { kept: step.to };
+        }
         return undefined;
       }
     }
@@ -375,6 +388,8 @@ export interface LayoutChangeResult {
   skipped: { path: string; reason: string }[];
   /** Folders that stay because other files are in them. */
   kept: string[];
+  /** Empty folders that stay because a note named like them is beside them (see `planOutOfFolders`). */
+  keptEmpty: string[];
   /** Contacts that were in the wanted layout already (a re-run); not counted as skipped. */
   alreadyDone: number;
   /** Relationship entries rewritten to full links (fixed note name only). */
@@ -428,6 +443,7 @@ interface LayoutPlan {
   groups: FsStep[][];
   skipped: { path: string; reason: string }[];
   kept: string[];
+  keptEmpty: string[];
   alreadyDone: number;
 }
 
@@ -474,33 +490,21 @@ function planLayoutChange(app: App, direction: LayoutDirection): LayoutPlan | { 
       return node instanceof TFolder && node.children.length === 0;
     };
     const plan = planIntoFolders(notes, s, exists, isEmptyFolder);
-    const groups: FsStep[][] = [];
-    for (const step of plan.steps) {
-      const last = groups[groups.length - 1];
-      // A move belongs to the folder step right before it; with a reused empty folder it starts its own group.
-      const last2 = last?.[last.length - 1];
-      if (step.kind === "move" && last2?.kind === "createFolder" && last.length === 1 && last2.to === dirnameOf(step.to)) last.push(step);
-      else groups.push([step]);
-    }
-    return { groups, skipped: [...skipped, ...plan.skipped], kept: [], alreadyDone };
+    return { groups: plan.groups, skipped: [...skipped, ...plan.skipped], kept: [], keptEmpty: [], alreadyDone };
   }
 
   const plan = planOutOfFolders(notes, s, exists, (folder) => descendants(app, folder));
-  const groups: FsStep[][] = [];
-  const groupOfNote = new Map<string, FsStep[]>();
-  for (const step of plan.steps) {
-    if (step.kind === "move" && step.from !== undefined) {
-      const group = [step];
-      groups.push(group);
-      groupOfNote.set(step.from, group);
-    } else if (step.kind === "deleteFolderIfEmpty") {
-      // The delete goes with the note of that folder, so it is skipped when that note could not be moved.
-      const note = notes.find((n) => contactFolderOf(n.path, s, isFolder) === step.to && groupOfNote.has(n.path));
-      if (note) groupOfNote.get(note.path)?.push(step);
-      else groups.push([step]);
-    }
-  }
-  return { groups, skipped: [...skipped, ...plan.skipped], kept: plan.kept, alreadyDone };
+  // A note that is where it belongs already (next to its folder, named for the contact) has nothing to do.
+  const unchanged = notes.filter(
+    (n) => !plan.groups.some((g) => g[0].from === n.path) && !plan.skipped.some((x) => x.path === n.path),
+  ).length;
+  return {
+    groups: plan.groups,
+    skipped: [...skipped, ...plan.skipped],
+    kept: plan.kept,
+    keptEmpty: plan.keptEmpty,
+    alreadyDone: alreadyDone + unchanged,
+  };
 }
 
 /** Why the command cannot run, or undefined. */
@@ -539,8 +543,13 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
     const failure = result.failed.find((f) => group.includes(f.step));
     if (failure) {
       // The note's path: the source of the group's move (a group of only a folder step names the folder).
-      skipped.push({ path: group.find((step) => step.from !== undefined)?.from ?? group[0].to, reason: failure.reason });
-      // A folder this run created for the contact stays behind empty: remove it, so a re-run is not blocked.
+      const path = group.find((step) => step.from !== undefined)?.from ?? group[0].to;
+      // Failed after the note had moved (to its temporary name): say where it is.
+      const at = failure.step.kind === "move" ? failure.step.from : undefined;
+      const moved = at !== undefined && at !== path && byPath(app, at) !== null;
+      skipped.push({ path, reason: moved ? `${failure.reason} (the note is now ${at})` : failure.reason });
+      // A folder this run created for the contact stays behind empty: remove it (unless the note is beside it, see
+      // runStep), so a re-run is not blocked. A re-run uses an empty folder that is left.
       const made = group.filter((step) => step.kind === "createFolder" && !result.failed.some((f) => f.step === step));
       leftovers.push(...made.map((step): FsStep[] => [{ kind: "deleteFolderIfEmpty", to: step.to }]));
     } else if (!group.every((step) => step.kind === "deleteFolderIfEmpty" && result.kept.includes(step.to))) {
@@ -548,12 +557,20 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
     }
   }
   if (leftovers.length > 0) await runSteps(app, leftovers);
-  return { moved, skipped, kept: [...new Set([...plan.kept, ...result.kept])], alreadyDone: plan.alreadyDone, relinked };
+  return {
+    moved,
+    skipped,
+    kept: [...new Set([...plan.kept, ...result.kept])],
+    keptEmpty: [...new Set([...plan.keptEmpty, ...result.keptEmpty])],
+    alreadyDone: plan.alreadyDone,
+    relinked,
+  };
 }
 
 /** The Notice after a layout command. */
 export function layoutNotice(result: LayoutChangeResult): string {
-  return `Moved ${result.moved}, skipped ${result.skipped.length}, kept ${result.kept.length} folders with other files (see console)`;
+  const empty = result.keptEmpty.length > 0 ? `, left ${result.keptEmpty.length} empty folders` : "";
+  return `Moved ${result.moved}, skipped ${result.skipped.length}, kept ${result.kept.length} folders with other files${empty} (see console)`;
 }
 
 /**
