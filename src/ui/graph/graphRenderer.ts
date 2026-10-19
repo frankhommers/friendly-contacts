@@ -42,12 +42,16 @@ interface DragSubject {
   node: SimNode;
   x: number;
   y: number;
+  /** Set on the first movement beyond CLICK_DISTANCE: only then is the node pinned and the layout woken up. */
+  moved: boolean;
 }
 
 export interface GraphRendererEvents {
   /** A click on a node (a plain click waits briefly, so a double-click does not also count as a click). */
   onNodeClick(node: GraphNode, event: MouseEvent): void;
   onNodeDoubleClick(node: GraphNode, event: MouseEvent): void;
+  /** The drawing area got a size again (also when a hidden view shows again). */
+  onResize?(): void;
 }
 
 const NODE_RADIUS = 14;
@@ -73,8 +77,12 @@ export class GraphRenderer {
   private transform: ZoomTransform = zoomIdentity;
   private width = 0;
   private height = 0;
+  /** The device pixel ratio the canvas was sized for. */
+  private dpr = 1;
   private frame = 0;
   private clickTimer = 0;
+  /** Nodes being dragged right now (more than one with several fingers). */
+  private dragging = 0;
   private colors!: Colors;
   private font = "sans-serif";
   private destroyed = false;
@@ -108,21 +116,26 @@ export class GraphRenderer {
         .clickDistance(CLICK_DISTANCE)
         .subject((event: { x: number; y: number }) => {
           const node = this.nodeAt(event.x, event.y);
-          return node && { node, x: this.transform.applyX(node.x!), y: this.transform.applyY(node.y!) };
-        })
-        .on("start", (event: { active: number; subject: DragSubject }) => {
-          if (!event.active) this.simulation.alphaTarget(0.3).restart();
-          event.subject.node.fx = event.subject.node.x;
-          event.subject.node.fy = event.subject.node.y;
+          return node && { node, x: this.transform.applyX(node.x!), y: this.transform.applyY(node.y!), moved: false };
         })
         .on("drag", (event: { x: number; y: number; subject: DragSubject }) => {
-          event.subject.node.fx = this.transform.invertX(event.x);
-          event.subject.node.fy = this.transform.invertY(event.y);
+          const subject = event.subject;
+          // A click or tap that wobbles a little is not a drag: it neither pins the node nor moves the layout.
+          if (!subject.moved) {
+            if (Math.hypot(event.x - subject.x, event.y - subject.y) <= CLICK_DISTANCE) return;
+            subject.moved = true;
+            this.dragging++;
+            if (this.dragging === 1) this.simulation.alphaTarget(0.3).restart();
+          }
+          subject.node.fx = this.transform.invertX(event.x);
+          subject.node.fy = this.transform.invertY(event.y);
           this.requestDraw();
         })
-        .on("end", (event: { active: number }) => {
-          // The node keeps its fx/fy: it stays where it was dropped.
-          if (!event.active) this.simulation.alphaTarget(0);
+        .on("end", (event: { subject: DragSubject }) => {
+          // The node keeps its fx/fy: it stays where it was dropped (Recenter lets go of it).
+          if (!event.subject.moved) return;
+          this.dragging--;
+          if (this.dragging === 0) this.simulation.alphaTarget(0);
         }),
     );
     this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
@@ -173,6 +186,7 @@ export class GraphRenderer {
     this.simulation.nodes(nodes);
     (this.simulation.force("link") as ForceLink<SimNode, SimLink>).links(links);
     if (firstTime || changed) this.simulation.alpha(firstTime ? 1 : 0.3).restart();
+    this.forgetImages(new Set(nodes.flatMap((n) => safeImageSrc(n.photo) ?? [])));
     this.requestDraw();
   }
 
@@ -183,6 +197,7 @@ export class GraphRenderer {
     this.links = [];
     this.simulation.nodes([]);
     (this.simulation.force("link") as ForceLink<SimNode, SimLink>).links([]);
+    this.forgetImages(new Set());
     this.requestDraw();
   }
 
@@ -192,8 +207,19 @@ export class GraphRenderer {
     if (node) node.id = newId;
   }
 
-  /** Pans to the centre node at zoom 1 (to the middle of the drawing without a centre). */
+  /**
+   * Lets go of every node that was dragged into place, then pans to the centre node at zoom 1 (to the middle of the
+   * drawing without a centre).
+   */
   recenter(): void {
+    let pinned = false;
+    for (const n of this.nodes) {
+      if (n.fx == null && n.fy == null) continue;
+      n.fx = null;
+      n.fy = null;
+      pinned = true;
+    }
+    if (pinned) this.simulation.alpha(0.3).restart();
     const c = this.nodes.find((n) => n.id === this.centre);
     const t = zoomIdentity.translate(this.width / 2 - (c?.x ?? 0), this.height / 2 - (c?.y ?? 0));
     select<HTMLCanvasElement, unknown>(this.canvas).call(this.zoomBehavior.transform, t);
@@ -223,11 +249,7 @@ export class GraphRenderer {
     this.canvas.removeEventListener("pointermove", this.onPointerMove);
     if (this.frame) this.win.cancelAnimationFrame(this.frame);
     this.win.clearTimeout(this.clickTimer);
-    for (const { img } of this.images.values()) {
-      img.onload = null;
-      img.onerror = null;
-    }
-    this.images.clear();
+    this.forgetImages(new Set());
     this.nodes = [];
     this.links = [];
     this.canvas.remove();
@@ -276,8 +298,9 @@ export class GraphRenderer {
   private resize(): void {
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
-    if (width === this.width && height === this.height) return;
     const dpr = this.win.devicePixelRatio || 1;
+    if (width === this.width && height === this.height && dpr === this.dpr) return;
+    this.dpr = dpr;
     this.canvas.width = Math.max(1, Math.round(width * dpr));
     this.canvas.height = Math.max(1, Math.round(height * dpr));
     this.canvas.style.width = `${width}px`;
@@ -290,6 +313,7 @@ export class GraphRenderer {
     const k = this.transform.k;
     select<HTMLCanvasElement, unknown>(this.canvas).call(this.zoomBehavior.translateBy, dx / k, dy / k);
     this.requestDraw();
+    if (width > 0 && height > 0) this.events.onResize?.();
   }
 
   private readStyle(): void {
@@ -317,6 +341,16 @@ export class GraphRenderer {
     });
   }
 
+  /** Drops the loaded photos that are not in `keep` (a rebuild without them, or the end). */
+  private forgetImages(keep: Set<string>): void {
+    for (const [src, { img }] of this.images) {
+      if (keep.has(src)) continue;
+      img.onload = null;
+      img.onerror = null;
+      this.images.delete(src);
+    }
+  }
+
   private image(src: string): HTMLImageElement | undefined {
     let entry = this.images.get(src);
     if (!entry) {
@@ -341,7 +375,8 @@ export class GraphRenderer {
   private draw(): void {
     const ctx = this.ctx;
     if (!ctx || this.destroyed) return;
-    const dpr = this.win.devicePixelRatio || 1;
+    // The ratio the canvas was sized for: the drawing must match the canvas's pixels.
+    const dpr = this.dpr;
     const { k, x, y } = this.transform;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
