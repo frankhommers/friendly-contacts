@@ -170,6 +170,24 @@ book's name; below that is written as **<book>**.
       `[[<folder>/<name>/index|<name>]]`. Rename a contact through Sync: only the folder is renamed, the note stays
       `index`. Import a server contact that other notes name in a relationship without a note: those entries become
       links to the new note.
+- [ ] **Folder per contact: fixed note name with a single contact:** in a contacts folder with only Jan
+      (`<folder>/Jan/index.md`, **Folder note name** `index`) and a contact note `Sem.md` that is not in a folder yet,
+      add `children: [[Sem]]` to Jan with mirroring on. Sem gets `parents: [[<folder>/Jan/index|Jan]]`, not
+      `[[index|Jan]]`. **Sync** Sem: the server card's `RELATED;TYPE=parent` line has Jan's UID. Run *Put each contact
+      in its own folder* (now there are two `index.md`): Sem's entry still opens Jan, and a second Sync of Sem
+      changes nothing on the server.
+- [ ] **Folder per contact: rename with mirroring on:** with `index` as folder note name, give Jan a child Sem (Sem
+      gets `parents: [[<folder>/Jan/index|Jan]]`). Change Jan's `name` and Sync with the rename ticked: Sem's entry is
+      now `[[<folder>/<new name>/index|<new name>]]`. A label you typed yourself (`[[<folder>/Jan/index|Dad]]`) keeps
+      `Dad` and gets the new path.
+- [ ] **Folder per contact: rename with Folder Notes "Sync folder name" on:** install Folder Notes (*Inside the
+      folder*, name `{{folder_name}}`, *Sync folder name* on) and use `{{name}}` here. Rename a contact through Sync:
+      the folder and the note carry the new name once, no error, nothing doubled, and the poem stays in the folder.
+- [ ] **Folder per contact: other settings:** with contacts in `<name>/<name>.md` folders, set **Folder note name**
+      to `index`. The settings page says "N contacts are in folders made with other settings." Run *Put each contact
+      in its own folder*: those contacts are skipped ("already in a folder (different settings)" in the console),
+      nothing is nested. Open such a contact's note and create a new contact: it is created next to that folder,
+      not in it.
 - [ ] **Folder per contact: Copy from Folder Notes:** with the Folder Notes plugin installed and set to another name or
       to "parent folder", the plugin's section shows "Folder Notes uses different settings." Click **Copy from Folder
       Notes**: name and location follow, the warning goes. With Folder Notes set to a type other than `.md`, or to
@@ -177,6 +195,12 @@ book's name; below that is written as **<book>**.
 - [ ] **Folder per contact: take out:** with the poem still in Jan's folder, run *Take contacts out of their folders*.
       Every contact note is `<contacts folder>/<name>.md` again. Folders without other files are gone; Jan's folder
       stays with `poem.md` in it, and the notice counts it as kept.
+- [ ] **Folder per contact: take out with Folder Notes deleting folder notes:** set Folder Notes to *Storage
+      location* "In the parent folder" with *Delete folder notes when deleting the folder* on. Put the contacts in
+      folders (*Inside the folder* here), then run *Take contacts out of their folders*: every contact note survives
+      as `<contacts folder>/<name>.md` (for a moment it is called `<name> (moving).md`) and the empty folders are gone.
+      Switch this plugin to *Next to the folder*, put the contacts in folders and take them out again: the notes
+      stay, the empty folders stay too, and the notice says "left N empty folders".
 - [ ] **Folder per contact: Move contacts to folder…:** put the contacts in folders again, then run *Move contacts to
       folder…* and pick a new folder. Every contact moves with its whole folder (the poem too), the "Contacts folder
       location" setting follows and links resolve. Try a target that already has a folder with a contact's name: that
