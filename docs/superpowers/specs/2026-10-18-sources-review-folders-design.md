@@ -446,7 +446,9 @@ Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Androi
   in the form phones understand." and Apply (no property rows). Lines another app wrote (a name without the hint, a
   `RELATED` line with several types) stay as they are.
 - Relation values of the card and the base are compared in the note's link form (a name that resolves to a contact
-  becomes that contact's link text), so a phone that drops the hint causes no difference.
+  becomes that contact's link text), so a phone that drops the hint causes no difference. A name Obsidian does not
+  resolve (a contact in its own folder, its note `index`) is matched to the one contact note with that display name
+  (ignoring case); several are ambiguous; with none, the address book listing is asked.
 - A new vCard 3.0 card always has `N` (empty components without name parts).
 
 ### New cards and address books
