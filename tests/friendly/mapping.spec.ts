@@ -243,7 +243,17 @@ describe('relationship labels', () => {
     const order = names(DEFAULT_MAPPING);
     expect(order.indexOf('partner')).toBe(order.indexOf('spouse') + 1);
     const partner = relationRows(DEFAULT_MAPPING).find((r) => r.property === 'partner')!;
-    expect(partner).toMatchObject({ types: ['sweetheart'], mirror: 'partner', single: true, write: 'RELATED;TYPE=sweetheart' });
+    expect(partner).toMatchObject({
+      types: ['sweetheart', 'partner'],
+      mirror: 'partner',
+      single: true,
+      write: 'RELATED;TYPE=sweetheart',
+    });
+  });
+
+  it('the partner row reads RELATED;TYPE=partner too (DAVx5 writes Android\'s Partner so on 4.0)', () => {
+    expect(rowsFor('RELATED;TYPE=sweetheart;VALUE=text:Sanne')).toEqual(['partner']);
+    expect(rowsFor('RELATED;TYPE=partner;VALUE=text:Sanne')).toEqual(['partner']);
   });
 
   it('the anniversary row has the Apple date label', () => {
@@ -317,6 +327,25 @@ describe('mapping migration', () => {
     const once = migrateMapping(legacyMapping());
     expect(migrateMapping(once)).toEqual(once);
     expect(migrateMapping(DEFAULT_MAPPING)).toEqual(DEFAULT_MAPPING);
+  });
+
+  it('migration lets a migrated partner row read the partner type too, once', () => {
+    const alpha7 = migrateMapping(legacyMapping()).map((r) =>
+      r.kind === 'relation' && r.types[0] === 'sweetheart' ? { ...r, property: 'vriendin', mirror: 'vriendin', types: ['sweetheart'] } : r,
+    );
+    const migrated = migrateMapping(alpha7);
+    expect(relationRows(migrated).find((r) => r.property === 'vriendin')!.types).toEqual(['sweetheart', 'partner']);
+    expect(migrateMapping(migrated)).toEqual(migrated);
+    expect(validateMapping(migrated)).toEqual([]);
+    // Only the row that writes sweetheart; and not when another row already reads partner.
+    expect(relationRows(migrated).filter((r) => r.types.includes('partner'))).toHaveLength(1);
+    const taken = [
+      ...alpha7,
+      { kind: 'relation', property: 'lovers', types: ['partner'], write: 'RELATED;TYPE=partner', labels: ['Lover'] } as MappingRow,
+    ];
+    expect(relationRows(migrateMapping(taken)).find((r) => r.property === 'vriendin')!.types).toEqual(['sweetheart']);
+    const added = migrateMapping([...legacyMapping(), taken[taken.length - 1]]);
+    expect(relationRows(added).find((r) => r.property === 'partner')!.types).toEqual(['sweetheart']);
   });
 
   it('migration does not change its input', () => {

@@ -101,7 +101,8 @@ export const DEFAULT_MAPPING: MappingRow[] = [
   field('photo', ['PHOTO[*]'], 'PHOTO'),
   field('uid', ['UID'], 'UID'),
   relation('spouse', ['spouse'], ['Spouse'], 'spouse', true),
-  relation('partner', ['sweetheart'], ['Partner'], 'partner', true),
+  // Written as `sweetheart` (vCard 4.0); `partner` is read too: DAVx5 writes Android's Partner so on a 4.0 card.
+  relation('partner', ['sweetheart', 'partner'], ['Partner'], 'partner', true),
   relation('children', ['child'], ['Child'], 'parents'),
   relation('parents', ['parent'], ['Parent', 'Mother', 'Father'], 'children'),
   relation('siblings', ['sibling'], ['Sibling', 'Brother', 'Sister'], 'siblings'),
@@ -244,20 +245,27 @@ const ROWS_NEW_IN_PART_6 = ['sweetheart'];
 
 const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
+/** Types a stored row with this first type reads besides its own, added once by the migration. */
+const TYPES_READ_SINCE: Record<string, string[]> = { sweetheart: ['partner'] };
+
 /**
  * Brings a stored mapping up to date: relation rows without `labels` get those of the default row with the same
  * first type (a custom type: itself, capitalised), the rows introduced by this release (`partner`) are added right
  * after the stored row of the default row before them, and the row that writes `ANNIVERSARY` gets its date label.
+ * The row that writes `sweetheart` reads `partner` too (unless another row already reads it).
  * Rows are never renamed or removed; running it again changes nothing, and a default row the owner deleted is not
  * brought back (only the rows in `ROWS_NEW_IN_PART_6` are ever added).
  * A new row is not added when its name is already used by another row (the mapping would be invalid).
  */
 export function migrateMapping(stored: MappingRow[]): MappingRow[] {
+  const reads = (type: string): boolean => stored.some((r) => r.kind === 'relation' && r.types.includes(type));
   const rows: MappingRow[] = stored.map((row) => {
     if (row.kind === 'relation') {
-      if (Array.isArray(row.labels)) return { ...row };
+      const extra = (TYPES_READ_SINCE[row.types[0]] ?? []).filter((type) => !reads(type));
+      const types = extra.length > 0 ? [...row.types, ...extra] : [...row.types];
+      if (Array.isArray(row.labels)) return { ...row, types };
       const labels = defaultRelation(row.types[0])?.labels ?? (row.types[0] ? [capitalised(row.types[0])] : []);
-      return { ...row, labels: [...labels] };
+      return { ...row, types, labels: [...labels] };
     }
     if (row.kind === 'field' && row.appleDateLabel === undefined && row.write.trim().toUpperCase() === 'ANNIVERSARY') {
       return { ...row, appleDateLabel: 'Anniversary' };
@@ -270,7 +278,9 @@ export function migrateMapping(stored: MappingRow[]): MappingRow[] {
   for (const [d, row] of defaults.entries()) {
     if (!ROWS_NEW_IN_PART_6.includes(row.types[0]) || indexOfType(row.types[0]) >= 0) continue;
     if (rows.some((r) => r.property === row.property)) continue;
-    const added: RelationRow = { ...row, types: [...row.types], labels: [...row.labels] };
+    // A type another row already reads stays that row's.
+    const types = row.types.filter((type, i) => i === 0 || !reads(type));
+    const added: RelationRow = { ...row, types, labels: [...row.labels] };
     if (row.mirror !== undefined) {
       // The mirror is named after the stored row of the mirrored type, which may have been renamed.
       const mirrored = defaults.find((r) => r.property === row.mirror);

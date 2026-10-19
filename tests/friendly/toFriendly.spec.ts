@@ -208,6 +208,7 @@ describe('reading every form', () => {
 
   it('reads vCard 4.0 RELATED text values with and without a hint', () => {
     expect(translate(card('RELATED;TYPE=sweetheart;VALUE=text:Sanne')).props).toEqual({ partner: '[[Sanne]]' });
+    expect(translate(card('RELATED;TYPE=partner;VALUE=text:Sanne')).props).toEqual({ partner: '[[Sanne]]' });
     expect(translate(card('RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=anna-uid:Anna')).props).toEqual({
       children: ['[[Anna de Vries]]'],
     });
