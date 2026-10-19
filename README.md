@@ -414,24 +414,26 @@ OpenID Connect (OAuth2) is not supported at this time.
 
 #### Syncing a contact
 
-Run the command **Sync this contact** (or click the sync icon on the contact in the sidebar). If the note and the address book card are the same, you only get the notice "Up to date". Otherwise a review screen opens. Nothing is written until you click **Apply**.
+Run the command **Sync this contact**, or click the sync icon on the contact in the sidebar and choose **Sync**. If the note and the address book card are the same, you only get the notice "Up to date". Otherwise a review screen opens. Nothing about this contact is written until you click **Apply** (an **Import**, see below, first creates the other person's note).
 
-The screen has one row for each property that differs, with the address book value (labelled Radicale, whatever your server is), the Obsidian value and the Result. Click **Radicale** or **Obsidian** in a row to choose which value wins, or type your own text in the "Edit result" field. Photos are shown as small pictures. **All from Radicale** and **All from Obsidian** choose a side for every row at once, and **Show all** also lists the properties that are the same on both sides.
+The screen has one row for each property that differs, with the address book value, the Obsidian value and the Result. The address book column is labelled with the name of the address book (for example "Family"). Click the address book's name or **Obsidian** in a row to choose which value wins, or type your own text in the "Edit result" field. Values with several lines keep their line breaks, and their "Edit result" field has several lines too. Photos are shown as small pictures. **All from <address book>** and **All from Obsidian** choose a side for every row at once, and **Show all** also lists the properties that are the same on both sides.
 
-Most rows are already chosen for you. The plugin remembers the card as it was after the last sync. A property that changed only on the server is preselected from Radicale, and one that changed only in Obsidian is preselected from Obsidian. For a card that is not on the server yet ("New card in ..."), everything comes from Obsidian.
+Most rows are already chosen for you. The plugin remembers the card as it was after the last sync. A property that changed only on the server is preselected from the address book, and one that changed only in Obsidian is preselected from Obsidian. For a card that is not on the server yet ("New card in ..."), everything comes from Obsidian: the address book column says "Not in <address book> yet", and there are no address book buttons.
 
-When a property changed on both sides (or there is no earlier sync to compare with), it is a conflict. The row says "Conflict: choose one", and **Apply** stays disabled until you have decided every conflict.
+When a property changed on both sides (or there is no earlier sync to compare with), it is a conflict. The row says "Conflict: choose one", and **Apply** stays disabled until you have decided every conflict; next to it the screen says how many are left ("Decide 2 conflicts"). An empty "Edit result" does not decide a conflict. In a row without a conflict, an empty "Edit result" removes the property, and the screen says "(will be removed)".
 
-**Cancel** (or Escape) closes the screen and writes nothing, in the note or on the server.
+If the contact list of an address book could not be read, the screen says so at the top: relationships to people who are only in that address book may then show as changed.
+
+**Cancel** (or Escape) closes the screen. Nothing about this contact is written, in the note or on the server (a note made with **Import** stays).
 
 Some things come with a choice:
 
 - **Also changes** lists what happens in other contact notes because of your choices, for example "Sem: parents gets [[Jan]]", when relationships are mirrored.
-- If a relationship points to someone who is on the server but has no note yet, the row shows an **Import** button for that person. It creates the note, and the review opens again.
+- If a relationship points to someone who is on the server but has no note yet, the row shows an **Import** button for that person. It creates the note, and the review opens again. When relationships are mirrored, the new note's relationship can be added back to this contact's note, so the screen may open once more with that change.
 - If your choices change the contact's name, **Rename note to ...** is offered, ticked. Untick it to keep the file name. It is disabled when another note in the folder already has that name.
 - To move a contact to another address book, change `source:` in the note to the name of that book and sync. The screen shows "Address book: <from> -> <to>", and Apply moves the card.
 
-If the card changes on the server while the screen is open, you are told and the screen opens again with the new values.
+If the card changed on the server since the screen opened, Apply tells you and the screen opens again with the new values.
 
 ---
 

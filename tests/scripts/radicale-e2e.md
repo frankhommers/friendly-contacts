@@ -39,8 +39,9 @@ Scenarios:
    `ABC-DEF.vcf`. The next Sync is `unchanged`.
 3. A server email edit is pulled into the note, with no PUT.
 4. The same field is edited on both sides. The review screen cannot be applied until it is decided; the fake review
-   picks Radicale (4) or Obsidian (4b). With Radicale the note takes the server value and nothing is sent. With
-   Obsidian the note's value ends up on the server card and only that line (and REV) differs.
+   picks the server side (4) or Obsidian (4b). With the server side the note takes the server value and nothing is
+   sent. With Obsidian the note's value ends up on the server card and only that line (and REV) differs. 4b starts
+   from the server card scenario 4 left behind.
 5. `children: ['[[Sem]]']` becomes `RELATED;TYPE=child:urn:uuid:<Sem's UID>` on the server.
 6. `met-via: '[[Piet]]'` is never sent to the server.
 7. A new note without `uid` is `created`. The card is on the server, and the base has the server's href.
@@ -93,33 +94,45 @@ Install the build:
 4. In its settings, click **Add address book** (or use the one already there). In its block enter the URL
    `http://127.0.0.1:5299/frank/contacts/`, user `frank` and password `secret`, then click **Enable**.
 
-Then check:
+Then check. The review screen labels the server column, its pick buttons and "All from ..." with the address
+book's name; below that is written as **<book>**.
 
 - [ ] **Import:** Insights panel → import the unknown remote contact. The note shows `name`, `mobile`, `email`,
       `work-email`, `city`, … and no `X-CREATED`. `.obsidian/plugins/friendly-contacts/sync-state/<book id>/` holds the card.
-- [ ] **Sync with no differences:** right after an import (or a Sync), run the command *Sync this contact* (or the
-      sidebar's sync icon). A notice says "Up to date" and no review screen opens.
+- [ ] **Sync with no differences:** right after an import (or a Sync), run the command *Sync this contact* (or click
+      the sidebar's sync icon and choose **Sync**). A notice says "Up to date" and no review screen opens.
 - [ ] **Server-only change:** change the email with `curl -T`, then Sync. The review screen lists only `email`, with
-      **Radicale** already selected as the result. Click **Apply**: the note shows the new email.
+      **<book>** already selected as the result. Click **Apply**: the note shows the new email.
 - [ ] **Local-only change:** edit `mobile` in the note, then Sync. Only `mobile` is listed, with **Obsidian**
       selected. Apply. With `curl`, only the TEL value (and REV) changed, and there is still one card.
 - [ ] **Conflict:** edit `title` in the note and on the server, then Sync. The `title` row says "Conflict: choose
-      one", nothing is selected, and **Apply** is disabled. Choose a side: Apply is enabled. Check both choices
-      (Radicale: the note takes the server value; Obsidian: the server card gets the note's value).
-- [ ] **All from Radicale / All from Obsidian:** with a few differing properties (include a conflict), click each
+      one", nothing is selected, **Apply** is disabled and "Decide 1 conflict" is shown next to it. Choose a side:
+      Apply is enabled. Check both choices (**<book>**: the note takes the server value; Obsidian: the server card
+      gets the note's value).
+- [ ] **All from <book> / All from Obsidian:** with a few differing properties (include a conflict), click each
       button. Every listed row follows the button, and Apply is enabled.
 - [ ] **Cancel:** open the review with a difference, then click **Cancel** (and try Escape). The note and the server
       card are unchanged, and the next Sync shows the same difference.
 - [ ] **Custom edit:** in a text row, type your own value in the "Edit result" field. The Result column shows it. Apply:
-      the note and the server card both have your text. Clear the field: the property is removed on both sides.
-- [ ] **New card:** make a contact note without `uid` and Sync. The title is "New card in <book name>", every row has
+      the note and the server card both have your text. Clear the field in a row without a conflict: "(will be
+      removed)" appears, and after Apply the property is removed on both sides. Clear it in a conflict row: the row
+      is a conflict again and Apply is disabled.
+- [ ] **Multi-line value:** give `note` two lines in the note and Sync. Both columns keep the line break, and the
+      "Edit result" field has several lines.
+- [ ] **New card:** make a contact note without `uid` and Sync. The title is "New card in <book>", the server column
+      says "Not in <book> yet", there is no **<book>** button in the rows and no **All from <book>**, every row has
       **Obsidian** selected, and Apply creates the card (check with `curl`).
-- [ ] **Show all:** tick **Show all**. The unchanged properties appear dimmed, with their value and no buttons.
+- [ ] **Show all:** tick **Show all**. The unchanged properties appear dimmed, with their value and no buttons;
+      `uid` is never listed.
+- [ ] **Address book that cannot be read:** with a second address book enabled, stop its server (or break its
+      password), then Sync a contact in the first book. The review screen starts with "Could not read <name>;
+      relationships to people only in that address book may show as changed."
 - [ ] **Photo difference:** put a different photo on the server card (or change `photo` in the note). The row shows
       thumbnails of both photos, and the chosen one in Result.
 - [ ] **Relationship with a person only on the server:** add `RELATED;TYPE=child:urn:uuid:<uid of a card that has no
       note>` to the server card, then Sync. The row lists that person with an **Import** button. Click it: the
       review closes, a note is created for that person, and the review opens again, now showing the person by name.
+      With mirroring on, the screen may open once more with the relationship the new note added back.
 - [ ] **Also changes:** add a `children` link in the note to a contact note and Sync. The review lists the mirror
       write under **Also changes** (for example `Sem: parents gets [[Jan de Vries]]`), and choosing the other side
       changes that list.
