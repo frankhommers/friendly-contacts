@@ -44,6 +44,17 @@ graph (idea only, no code).
 
 ---
 
+### Task 0: Small relationship follow-ups from the Part 4 review
+
+**Files:** `src/ui/modals/addRelationshipModal.ts`, `src/contacts/relationEdit.ts`, tests in `tests/addRelationship.spec.ts`
+/ `tests/relationEdit.spec.ts`.
+
+- The "already has a spouse" warning (ConfirmModal text and Notice) only appears when mirroring is on for this device
+  (`mirrorRelationsOnThisDevice(app)`); otherwise nothing would have been mirrored anyway. Test the pure decision.
+- Replacing a same-name grey entry in a single relation that was hand-edited into a list must not silently drop the
+  other entries: ask with the existing ConfirmModal (`Replace <list> with <name> as <property>?`). Test.
+- [ ] TDD; full suite + build; commit `fix(relations): warnings and replacements that match what will happen`.
+
 ### Task 1: Graph model
 
 **Files:**
@@ -95,7 +106,8 @@ graph (idea only, no code).
 **Interfaces:**
 - Produces:
   - `graphContacts(app: App, rows: MappingRow[]): GraphContact[]` — every contact note (`contactNotes(app)`), `name`
-    = `name` property, else the file's basename; `photo` = `photo` property when it is a data URI or http(s) URL
+    = the contact's display name as the rest of the plugin computes it (`contactDisplayName` in
+    `src/contacts/layoutNotes.ts`: `name` property, else the folder/file name — never `index`); `photo` = `photo` property when it is a data URI or http(s) URL
     (bare base64 becomes `data:image/jpeg;base64,…`); snapshot = `relationSnapshot(frontmatter, rows, resolve)` with
     `resolve` = `getFirstLinkpathDest(linkpath, file.path)?.path` when that file is a contact note.
   - `graphCentre(app: App, meUid: string, activePath: string | undefined): string | undefined` — the note whose UID is
@@ -130,9 +142,9 @@ graph (idea only, no code).
     `names` and `photos` tiers using the label as seen from the end nearer the centre (`labelFromA`/`labelFromB`);
     d3-zoom for pan/zoom; d3-drag for nodes (dragged node stays where dropped).
   - Interaction: click a node → it becomes the centre; double-click or Mod-click → open the note
-    (`app.workspace.openLinkText(path, '')`); click a ghost → Notice with the name (Part 1's import offers it if the
-    server has it: if `remoteContacts()` resolves the ghost's name to exactly one UID, a ConfirmModal `Import <name>?`
-    imports it through the Part 1 import function).
+    (`app.workspace.openLinkText(path, '')`); click a ghost → if sync is available and `remoteCardFor` (src/contacts/relationEdit.ts) finds exactly one
+    server card for the ghost's name, a ConfirmModal `Import <name>?` imports it via `importFromServer`
+    (src/ui/modals/importContactModal.ts); otherwise a Notice `<name> has no note.`
   - Live update: `metadataCache.on('changed')` for contact notes, debounced 500 ms, rebuilds the graph keeping the
     positions of existing nodes.
   - Commands: `friendly-contacts-people-graph` "Open people graph" (centre from `graphCentre`), and
