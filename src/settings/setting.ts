@@ -40,5 +40,6 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
   friendly: {
     mapping: DEFAULT_MAPPING
   },
-  layout: DEFAULT_LAYOUT
+  layout: DEFAULT_LAYOUT,
+  meUid: ''
 }

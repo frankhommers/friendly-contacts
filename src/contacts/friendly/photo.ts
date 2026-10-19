@@ -35,3 +35,16 @@ export function photoLine(value: string, version: string): { params: [string, st
   const subtype = (mime.split('/')[1] ?? 'jpeg').toUpperCase();
   return { params: [['ENCODING', 'b'], ['TYPE', subtype]], value: data };
 }
+
+/**
+ * What an image element can show for a `photo` value: a data URI or http(s) URL as it is, bare base64 as a JPEG data
+ * URI. Undefined for anything else.
+ */
+export function photoImageSrc(value: string): string | undefined {
+  const text = value.trim();
+  if (DATA_URI.test(text) || URL_VALUE.test(text)) return text;
+  if (/^[A-Za-z0-9+/=\s]+$/.test(text) && text.replace(/\s+/g, '') !== '') {
+    return `data:image/jpeg;base64,${text.replace(/\s+/g, '')}`;
+  }
+  return undefined;
+}

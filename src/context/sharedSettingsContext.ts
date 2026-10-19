@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/settin
 import { ContactsPluginSettings } from "src/settings/settings.d";
 import { migrateSources } from "src/sync/sources";
 import { deepCloneObject } from "src/util/deepCloneObject";
+import { cleanUid } from "src/util/vcard";
 
 export const settings = signal<ContactsPluginSettings | undefined>(undefined);
 let saveData: (data: any) => Promise<void>;
@@ -48,7 +49,8 @@ export async function initSettings(
       friendly: {
         mapping: loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping
       },
-      layout: normalizeLayout(loaded.layout)
+      layout: normalizeLayout(loaded.layout),
+      meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid
     };
     await setSettings(initializedSettings);
     return { migratedFrom };

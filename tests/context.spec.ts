@@ -34,6 +34,7 @@ const mockSettings: ContactsPluginSettings = {
   createFieldsKeys:['N.FN'],
   friendly: { mapping: [], mirrorRelations: false } as ContactsPluginSettings['friendly'],
   layout: { layout: 'note', noteName: '{{name}}', location: 'inside' },
+  meUid: '',
 };
 
 const testDefaultSettings = {
@@ -122,6 +123,16 @@ describe('sharedSettingsContext', () => {
     expect(getSettings().layout).toEqual({ layout: 'folder', noteName: 'index', location: 'next' });
     await initSettings(async () => ({ ...mockSettings, layout: { layout: 'tree', noteName: 5, location: 'next' } }), saveData);
     expect(getSettings().layout).toEqual({ layout: 'note', noteName: '{{name}}', location: 'next' });
+  });
+
+  it('meUid defaults to none, is kept cleaned and repaired when it is not text', async () => {
+    const { meUid: _omitted, ...legacy } = mockSettings;
+    await initSettings(async () => legacy, saveData);
+    expect(getSettings().meUid).toBe('');
+    await initSettings(async () => ({ ...mockSettings, meUid: ' urn:uuid:abc-1 ' }), saveData);
+    expect(getSettings().meUid).toBe('abc-1');
+    await initSettings(async () => ({ ...mockSettings, meUid: 5 }), saveData);
+    expect(getSettings().meUid).toBe('');
   });
 
   it('replaces the old default contact fields with the friendly ones', async () => {

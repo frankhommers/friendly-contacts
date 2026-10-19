@@ -5,6 +5,8 @@ import { contactNotes } from "src/contacts/obsidianNotes";
 import { normalizeFolder } from "src/contacts/moveContacts";
 import { insightQueueStore } from "src/insights/insightsQueStore";
 import { FolderSuggest } from "src/settings/FolderSuggest";
+import { contactNameByUid } from "src/graph/vaultGraph";
+import { MePickerModal } from "src/ui/modals/mePickerModal";
 import { confirmMoveContacts } from "src/ui/modals/moveContactsModal";
 
 interface MasterSettingProps {
@@ -109,6 +111,30 @@ export function MasterSetting({ app }: MasterSettingProps) {
           .onChange(async (value) => {
             await updateSetting('defaultHashtag', value);
           }));
+
+      // "This is me": the people graph is drawn around this contact. Stored as the contact's UID.
+      const meSetting = new Setting(containerRef.current).setName("This is me");
+      const showMe = () => {
+        const uid = getSettings().meUid;
+        const name = uid === '' ? undefined : contactNameByUid(app, uid);
+        meSetting.setDesc(
+          uid === ''
+            ? "The people graph centres on you. Not chosen: it centres on the contact you have open."
+            : name !== undefined
+              ? `The people graph centres on ${name}.`
+              : "The chosen contact was not found. Choose again or clear.",
+        );
+      };
+      const saveMe = async (uid: string) => {
+        await updateSetting('meUid', uid);
+        showMe();
+      };
+      meSetting
+        .addButton((button) => button.setButtonText("Choose").onClick(() => {
+          new MePickerModal(app, (candidate) => void saveMe(candidate.uid)).open();
+        }))
+        .addButton((button) => button.setButtonText("Clear").onClick(() => void saveMe('')));
+      showMe();
     }
   }, []);
 

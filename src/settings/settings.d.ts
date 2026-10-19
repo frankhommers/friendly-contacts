@@ -16,6 +16,8 @@ export interface ContactsPluginSettings {
   friendly: FriendlySettings;
   /** Whether a contact is one note or a folder with a folder note. */
   layout: LayoutSettings;
+  /** UID (cleaned) of the contact that is the vault owner ("This is me"); '' when none is chosen. */
+  meUid: string;
 }
 
 export interface FriendlySettings {
