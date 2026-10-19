@@ -6,7 +6,7 @@
 import { MappingRow } from '../contacts/friendly/mapping';
 import { planMirrorWrites, relationSnapshot, RelationSnapshot, toLink } from '../contacts/friendly/relations';
 import { FriendlyValue, newCard } from '../contacts/friendly/translate';
-import { contactFileName } from '../contacts/friendlyNotes';
+import { contactFileName } from '../contacts/friendly/fileName';
 
 type Props = Record<string, FriendlyValue>;
 

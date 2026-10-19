@@ -9,12 +9,12 @@ import { coerceNoteProps } from 'src/contacts/friendly/merge';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, newCard, toFriendly } from 'src/contacts/friendly/translate';
 import { renderFrontmatter } from 'src/contacts/frontmatterYaml';
+export { contactFileName } from 'src/contacts/friendly/fileName';
 import { parseKey, ParsedKey } from 'src/contacts/contactDataKeys';
 import { parseRecord } from 'src/contacts/vcard/parse';
 import { recordToVCard } from 'src/contacts/vcard/recordToVCard';
 import { VCardForObsidianRecord, VCardSupportedKey } from 'src/contacts/vcard/shared/vcard.d';
 import { StructuredFields } from 'src/contacts/vcard/shared/structuredFields';
-import { createNameSlug } from 'src/util/nameUtils';
 
 /** The legacy record has no relations, so links never need resolving here. */
 const NO_RELATIONS: RelationContext = {
@@ -132,27 +132,6 @@ export function renderFriendlyNote(
   });
   const tags = hashtags.trim();
   return `${renderFrontmatter(entries)}\n${tags === '' ? '' : `${tags}\n`}`;
-}
-
-/**
- * File name (without `.md`) a card gets on import, from its N and FN values as on the wire:
- * the N parts for a person, else FN. Undefined when the card has no name.
- */
-export function contactFileName(n: string | undefined, fn: string | undefined): string | undefined {
-  const parts = n ? splitStructured(n).map(unescapeText) : [];
-  const record: Record<string, string | undefined> = {
-    'N.FN': parts[0],
-    'N.GN': parts[1],
-    'N.MN': parts[2],
-    'N.PREFIX': parts[3],
-    'N.SUFFIX': parts[4],
-    FN: fn ? unescapeText(fn) : undefined,
-  };
-  try {
-    return createNameSlug(record as VCardForObsidianRecord) || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** A `.vcf` file with several cards -> one text per card, each starting at its `BEGIN:VCARD`. */

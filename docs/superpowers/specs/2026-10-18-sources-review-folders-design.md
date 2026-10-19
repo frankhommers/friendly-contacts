@@ -203,9 +203,12 @@ greyed out *(builder's call)*). Each row:
 - If the chosen result changes relationships, a short "Also changes" section lists the mirror writes the result will
   trigger on other notes ("Sem: parents gets [[Jan]]"). These are local note changes made by the existing mirroring after
   Apply; the other person's card reaches Radicale when that person is synced.
-- If the result changes the contact's computed file name (`contactFileName` from N parts, else FN) compared with the
-  computed file name of the note's own values before Sync *(builder's call)*, a checkbox "Rename note to <new name>" (in folder layout: "Rename
-  folder and note") is shown, checked by default. A target that already exists: checkbox disabled with the reason.
+- If the computed file name of the result (`contactFileName` from N parts, else FN) differs from the note's current
+  file name and from the computed file name of the base (without a base: of the note's own values before Sync)
+  *(builder's call)*, a checkbox "Rename note to <new name>" (in folder layout: "Rename folder and note") is shown,
+  checked by default. So a name changed since the last Sync on either side offers the rename; a note renamed by hand
+  whose name values did not change is left alone; a declined rename is not offered again (the base then holds the
+  new name). A target that already exists: checkbox disabled with the reason.
 - A source change shows the line described in Part 1.
 
 ### Apply

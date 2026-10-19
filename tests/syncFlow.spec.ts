@@ -36,7 +36,7 @@ function fakeBook(id: string, name: string) {
   const pushes: { vcard: VCardRaw; opts?: PushOptions; status: number }[] = [];
   const deletes: string[] = [];
   let counter = 0;
-  const options = { failPut: undefined as number | undefined };
+  const options = { failPut: undefined as number | undefined, searchFails: false };
   const uidOf = (raw: string) => parseCard(raw).find((l) => l.name === 'UID')?.value;
   const put = (href: string, raw: string) => {
     const etag = `${id}-${++counter}`;
@@ -45,6 +45,7 @@ function fakeBook(id: string, name: string) {
   };
   const adapter: AdapterInterface = {
     async getMetaByUid(uid: string): Promise<VCardMeta | AppHttpResponse | undefined> {
+      if (options.searchFails) return { status: 503, data: '', headers: {}, errorMessage: 'HTTP 503' };
       const found = [...cards.entries()].find(([, c]) => cleanUid(uidOf(c.raw)) === cleanUid(uid));
       if (!found) return undefined;
       const [href, c] = found;
@@ -238,6 +239,20 @@ describe('syncFlow: which address book', () => {
     expect(t.requests).toEqual([]);
   });
 
+  it('a book that cannot be searched fails before anything is written', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2' } });
+    t.radicale.seed(card(), false);
+    t.family.options.searchFails = true;
+    t.radicale.options.searchFails = true;
+    expect(await t.run()).toEqual({
+      kind: 'failed',
+      message: 'could not search Radicale (HTTP 503), Family (HTTP 503), and the card could be there',
+    });
+    expect(t.notices).toEqual(['Not syncing Jan de Vries: could not search Radicale (HTTP 503), Family (HTTP 503), and the card could be there.']);
+    expect(t.requests).toEqual([]);
+    expect(pushCount(t)).toBe(0);
+  });
+
   it('a new card opens the review titled with the book', async () => {
     const { uid: _uid, ...withoutUid } = JAN;
     const t = setup({ local: withoutUid });
@@ -358,6 +373,23 @@ describe('syncFlow: review outcomes', () => {
     expect(t.requests[1].moveLine).toBeUndefined();
   });
 
+  it('move re-check that cannot search a book fails and writes nothing', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Family' } });
+    const oldHref = t.radicale.seed(card());
+    t.setScript([
+      () => {
+        t.family.options.searchFails = true;
+        return preselected();
+      },
+    ]);
+    expect(await t.run()).toEqual({ kind: 'failed', message: 'could not search Family (HTTP 503), and the card could be there' });
+    expect(t.notices).toEqual(['Not syncing Jan de Vries: could not search Family (HTTP 503), and the card could be there.']);
+    expect(t.requests).toHaveLength(1);
+    expect(pushCount(t)).toBe(0);
+    expect(t.radicale.cards.get(oldHref)!.raw).toBe(card());
+    expect(t.note.writes).toEqual([]);
+  });
+
   it('source: is written only after the card was written', async () => {
     const t = setup({ local: { ...JAN, mobile: '06-2' } });
     t.radicale.seed(card());
@@ -447,6 +479,56 @@ describe('syncFlow: also changes and rename', () => {
     expect(offered).toEqual({ to: 'Jan Bakker', blocked: 'A note named "Jan Bakker" already exists in this folder.' });
     expect(t.note.renames).toEqual([]);
     expect(t.note.frontmatter.lastname).toBe('Bakker');
+  });
+
+  it('local name edit with a base offers the rename', async () => {
+    const t = setup({ local: { ...JAN, lastname: 'Bakker', name: 'Jan Bakker', source: 'Radicale' } });
+    t.radicale.seed(card());
+    let offered: ReturnType<ReviewRequest['rename']>;
+    t.setScript([
+      (r) => {
+        offered = r.rename(new Map());
+        return preselected();
+      },
+    ]);
+    await t.run();
+    expect(offered).toEqual({ to: 'Jan Bakker' });
+    expect(t.note.renames).toEqual(['Jan Bakker']);
+  });
+
+  it('hand-renamed note with a base and unchanged names does not', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.deps.name = 'Jantje';
+    t.radicale.seed(card());
+    let offered: ReturnType<ReviewRequest['rename']> = { to: 'x' };
+    t.setScript([
+      (r) => {
+        offered = r.rename(new Map());
+        return preselected();
+      },
+    ]);
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pushed' });
+    expect(offered).toBeUndefined();
+    expect(t.note.renames).toEqual([]);
+  });
+
+  it('no base compares with the note\'s values', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.deps.name = 'Jantje';
+    const href = t.radicale.seed(card(), false);
+    t.radicale.put(href, card().replace('FN:Jan de Vries', 'FN:Jan Bakker').replace('N:de Vries;Jan;;;', 'N:Bakker;Jan;;;'));
+    let fromServer: ReturnType<ReviewRequest['rename']>;
+    let fromNote: ReturnType<ReviewRequest['rename']> = { to: 'x' };
+    t.setScript([
+      (r) => {
+        fromServer = r.rename(allFrom(r, 'server'));
+        fromNote = r.rename(allFrom(r, 'local'));
+        return { kind: 'cancel' };
+      },
+    ]);
+    await t.run();
+    expect(fromServer).toEqual({ to: 'Jan Bakker' });
+    expect(fromNote).toBeUndefined();
   });
 
   it('unchecked rename keeps the file name', async () => {

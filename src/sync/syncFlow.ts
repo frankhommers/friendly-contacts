@@ -112,10 +112,21 @@ function sourceProperty(frontmatter: Record<string, unknown>): string | undefine
   return text === '' ? undefined : text;
 }
 
+const sourceNameIn = (sources: Source[]) => (id: string) => sources.find((s) => s.id === id)?.name ?? id;
+
+/** A lookup that failed in some books: the card could be there, so nothing may be created or moved. */
+function searchFailure(failed: { sourceId: string; message: string }[], sourceName: (id: string) => string): string {
+  const which = failed.map((f) => `${sourceName(f.sourceId)} (${f.message})`).join(', ');
+  return `could not search ${which}, and the card could be there`;
+}
+
 type Where = { target: Source; plan: SyncPlan; move?: { from: Source; location: Extract<SyncPlan, { kind: 'move' }>['from'] } };
 
 /** Part 1: the book the note belongs to, a search of every active book for its UID, then sync, adopt, move or refuse. */
-async function chooseSource(deps: SyncFlowDeps, frontmatter: Record<string, unknown>): Promise<Where | { refused: string }> {
+async function chooseSource(
+  deps: SyncFlowDeps,
+  frontmatter: Record<string, unknown>,
+): Promise<Where | { refused: string } | { failed: string }> {
   const { active, sources } = deps;
   if (active.length === 0) return { refused: 'Sync is not set up' };
   const uidValue = coerceNoteProps(frontmatter, deps.rows).props.uid;
@@ -135,15 +146,14 @@ async function chooseSource(deps: SyncFlowDeps, frontmatter: Record<string, unkn
   const own = active.find((s) => s.id === resolved.id);
   if (!own) return { refused: 'Sync is not set up' };
   const byId = (id: string) => active.find((s) => s.id === id);
-  const sourceName = (id: string) => sources.find((s) => s.id === id)?.name ?? id;
+  const sourceName = sourceNameIn(sources);
 
   let plan: SyncPlan = { kind: 'sync', sourceId: own.id };
   if (uid !== '') {
     // Before anything is created or moved, every active book is searched for the exact UID.
     const { found, failed } = await locateCard(active.map((s) => ({ sourceId: s.id, adapter: deps.adapterFor(s) })), uid);
     if (failed.length > 0 && !found.some((f) => f.sourceId === own.id)) {
-      const which = failed.map((f) => `${sourceName(f.sourceId)} (${f.message})`).join(', ');
-      return { refused: `could not search ${which}, and the card could be there` };
+      return { failed: searchFailure(failed, sourceName) };
     }
     const holders: BaseHolder[] = baseIn.map((id) => ({ id, active: active.some((a) => a.id === id) }));
     plan = planSync({ id: own.id, explicit: named !== undefined }, found, sourceName, holders);
@@ -172,6 +182,10 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     deps.notify(`Not syncing ${deps.name}: ${where.refused}.`);
     return end({ kind: 'refused', message: where.refused });
   }
+  if ('failed' in where) {
+    deps.notify(`Not syncing ${deps.name}: ${where.failed}.`);
+    return end({ kind: 'failed', message: where.failed });
+  }
   const { target, plan, move } = where;
 
   const contexts = await deps.contexts();
@@ -199,8 +213,10 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     const server = review.server?.friendly.props ?? {};
     const result = (choices: Map<string, Choice>) => resultProps(review.rows, choices, server);
     const renameTo = (choices: Map<string, Choice>): { to: string; blocked?: string } | undefined => {
-      const to = renameTarget(review.local, result(choices), deps.rows);
-      // The computed name may already be the file name (the note was named after the new values by hand).
+      // A name changed since the last Sync on either side (against the base; without one, the note's values)
+      // renames; a note renamed by hand with unchanged names is left alone, and a declined rename is not offered
+      // again (the base then holds the new name).
+      const to = renameTarget(review.base ?? review.local, result(choices), deps.rows);
       if (to === undefined || to === deps.name) return undefined;
       return deps.nameTaken(to) ? { to, blocked: `A note named "${to}" already exists in this folder.` } : { to };
     };
@@ -221,7 +237,12 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
         deps.active.map((s) => ({ sourceId: s.id, adapter: deps.adapterFor(s) })),
         review.uid,
       );
-      const still = failed.length === 0 && found.length === 1 && found[0].sourceId === move.from.id && found[0].href === move.location.href;
+      if (failed.length > 0) {
+        const message = searchFailure(failed, sourceNameIn(deps.sources));
+        deps.notify(`Not syncing ${deps.name}: ${message}.`);
+        return end({ kind: 'failed', message });
+      }
+      const still = found.length === 1 && found[0].sourceId === move.from.id && found[0].href === move.location.href;
       if (!still) return { kind: 'stale', reason: 'server' };
     }
 
