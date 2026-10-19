@@ -253,6 +253,13 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       return end({ kind: 'failed', message });
     }
 
+    if (!review.server && review.rows.some((r) => r.changed && (decision.choices.get(r.property) ?? r.preselect) === 'server')) {
+      // Defence in depth: the screen offers no server side for a new card; nothing may be applied from one.
+      const message = 'a new card cannot take values from the address book';
+      deps.notify(`${deps.name}: nothing was synced (${message}).`);
+      return end({ kind: 'failed', message });
+    }
+
     if (move) {
       // The card must still be only in the book it moves from; anything else is a change on the server.
       const { found, failed } = await locateCard(

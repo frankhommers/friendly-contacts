@@ -266,6 +266,18 @@ describe('syncFlow: which address book', () => {
 });
 
 describe('syncFlow: review outcomes', () => {
+  it('a new card never takes values from the server: choosing the server side fails and writes nothing', async () => {
+    const { uid: _uid, ...withoutUid } = JAN;
+    const t = setup({ local: withoutUid });
+    t.setScript([(request) => ({ kind: 'apply', choices: allFrom(request, 'server'), rename: false })]);
+    const result = await t.run();
+    expect(result).toMatchObject({ kind: 'failed' });
+    expect(t.notices).toEqual(['Jan de Vries: nothing was synced (a new card cannot take values from the address book).']);
+    expect(pushCount(t)).toBe(0);
+    expect(t.radicale.cards.size).toBe(0);
+    expect(t.note.writes).toEqual([]);
+  });
+
   it('up to date: a Notice, no review, nothing written', async () => {
     const t = setup({ local: { ...JAN, source: 'Radicale' } });
     t.radicale.seed(card());
