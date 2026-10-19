@@ -409,13 +409,18 @@ Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Androi
 
 ### Reading
 
-- `RELATED` with a `urn:uuid:` value (as today), with `VALUE=text` (a name), and with the hint parameter
-  `X-FRIENDLY-UID=<uid>`: the hint wins when it resolves to a contact, else the value.
+- `RELATED` with a `urn:uuid:` value (as today), with `VALUE=text` (a name), without `VALUE=text` and without a URI
+  scheme (a name too), and with the hint parameter `X-FRIENDLY-UID=<uid>`: the hint wins when it resolves to a
+  contact, else the value.
+- A name (`X-ABRELATEDNAMES`, `RELATED` as text) that is `urn:uuid:<uid>` is read like a `urn:uuid:` value: the
+  contact with that UID (DAVx5 turned alpha.6's `RELATED…:urn:uuid:…` lines into such names).
 - `X-ABRELATEDNAMES` with the label of its group (`X-ABLabel`): `_$!<Label>!$_` and plain labels; a comma-separated
-  label (DAVx5 writes e.g. `Domestic-partner, Spouse`) matches when any part matches. The value is a name (with the
+  label (DAVx5 writes a custom Android label of several types as e.g. `Neighbor\, Acquaintance`) matches when any
+  part matches. The value is a name (with the
   hint parameter when the plugin wrote it). Unlabeled or unknown labels are not mapped (the line stays untouched).
 - `X-ABDATE` with label `_$!<Anniversary>!$_` (or plain `Anniversary`) reads as `anniversary` (same date rules as
-  `ANNIVERSARY`, including the Apple year-less form).
+  `ANNIVERSARY`, including the Apple year-less form; on `X-ABDATE` the year 1604 is year-less also without the
+  `X-APPLE-OMIT-YEAR` parameter, which DAVx5 leaves out there).
 - Labels per relation row (first one is written; matching ignores case):
   spouse: Spouse · partner: Partner · children: Child · parents: Parent, Mother, Father · siblings: Sibling, Brother,
   Sister · family: Kin, Relative · friends: Friend · colleagues: Colleague, Co-worker, Assistant, Manager ·
@@ -423,7 +428,8 @@ Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Androi
   Apple's built-in labels use the `_$!<…>!$_` form: Spouse, Partner, Child, Parent, Mother, Father, Brother, Sister,
   Friend, Assistant, Manager; the others are written as plain text.
 - New default row `partner` (vCard 4 type `sweetheart`, label Partner, mirrored by itself, single like `spouse`).
-  Graph kind: partner.
+  It reads type `partner` too (DAVx5 writes Android's Partner so on 4.0); the migration adds `partner` to the types
+  of a stored row that writes `sweetheart`. Graph kind: partner.
 
 ### Writing (only what changed; untouched lines stay byte-identical)
 
@@ -433,9 +439,15 @@ Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Androi
 - vCard 4.0 card: `RELATED;TYPE=<type>;VALUE=text;X-FRIENDLY-UID=<uid>:<name>`; `ANNIVERSARY` as today.
 - `<name>` is the target's display name (`name` property or the contact's name), never a path or alias.
 - Removing a relationship removes its line and its label.
-- Legacy lines the plugin wrote before (`RELATED…:urn:uuid:…` on a 3.0 card) are rewritten into the 3.0 form on the
-  next Apply that writes that card; when this is the only difference, the review screen opens with the line
-  "Relationships on this card are rewritten in the form phones understand." and Apply (no property rows).
+- Legacy lines the plugin wrote before (`RELATED…:urn:uuid:…` on a 3.0 card, or `RELATED` text with the hint) are
+  rewritten into the 3.0 form on the next Apply that writes that card. A `urn:uuid:` name, and a hinted name the
+  contact no longer has (renamed), get the display name and the hint in place, in the line's own form, on 3.0 and 4.0.
+  When this is the only difference, the review screen opens with the line "Relationships on this card are rewritten
+  in the form phones understand." and Apply (no property rows). Lines another app wrote (a name without the hint, a
+  `RELATED` line with several types) stay as they are.
+- Relation values of the card and the base are compared in the note's link form (a name that resolves to a contact
+  becomes that contact's link text), so a phone that drops the hint causes no difference.
+- A new vCard 3.0 card always has `N` (empty components without name parts).
 
 ### New cards and address books
 
