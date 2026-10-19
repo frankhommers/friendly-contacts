@@ -15,7 +15,7 @@ This is the first test release of Friendly Contacts, a fork of VCF Contacts. It 
 - **Lossless CardDAV sync, per contact.** Only what you changed is written to the server; the rest of the card (Apple labels, types, unknown fields) stays exactly as it was. Sync opens a **review screen** that shows the address book value and the note value side by side. Nothing is written before you press Apply, and where both sides changed you decide the result yourself.
 - **Several address books.** Add as many CardDAV address books as you like. Each contact note names its book in `source:`, and you can move a contact to another book by changing `source:` and syncing. You pick a default book for new contacts.
 - **Import contact from server…** Pick a single card that has no note yet, from any of your address books.
-- **Relationships as `[[links]]`.** `spouse`, `children`, `parents` and the like are links between notes, and are mirrored between the two notes. The **Check relationships** command lists relationships that are only noted on one side and fixes them for you.
+- **Relationships as `[[links]]`.** `spouse`, `children`, `parents` and the like are links between notes, and are mirrored between the two notes. The **Check relationships** command lists relationships that are only noted on one side and lets you add the missing side or remove the link.
 - **Birthdays without a year.** A birthday with no year is shown as `--MM-DD` and written back to the card in the form the card used (including the Apple form).
 - **Move contacts to folder…** Moves all your contact notes to a folder you choose.
 
