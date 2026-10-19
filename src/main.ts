@@ -16,6 +16,7 @@ import { contactNotes, convertContactNotes, obsidianMirrorEnv } from "./contacts
 import { RelationMirror } from "./contacts/relationMirror";
 import { isContactFrontmatter } from "./contacts/friendlyNotes";
 import { isFileInFolder } from "src/file/file";
+import { AddRelationshipModal } from "src/ui/modals/addRelationshipModal";
 import { openImportContactModal } from "src/ui/modals/importContactModal";
 import { isSyncAvailable } from "src/sync/adapters";
 import { sync } from "src/sync";
@@ -144,6 +145,20 @@ export default class ContactsPlugin extends Plugin {
         if (!ok || checking) return ok;
         void sync.syncContact(file);
         return true;
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-add-relationship",
+      name: "Add relationship…",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        const frontmatter = file ? this.app.metadataCache.getFileCache(file)?.frontmatter : undefined;
+        if (!file || file.extension !== "md" || !frontmatter || !isContactFrontmatter(frontmatter) || !isFileInFolder(file)) {
+          new Notice("Open a contact note first.");
+          return;
+        }
+        new AddRelationshipModal(this.app, file.path).open();
       },
     });
 

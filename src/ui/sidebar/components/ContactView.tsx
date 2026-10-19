@@ -8,6 +8,7 @@ import { useSyncEnabled } from "src/ui/hooks/syncEnabledHook";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import Avatar from "src/ui/sidebar/components/elements/Avatar";
 import { CopyableItem } from "src/ui/sidebar/components/CopyableItem";
+import { RelationshipsSection } from "src/ui/sidebar/components/RelationshipsSection";
 import { getUiName, uiSafeString } from "src/util/nameUtils";
 
 import {handleContextMenu} from "./ContextMenu";
@@ -275,6 +276,7 @@ export const ContactView = (props: ContactProps) => {
 						</div>
 					</div>
 				</div>
+				<RelationshipsSection file={contact.file} />
 			</div>
 		</div>
 	);

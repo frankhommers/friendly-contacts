@@ -4,7 +4,7 @@
  */
 
 import { MappingRow } from 'src/contacts/friendly/mapping';
-import { linkTarget } from 'src/contacts/friendly/relations';
+import { linkTarget, resolveRemoteName } from 'src/contacts/friendly/relations';
 import { MirrorEnv, relationItems, removeEntries } from 'src/contacts/relationMirror';
 
 export interface RelationPerson {
@@ -120,4 +120,15 @@ export async function removeRelationEntry(
     property,
     (entry) => entry.trim() === wanted || (note !== undefined && resolveEntry(env, entry, path) === note),
   );
+}
+
+/**
+ * The card on the server an unresolved entry names, when its text matches exactly one contact there (see
+ * `resolveRemoteName`); undefined when there is none or the name is ambiguous.
+ */
+export function remoteCardFor<T extends { uid: string; fileName: string }>(text: string, remote: T[]): T | undefined {
+  const name = linkTarget(text.trim()).trim();
+  if (name === '') return undefined;
+  const resolved = resolveRemoteName(name, remote);
+  return 'uid' in resolved ? remote.find((r) => r.uid === resolved.uid) : undefined;
 }

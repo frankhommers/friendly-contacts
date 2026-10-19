@@ -40,7 +40,7 @@ export class ImportContactModal extends FuzzySuggestModal<RemoteContact> {
   }
 }
 
-async function importFromServer(app: App, item: RemoteContact): Promise<void> {
+export async function importFromServer(app: App, item: RemoteContact): Promise<void> {
   const source = activeSources().find((s) => s.id === item.sourceId);
   if (!source) {
     new Notice("That address book is no longer enabled.");
