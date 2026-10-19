@@ -100,7 +100,8 @@ function groupLabels(lines: VCardLine[]): Map<string, string> {
   const labels = new Map<string, string>();
   for (const line of lines) {
     const group = line.group?.toLowerCase();
-    if (line.name === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
+    // Upper-case when parsed; a patched card read before it is serialized spells it `X-ABLabel`.
+    if (line.name.toUpperCase() === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
       labels.set(group, unescapeText(line.value));
     }
   }
@@ -167,5 +168,5 @@ export function toFriendly(
   return { props, source };
 }
 
-export { newCard, patch } from './patch';
-export type { PatchResult } from './patch';
+export { needsLegacyRewrite, newCard, patch } from './patch';
+export type { PatchOptions, PatchResult } from './patch';

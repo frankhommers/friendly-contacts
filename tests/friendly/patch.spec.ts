@@ -1,5 +1,6 @@
-import { parseCard, serializeLine, VCardLine } from 'src/contacts/friendly/lines';
+import { parseCard, serializeCard, serializeLine, VCardLine } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { needsLegacyRewrite } from 'src/contacts/friendly/patch';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -194,10 +195,13 @@ describe('patch', () => {
 
   it('relations add/remove', () => {
     const { lines, warnings } = run({ ...before.props, children: ['[[Sem]]', '[[Opa]]', '[[Jan]]'] });
-    expect(texts(lines.slice(-3))).toEqual([
-      'RELATED;TYPE=child:urn:uuid:sem-uid',
-      'RELATED;TYPE=child;VALUE=text:Opa',
-      'RELATED;TYPE=child;VALUE=text:Jan',
+    expect(texts(lines.slice(-6))).toEqual([
+      'item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem',
+      'item3.X-ABLabel:_$!<Child>!$_',
+      'item4.X-ABRELATEDNAMES:Opa',
+      'item4.X-ABLabel:_$!<Child>!$_',
+      'item5.X-ABRELATEDNAMES:Jan',
+      'item5.X-ABLabel:_$!<Child>!$_',
     ]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('Jan');
@@ -210,12 +214,13 @@ describe('patch', () => {
   it('spouse is single text and spouse-2 its own line', () => {
     const lines = card('item1.RELATED;TYPE=spouse;VALUE=text:Opa', 'RELATED;TYPE=spouse;VALUE=text:B');
     const result = run({ spouse: '[[Sem]]' }, lines);
-    expect(texts(result.lines)).toEqual(['VERSION:3.0', 'item1.RELATED;TYPE=spouse:urn:uuid:sem-uid']);
+    expect(texts(result.lines)).toEqual(['VERSION:3.0', 'item1.RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem']);
     const added = run({ spouse: '[[Opa]]', 'spouse-2': '[[B]]', 'spouse-3': '[[C]]' }, lines);
     expect(texts(added.lines).slice(1)).toEqual([
       'item1.RELATED;TYPE=spouse;VALUE=text:Opa',
       'RELATED;TYPE=spouse;VALUE=text:B',
-      'RELATED;TYPE=spouse;VALUE=text:C',
+      'item2.X-ABRELATEDNAMES:C',
+      'item2.X-ABLabel:_$!<Spouse>!$_',
     ]);
   });
 
@@ -242,7 +247,7 @@ describe('patch', () => {
 
   it('uses the first item of a list given for spouse', () => {
     const { lines, warnings } = run({ name: 'X', spouse: ['[[Opa]]', '[[Oma]]'] }, card('FN:X'));
-    expect(texts(lines)).toEqual(['VERSION:3.0', 'FN:X', 'RELATED;TYPE=spouse;VALUE=text:Opa']);
+    expect(texts(lines)).toEqual(['VERSION:3.0', 'FN:X', 'item1.X-ABRELATEDNAMES:Opa', 'item1.X-ABLabel:_$!<Spouse>!$_']);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('spouse');
   });
@@ -316,5 +321,261 @@ describe('patch PHOTO values', () => {
     expect(photoLines(newCard({ name: 'Jan', photo: 'https://x.example/p.jpg' }, DEFAULT_MAPPING, ctx).lines)).toEqual([
       'PHOTO:https://x.example/p.jpg',
     ]);
+  });
+});
+
+describe('relationships and anniversaries in the card\'s own form', () => {
+  const ODD = 'odd:uid;x,y';
+  const people: RelationContext = {
+    uidToName: (uid) => ({ 'sem-uid': 'Sem', [ODD]: 'Odd' } as Record<string, string>)[uid],
+    displayName: (uid) => ({ 'sem-uid': 'Sem de Vries', [ODD]: 'Odd, Jr' } as Record<string, string>)[uid],
+    resolveLink: (name) => {
+      if (name === 'Sem' || name === 'People/Sem') return { uid: 'sem-uid' };
+      if (name === 'Semmy') return { uid: 'urn:uuid:sem-uid' };
+      if (name === 'Odd') return { uid: ODD };
+      if (name === 'Jan') return { ambiguous: true };
+      return { text: name };
+    },
+  };
+  const read = (lines: VCardLine[]) => toFriendly(lines, DEFAULT_MAPPING, people);
+  const go = (lines: VCardLine[], after: Record<string, FriendlyValue>, rewriteLegacyRelations = false) =>
+    patch(lines, read(lines), after, DEFAULT_MAPPING, people, { rewriteLegacyRelations });
+  const reparsed = (lines: VCardLine[]) => read(parseCard(serializeCard(lines))).props;
+  const davx5 = parseCard(readVcfFixture('davx5V3.vcf'));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 17, 8, 5, 3)));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('3.0: a new relationship is X-ABRELATEDNAMES with its label, the display name and the hint', () => {
+    const lines = card('FN:X', 'item1.X-FOO:1', 'item1.X-ABLabel:a');
+    const result = go(lines, { name: 'X', children: ['[[People/Sem]]', '[[Opa]]'], neighbours: ['[[Odd]]'] });
+    expect(texts(result.lines)).toEqual([
+      'VERSION:3.0',
+      'FN:X',
+      'item1.X-FOO:1',
+      'item1.X-ABLabel:a',
+      'item2.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+      'item2.X-ABLabel:_$!<Child>!$_',
+      'item3.X-ABRELATEDNAMES:Opa',
+      'item3.X-ABLabel:_$!<Child>!$_',
+      'item4.X-ABRELATEDNAMES;X-FRIENDLY-UID="odd:uid;x,y":Odd\\, Jr',
+      'item4.X-ABLabel:Neighbor',
+    ]);
+    lines.forEach((line, i) => expect(result.lines[i]).toBe(line));
+    expect(result.warnings).toEqual([]);
+    // Read back, as parsed from the server and as the patched lines are (syncContact reads them unparsed).
+    const expected = { name: 'X', children: ['[[Sem]]', '[[Opa]]'], neighbours: ['[[Odd]]'] };
+    expect(reparsed(result.lines)).toEqual(expected);
+    expect(read(result.lines).props).toEqual(expected);
+  });
+
+  it('the hint holds the clean UID', () => {
+    const result = go(card('FN:X'), { name: 'X', spouse: '[[Semmy]]' });
+    expect(texts(result.lines).slice(2)).toEqual([
+      'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+      'item1.X-ABLabel:_$!<Spouse>!$_',
+    ]);
+  });
+
+  it('3.0: an ambiguous target is written as a name without a hint, with a warning', () => {
+    const result = go(card('FN:X'), { name: 'X', friends: ['[[Jan]]'] });
+    expect(texts(result.lines).slice(2)).toEqual(['item1.X-ABRELATEDNAMES:Jan', 'item1.X-ABLabel:_$!<Friend>!$_']);
+    expect(result.warnings).toEqual([expect.stringContaining('"Jan" matches more than one contact')]);
+  });
+
+  it('new item numbers never collide with existing groups, whatever their case', () => {
+    const lines = card('FN:X', 'Item1.TEL:1', 'ITEM4.EMAIL:a@b', 'item4.X-ABLabel:x', 'home.URL:u', 'item2.NOTE:n');
+    const result = go(lines, { ...read(lines).props, friends: ['[[Opa]]'], anniversary: '2012-06-21' });
+    expect(texts(result.lines).slice(lines.length)).toEqual([
+      'item5.X-ABDATE:2012-06-21',
+      'item5.X-ABLabel:_$!<Anniversary>!$_',
+      'item6.X-ABRELATEDNAMES:Opa',
+      'item6.X-ABLabel:_$!<Friend>!$_',
+    ]);
+  });
+
+  it('4.0: a new relationship is RELATED with VALUE=text, the hint and the display name', () => {
+    const lines = card4('FN:X');
+    const result = go(lines, { name: 'X', children: ['[[Sem]]', '[[Jan]]'], colleagues: ['[[Odd]]'] });
+    expect(texts(result.lines).slice(2)).toEqual([
+      'RELATED;TYPE=child;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+      'RELATED;TYPE=child;VALUE=text:Jan',
+      'RELATED;TYPE=colleague;VALUE=text;X-FRIENDLY-UID="odd:uid;x,y":Odd\\, Jr',
+    ]);
+    expect(result.warnings).toHaveLength(1);
+    expect(reparsed(result.lines)).toEqual({ name: 'X', children: ['[[Sem]]', '[[Jan]]'], colleagues: ['[[Odd]]'] });
+  });
+
+  it('removing one relationship from a 3.0 card removes its line and its label only (review focus 3)', () => {
+    const before = read(davx5);
+    expect(before.props.parents).toEqual(['[[Ger Verhallen]]', '[[Truus Verhallen]]']);
+    const result = go(davx5, { ...before.props, parents: ['[[Truus Verhallen]]'], children: [] });
+    const gone = ['item1.X-ABRELATEDNAMES:Ger Verhallen', 'item1.X-ABLabel:_$!<Father>!$_'];
+    const goneChild = ['item4.X-ABRELATEDNAMES:Lotte Hommers', 'item4.X-ABLabel:_$!<Child>!$_'];
+    expect(texts(result.lines)).toEqual(
+      texts(davx5)
+        .filter((l) => !gone.includes(l) && !goneChild.includes(l))
+        .map((l) => (l.startsWith('REV:') ? 'REV:20261017T080503Z' : l)),
+    );
+    for (const line of result.lines) if (line.name !== 'REV') expect(davx5).toContain(line);
+  });
+
+  it('replacing a 3.0 spouse writes into its own X-ABRELATEDNAMES line, keeping group and label', () => {
+    const at = davx5.findIndex((l) => l.group === 'item3' && l.name === 'X-ABRELATEDNAMES');
+    const props = read(davx5).props;
+    expect(props.spouse).toBe('[[Sanne Hommers]]');
+
+    const linked = go(davx5, { ...props, spouse: '[[Sem]]' });
+    expect(serializeLine(linked.lines[at])).toBe('item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries');
+    expect(linked.lines[at + 1]).toBe(davx5[at + 1]);
+    expect(linked.lines).toHaveLength(davx5.length);
+    expect(texts(linked.lines).join('\n')).not.toContain('urn:uuid');
+    expect(reparsed(linked.lines).spouse).toBe('[[Sem]]');
+
+    const named = go(davx5, { ...props, spouse: '[[Kim, de Wit]]' });
+    expect(serializeLine(named.lines[at])).toBe('item3.X-ABRELATEDNAMES:Kim\\, de Wit');
+
+    // A hinted line replaced by a name loses the hint.
+    const hinted = card('FN:X', 'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries', 'item1.X-ABLabel:_$!<Spouse>!$_');
+    expect(read(hinted).props.spouse).toBe('[[Sem]]');
+    const unhinted = go(hinted, { name: 'X', spouse: '[[Opa]]' });
+    expect(texts(unhinted.lines)).toEqual(['VERSION:3.0', 'FN:X', 'item1.X-ABRELATEDNAMES:Opa', 'item1.X-ABLabel:_$!<Spouse>!$_']);
+  });
+
+  it('4.0: replacing a spouse edits its RELATED line in the text form', () => {
+    const lines = card4('FN:X', 'item1.RELATED;TYPE=spouse;VALUE=text:Opa');
+    const result = go(lines, { name: 'X', spouse: '[[Sem]]' });
+    expect(texts(result.lines)).toEqual(['VERSION:4.0', 'FN:X', 'item1.RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries']);
+    const back = go(result.lines, { name: 'X', spouse: '[[Opa]]' });
+    expect(texts(back.lines)).toEqual(['VERSION:4.0', 'FN:X', 'item1.RELATED;TYPE=spouse;VALUE=text:Opa']);
+  });
+
+  it('removing a 3.0 spouse removes its line and label', () => {
+    const result = go(davx5, { ...read(davx5).props, spouse: '' });
+    expect(texts(result.lines).filter((l) => l.startsWith('item3.'))).toEqual([]);
+    expect(result.lines).toHaveLength(davx5.length - 2);
+  });
+
+  it('3.0: a new anniversary is X-ABDATE with the Anniversary label; year-less in the Apple form', () => {
+    const full = go(card('FN:X'), { name: 'X', anniversary: '2012-06-21' });
+    expect(texts(full.lines).slice(2)).toEqual(['item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Anniversary>!$_']);
+    expect(reparsed(full.lines).anniversary).toBe('2012-06-21');
+    expect(read(full.lines).props.anniversary).toBe('2012-06-21');
+    const yearLess = go(card('FN:X'), { name: 'X', anniversary: '--06-21' });
+    expect(texts(yearLess.lines).slice(2)).toEqual([
+      'item1.X-ABDATE;X-APPLE-OMIT-YEAR=1604:1604-06-21',
+      'item1.X-ABLabel:_$!<Anniversary>!$_',
+    ]);
+    expect(reparsed(yearLess.lines).anniversary).toBe('--06-21');
+  });
+
+  it('4.0: a new anniversary is ANNIVERSARY', () => {
+    const result = go(card4('FN:X'), { name: 'X', anniversary: '2012-06-21' });
+    expect(texts(result.lines).slice(2)).toEqual(['ANNIVERSARY:20120621']);
+  });
+
+  it('existing anniversary lines are edited in place, whatever their form', () => {
+    const own = card('FN:X', 'ANNIVERSARY:2012-06-21');
+    expect(texts(go(own, { name: 'X', anniversary: '2013-01-02' }).lines)).toEqual(['VERSION:3.0', 'FN:X', 'ANNIVERSARY:2013-01-02']);
+
+    const props = read(davx5).props;
+    expect(props.anniversary).toBe('2012-06-21');
+    const at = davx5.findIndex((l) => l.name === 'X-ABDATE');
+    const edited = go(davx5, { ...props, anniversary: '2013-06-21' });
+    expect(serializeLine(edited.lines[at])).toBe('item8.X-ABDATE:2013-06-21');
+    expect(edited.lines[at + 1]).toBe(davx5[at + 1]);
+
+    const removed = go(davx5, { ...props, anniversary: '' });
+    expect(texts(removed.lines).filter((l) => l.startsWith('item8.'))).toEqual([]);
+  });
+
+  describe('legacy rewrite', () => {
+    const legacy = card(
+      'FN:X',
+      'item1.TEL:1',
+      'item1.X-ABLabel:a',
+      'RELATED;TYPE=child:urn:uuid:sem-uid',
+      'RELATED;TYPE=friend;VALUE=text:Opa',
+      'NOTE:n',
+      'REV:old',
+    );
+
+    it('needsLegacyRewrite: a 3.0 card with RELATED lines', () => {
+      expect(needsLegacyRewrite(legacy)).toBe(true);
+      expect(needsLegacyRewrite(parseCard('BEGIN:VCARD\r\nRELATED;TYPE=child:urn:uuid:sem-uid\r\nEND:VCARD'))).toBe(true);
+      expect(needsLegacyRewrite(card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid'))).toBe(false);
+      expect(needsLegacyRewrite(davx5)).toBe(false);
+      expect(needsLegacyRewrite(card('FN:X'))).toBe(false);
+    });
+
+    it('needsLegacyRewrite with the mapping and contacts: only lines that can be rewritten count', () => {
+      expect(needsLegacyRewrite(legacy, DEFAULT_MAPPING, people)).toBe(true);
+      const stuck = card('FN:X', 'RELATED;TYPE=child:urn:uuid:nobody', 'RELATED;TYPE=agent;VALUE=text:Bond');
+      expect(needsLegacyRewrite(stuck)).toBe(true);
+      expect(needsLegacyRewrite(stuck, DEFAULT_MAPPING, people)).toBe(false);
+    });
+
+    it('turns every RELATED line on a 3.0 card into the 3.0 form for the same row and person (review focus 5)', () => {
+      const before = read(legacy);
+      const result = go(legacy, before.props, true);
+      expect(texts(result.lines)).toEqual([
+        'VERSION:3.0',
+        'FN:X',
+        'item1.TEL:1',
+        'item1.X-ABLabel:a',
+        'item2.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries',
+        'item2.X-ABLabel:_$!<Child>!$_',
+        'item3.X-ABRELATEDNAMES:Opa',
+        'item3.X-ABLabel:_$!<Friend>!$_',
+        'NOTE:n',
+        'REV:20261017T080503Z',
+      ]);
+      for (const i of [0, 1, 2, 3, 6]) expect(result.lines.indexOf(legacy[i])).toBeGreaterThanOrEqual(0);
+      expect(reparsed(result.lines)).toEqual(before.props);
+      expect(read(result.lines).props).toEqual(before.props);
+      expect(needsLegacyRewrite(parseCard(serializeCard(result.lines)))).toBe(false);
+    });
+
+    it('without the option the RELATED lines stay', () => {
+      const result = go(legacy, read(legacy).props);
+      expect(result.lines).toEqual(legacy);
+    });
+
+    it('a 4.0 card is not rewritten', () => {
+      const lines = card4('FN:X', 'RELATED;TYPE=child:urn:uuid:sem-uid');
+      expect(go(lines, read(lines).props, true).lines).toEqual(lines);
+    });
+
+    it('keeps the hint, drops the old group and its label, and rewrites edited lines with their new person', () => {
+      const lines = card(
+        'FN:X',
+        'item1.RELATED;TYPE=spouse:urn:uuid:sem-uid',
+        'item1.X-ABLabel:old',
+        'RELATED;TYPE=friend;VALUE=text;X-FRIENDLY-UID=gone-uid:Piet',
+        'RELATED;TYPE=child;VALUE=text:Opa',
+      );
+      const before = read(lines).props;
+      expect(before).toEqual({ name: 'X', spouse: '[[Sem]]', friends: ['[[Piet]]'], children: ['[[Opa]]'] });
+      const result = go(lines, { ...before, spouse: '[[Odd]]', children: [] }, true);
+      expect(texts(result.lines)).toEqual([
+        'VERSION:3.0',
+        'FN:X',
+        'item2.X-ABRELATEDNAMES;X-FRIENDLY-UID="odd:uid;x,y":Odd\\, Jr',
+        'item2.X-ABLabel:_$!<Spouse>!$_',
+        'item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=gone-uid:Piet',
+        'item3.X-ABLabel:_$!<Friend>!$_',
+      ]);
+      expect(reparsed(result.lines)).toEqual({ name: 'X', spouse: '[[Odd]]', friends: ['[[Piet]]'] });
+    });
+
+    it('leaves RELATED lines it cannot name or map', () => {
+      const lines = card('FN:X', 'RELATED;TYPE=child:urn:uuid:nobody', 'RELATED;TYPE=agent;VALUE=text:Bond');
+      expect(go(lines, read(lines).props, true).lines).toEqual(lines);
+    });
   });
 });

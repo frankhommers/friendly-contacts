@@ -511,7 +511,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await sync(jan)).toBe('unchanged');
   });
 
-  it('5. children: [[Sem]] becomes RELATED;TYPE=child:urn:uuid:<sem uid> on the server', async () => {
+  it('5. children: [[Sem]] becomes a labelled X-ABRELATEDNAMES with the UID hint on the 3.0 card', async () => {
     await putCard(`${BOOK}sem-card.vcf`, SEM_CARD);
     notes = [...notes, { name: 'Sem', uid: SEM_UID }];
     const before = unfolded(await serverCard(JAN_HREF));
@@ -519,8 +519,11 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
 
     expect(await sync(jan)).toBe('pushed');
     const after = unfolded(await serverCard(JAN_HREF));
-    expect(after).toContain(`RELATED;TYPE=child:urn:uuid:${SEM_UID}`);
-    expect(minus(after, before).filter((l) => !isRev(l))).toEqual([`RELATED;TYPE=child:urn:uuid:${SEM_UID}`]);
+    const added = [`item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM_UID}:Sem`, 'item3.X-ABLabel:_$!<Child>!$_'];
+    expect(minus(unfolded(pushes[0]), added)).toHaveLength(unfolded(pushes[0]).length - 2);
+    // Radicale stores the card normalised (properties sorted, names upper-case), so compare without order and case.
+    const upper = (lines: string[]) => lines.map((l) => l.replace(/^[^:;]+/, (name) => name.toUpperCase())).sort();
+    expect(upper(minus(after, before).filter((l) => !isRev(l)))).toEqual(upper(added));
     expect(minus(before, after).filter((l) => !isRev(l))).toEqual([]);
 
     expect(await sync(jan)).toBe('unchanged');

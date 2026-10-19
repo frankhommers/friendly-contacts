@@ -366,7 +366,10 @@ describe('prepareSync', () => {
     // Apply builds the card and may give the linked note its UID, as before.
     expect(await t.apply(prepared)).toMatchObject({ kind: 'done' });
     expect(assigned).toEqual(['Sem de Vries']);
-    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('RELATED;TYPE=child:urn:uuid:sem-new');
+    // A vCard 3.0 card: the relationship is a labelled name with the UID as a hint.
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toEqual(
+      expect.arrayContaining(['item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-new:Sem de Vries', 'item3.X-ABLabel:_$!<Child>!$_']),
+    );
   });
 
   it('a urn:uuid uid in the note matches a plain server UID', async () => {
@@ -686,7 +689,9 @@ describe('applySync', () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), friends: ['[[Piet]]'] }, ctx: ambiguous });
     expect(await t.sync()).toMatchObject({ kind: 'done' });
     expect(t.notices).toEqual([expect.stringContaining('"Piet" matches more than one contact')]);
-    expect(lineTexts(t.pushes[0].vcard.raw)).toContain('RELATED;TYPE=friend;VALUE=text:Piet');
+    expect(lineTexts(t.pushes[0].vcard.raw)).toEqual(
+      expect.arrayContaining(['item3.X-ABRELATEDNAMES:Piet', 'item3.X-ABLabel:_$!<Friend>!$_']),
+    );
 
     const n = setup({ local: { name: 'Sem', uid: 'sem-0001', spouse: '[[Piet]]' }, ctx: ambiguous });
     expect(await n.sync()).toEqual({ kind: 'done', outcome: 'created' });
@@ -762,7 +767,7 @@ describe('applySync', () => {
     };
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), children: ['[[06 People/Sem de Vries]]'], source: 'Radicale' }, ctx: sem });
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'both' });
-    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
+    expect(lineTexts(t.cards.get(HREF)!.raw)).toContain('item3.X-ABRELATEDNAMES;X-FRIENDLY-UID=sem-uid:Sem de Vries');
     expect(t.note.frontmatter.children).toEqual(['[[Sem de Vries]]']);
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     expect(t.pushes).toHaveLength(1);

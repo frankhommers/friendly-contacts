@@ -4,17 +4,22 @@
  * No obsidian / src/context imports.
  */
 
-import { generateUUID } from '../../util/vcard';
+import { cleanUid, generateUUID } from '../../util/vcard';
 import { normalizeNoteDate, writeDate } from './dates';
-import { escapeText, joinStructured, serializeLine, splitStructured, VCardLine } from './lines';
+import { escapeText, getParam, joinStructured, serializeLine, splitStructured, unescapeText, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
-import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty } from './mapping';
+import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeLabel } from './mapping';
 import { linkTarget, RelationContext } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
 
 export interface PatchResult {
   lines: VCardLine[];
   warnings: string[];
+}
+
+export interface PatchOptions {
+  /** On a vCard 3.0 card, write every `RELATED` line (the plugin's old form) as `X-ABRELATEDNAMES` with its label. */
+  rewriteLegacyRelations?: boolean;
 }
 
 /** Component count of structured values we may have to create from scratch. */
@@ -25,6 +30,8 @@ interface State {
   base: VCardLine[];
   lines: VCardLine[];
   removed: Set<number>;
+  /** New lines placed right after a line of `base` (the 3.0 form of a rewritten `RELATED` line). */
+  after: Map<number, VCardLine[]>;
   added: VCardLine[];
   /** Escaped components of existing structured lines being edited. */
   parts: Map<number, string[]>;
@@ -81,6 +88,9 @@ function setLine(s: State, index: number, line: VCardLine): void {
   s.changed = true;
 }
 
+/** New label lines are spelled as Apple and DAVx5 write them; parsed ones are upper-case. */
+const isLabel = (line: VCardLine): boolean => line.name.toUpperCase() === 'X-ABLABEL';
+
 /** Deletes a line and the Apple label sharing its group. */
 function removeLine(s: State, index: number): void {
   s.removed.add(index);
@@ -88,8 +98,31 @@ function removeLine(s: State, index: number): void {
   const group = s.base[index].group?.toLowerCase();
   if (group === undefined) return;
   s.base.forEach((line, i) => {
-    if (line.name === 'X-ABLABEL' && line.group?.toLowerCase() === group) s.removed.add(i);
+    if (isLabel(line) && line.group?.toLowerCase() === group) s.removed.add(i);
   });
+}
+
+/**
+ * The next free `itemN` group: above every item number on the card (removed lines included), so it never matches an
+ * existing group in any case. The lines it is for must be added before the next one is asked for.
+ */
+function newGroup(s: State): string {
+  const all = [...s.base, ...s.lines, ...s.added, ...[...s.after.values()].flat()];
+  let max = 0;
+  for (const line of all) {
+    const n = /^item(\d+)$/i.exec(line.group ?? '');
+    if (n) max = Math.max(max, Number(n[1]));
+  }
+  return `item${max + 1}`;
+}
+
+/** A labelled group: `itemN.<name>` plus `itemN.X-ABLabel`, the way vCard 3.0 cards hold relationships and dates. */
+function labelled(s: State, name: string, params: [string, string][], value: string, label: string): VCardLine[] {
+  const group = newGroup(s);
+  return [
+    { group, name, params, value },
+    { group, name: 'X-ABLabel', params: [], value: escapeText(writeLabel(label)) },
+  ];
 }
 
 function addLine(s: State, write: string, value: string, extraParams: [string, string][] = []): VCardLine {
@@ -123,7 +156,11 @@ function patchDate(s: State, row: FieldRow, prov: Provenance | undefined, before
   const line = prov ? s.base[prov.line] : undefined;
   const written = writeDate(after, line, cardVersion(s));
   if (!line) {
-    addLine(s, row.write, written.value, written.params);
+    // vCard 3.0 has no ANNIVERSARY: Apple and DAVx5 write a labelled X-ABDATE. Existing lines keep their form.
+    if (row.appleDateLabel !== undefined && !isV4(s)) {
+      s.added.push(...labelled(s, 'X-ABDATE', written.params, written.value, row.appleDateLabel));
+      s.changed = true;
+    } else addLine(s, row.write, written.value, written.params);
     return;
   }
   const next = withValue(line, written.value, written.params);
@@ -180,10 +217,17 @@ function patchField(
   }
 }
 
-/** VERSION of the card being patched (newCard starts at 4.0); 3.0 when absent, as Apple writes. */
-function cardVersion(s: State): string {
-  return s.base.find((line) => !line.group && line.name === 'VERSION')?.value ?? '3.0';
+/** VERSION of a card; 3.0 when absent, as Apple writes. */
+function versionOf(lines: VCardLine[]): string {
+  return lines.find((line) => !line.group && line.name === 'VERSION')?.value ?? '3.0';
 }
+
+/** VERSION of the card being patched (newCard starts at 4.0). */
+function cardVersion(s: State): string {
+  return versionOf(s.base);
+}
+
+const isV4 = (s: State): boolean => cardVersion(s).trim() === '4.0';
 
 /** PHOTO in the form the card's version expects; an edit keeps the group and drops the other params. */
 function patchPhoto(s: State, row: FieldRow, prov: Provenance | undefined, before: string, after: string): void {
@@ -244,20 +288,61 @@ function finishComponents(s: State): void {
   for (const { line, parts } of s.newParts.values()) line.value = joinStructured(parts);
 }
 
-/** RELATED value for a link target: a contact uid, or plain text. */
-function relatedValue(s: State, name: string, ctx: RelationContext): { value: string; text: boolean } {
+/** The parameter naming the contact a relationship points to, next to its name. */
+const HINT_PARAM = 'X-FRIENDLY-UID';
+
+/** Who a relationship line is about: the name written on the card, and the contact's UID (clean) when known. */
+type Person = { name: string; uid?: string };
+
+/** The person for a link target: a contact's display name (never a path or alias) and UID, or plain text. */
+function personFor(s: State, name: string, ctx: RelationContext): Person {
   const resolved = ctx.resolveLink(name);
-  if ('uid' in resolved) return { value: `urn:uuid:${resolved.uid}`, text: false };
-  if ('text' in resolved) return { value: escapeText(resolved.text !== '' ? resolved.text : name), text: true };
+  if ('uid' in resolved) {
+    const uid = cleanUid(resolved.uid);
+    const shown = ctx.displayName(uid)?.trim();
+    return { uid, name: shown ? shown : name.slice(name.lastIndexOf('/') + 1) };
+  }
+  if ('text' in resolved) return { name: resolved.text !== '' ? resolved.text : name };
   s.warnings.push(`"${name}" matches more than one contact; saved as text.`);
-  return { value: escapeText(name), text: true };
+  return { name };
+}
+
+/** The hint parameter for a person with a UID; quoted when the UID holds `:`, `;` or `,`. */
+function hintParams(person: Person): [string, string][] {
+  const uid = person.uid;
+  if (uid === undefined || uid === '' || /["\r\n]/.test(uid)) return [];
+  return [[HINT_PARAM, /[:;,]/.test(uid) ? `"${uid}"` : uid]];
+}
+
+/**
+ * New lines for a relationship in the card's own form: on vCard 3.0 a labelled `X-ABRELATEDNAMES` group, on 4.0
+ * `RELATED` as text. A row without a label (it could not be read back from 3.0) is written as on 4.0.
+ */
+function relationLines(s: State, row: RelationRow, person: Person): VCardLine[] {
+  const label = (row.labels ?? [])[0];
+  const value = escapeText(person.name);
+  if (!isV4(s) && label !== undefined && label.trim() !== '') {
+    return labelled(s, 'X-ABRELATEDNAMES', hintParams(person), value, label);
+  }
+  return [{ name: 'RELATED', params: [['TYPE', row.types[0]], ['VALUE', 'text'], ...hintParams(person)], value }];
 }
 
 const target = (value: string): string => linkTarget(value).trim();
 
 function addRelated(s: State, row: RelationRow, name: string, ctx: RelationContext): void {
-  const related = relatedValue(s, name, ctx);
-  addLine(s, row.write, related.value, related.text ? [['VALUE', 'text']] : []);
+  s.added.push(...relationLines(s, row, personFor(s, name, ctx)));
+  s.changed = true;
+}
+
+/** An existing relationship line pointed at someone else, in place: group, label and other params stay. */
+function replaceRelated(s: State, index: number, person: Person): void {
+  const line = s.base[index];
+  const names = line.name === 'X-ABRELATEDNAMES';
+  const params = line.params.filter(([k]) => k !== HINT_PARAM && (names || k !== 'VALUE'));
+  // X-ABRELATEDNAMES always holds a name; RELATED gets the vCard 4.0 text form.
+  if (!names) params.push(['VALUE', 'text']);
+  params.push(...hintParams(person));
+  setLine(s, index, withValue(line, escapeText(person.name), params));
 }
 
 function patchRelation(
@@ -279,11 +364,7 @@ function patchRelation(
     if (name === '') {
       if (p) removeLine(s, p.line);
     } else if (p) {
-      const related = relatedValue(s, name, ctx);
-      const line = s.base[p.line];
-      const params = line.params.filter(([k]) => k !== 'VALUE');
-      if (related.text) params.push(['VALUE', 'text']);
-      setLine(s, p.line, withValue(line, related.value, params));
+      replaceRelated(s, p.line, personFor(s, name, ctx));
     } else {
       addRelated(s, row, name, ctx);
     }
@@ -300,6 +381,51 @@ function patchRelation(
   for (const name of new Set(afterNames)) {
     if (!beforeNames.includes(name)) addRelated(s, row, name, ctx);
   }
+}
+
+const unquote = (value: string): string => value.replace(/^"(.*)"$/, '$1').trim();
+
+/**
+ * The row and person of a `RELATED` line as the 3.0 form needs them: the row by its type (it needs a label), the
+ * name from the text value, or for a `urn:uuid:` value the contact's display name. Undefined when either is missing.
+ */
+function legacyTarget(line: VCardLine, rows: MappingRow[], ctx: RelationContext): { row: RelationRow; person: Person } | undefined {
+  if (line.name !== 'RELATED') return undefined;
+  const row = rowForLine(line, rows)[0];
+  if (row?.kind !== 'relation' || ((row.labels ?? [])[0] ?? '').trim() === '') return undefined;
+  const hint = cleanUid(unquote(getParam(line, HINT_PARAM) ?? ''));
+  if ((getParam(line, 'VALUE') ?? '').toLowerCase() === 'text') {
+    const name = unescapeText(line.value).trim();
+    return name === '' ? undefined : { row, person: hint === '' ? { name } : { name, uid: hint } };
+  }
+  // As the reader: the hint wins when it names a contact, else the value is the contact's UID.
+  for (const uid of [hint, cleanUid(line.value)]) {
+    const name = uid === '' ? undefined : ctx.displayName(uid)?.trim();
+    if (name) return { row, person: { name, uid } };
+  }
+  return undefined;
+}
+
+/**
+ * True when a vCard 3.0 card holds `RELATED` lines (which phones show as codes, or not at all). With the mapping and
+ * the contacts, only the lines `patch(…, { rewriteLegacyRelations: true })` can rewrite count: a line without a
+ * labelled row or a name stays as it is, and must not ask for a rewrite again and again.
+ */
+export function needsLegacyRewrite(lines: VCardLine[], rows?: MappingRow[], ctx?: RelationContext): boolean {
+  if (versionOf(lines).trim() === '4.0') return false;
+  return lines.some((line) => line.name === 'RELATED' && (!rows || !ctx || legacyTarget(line, rows, ctx) !== undefined));
+}
+
+/** Every `RELATED` line still on a 3.0 card (as edited here) becomes the labelled 3.0 form, where it was. */
+function rewriteLegacy(s: State, rows: MappingRow[], ctx: RelationContext): void {
+  if (isV4(s)) return;
+  s.base.forEach((_, i) => {
+    if (s.removed.has(i)) return;
+    const found = legacyTarget(s.lines[i], rows, ctx);
+    if (!found) return;
+    removeLine(s, i);
+    s.after.set(i, relationLines(s, found.row, found.person));
+  });
 }
 
 /** Current UTC time as `YYYYMMDDTHHMMSSZ`. */
@@ -328,11 +454,13 @@ export function patch(
   after: Record<string, FriendlyValue>,
   rows: MappingRow[],
   ctx: RelationContext,
+  opts: PatchOptions = {},
 ): PatchResult {
   const s: State = {
     base,
     lines: base.slice(),
     removed: new Set(),
+    after: new Map(),
     added: [],
     parts: new Map(),
     newParts: new Map(),
@@ -351,13 +479,15 @@ export function patch(
     else patchRelation(s, row, key, prov, was, now, ctx);
   }
   finishComponents(s);
+  if (opts.rewriteLegacyRelations) rewriteLegacy(s, rows, ctx);
 
   if (s.changed) {
     const rev = base.findIndex((line, i) => line.name === 'REV' && !s.removed.has(i));
     if (rev >= 0) setLine(s, rev, withValue(base[rev], revStamp()));
   }
 
-  return { lines: [...s.lines.filter((_, i) => !s.removed.has(i)), ...s.added], warnings: s.warnings };
+  const lines = s.lines.flatMap((line, i) => [...(s.removed.has(i) ? [] : [line]), ...(s.after.get(i) ?? [])]);
+  return { lines: [...lines, ...s.added], warnings: s.warnings };
 }
 
 /** A fresh vCard 4.0 from friendly properties. */
