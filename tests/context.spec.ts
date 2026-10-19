@@ -33,6 +33,7 @@ const mockSettings: ContactsPluginSettings = {
   defaultSource: '',
   createFieldsKeys:['N.FN'],
   friendly: { mapping: [], mirrorRelations: false } as ContactsPluginSettings['friendly'],
+  layout: { layout: 'note', noteName: '{{name}}', location: 'inside' },
 };
 
 const testDefaultSettings = {
@@ -107,6 +108,20 @@ describe('sharedSettingsContext', () => {
   it('keeps a stored mapping and drops a stored mirrorRelations (it is per device now)', async () => {
     await initSettings(async () => mockSettings, saveData);
     expect(getSettings().friendly).toEqual({ mapping: [] });
+  });
+
+  it('layout defaults to one note per contact', async () => {
+    const { layout: _omitted, ...legacy } = mockSettings;
+    await initSettings(async () => legacy, saveData);
+    expect(getSettings().layout).toEqual({ layout: 'note', noteName: '{{name}}', location: 'inside' });
+    expect(DEFAULT_SETTINGS.layout.layout).toBe('note');
+  });
+
+  it('keeps a stored layout and repairs unknown values in it', async () => {
+    await initSettings(async () => ({ ...mockSettings, layout: { layout: 'folder', noteName: 'index', location: 'next' } }), saveData);
+    expect(getSettings().layout).toEqual({ layout: 'folder', noteName: 'index', location: 'next' });
+    await initSettings(async () => ({ ...mockSettings, layout: { layout: 'tree', noteName: 5, location: 'next' } }), saveData);
+    expect(getSettings().layout).toEqual({ layout: 'note', noteName: '{{name}}', location: 'next' });
   });
 
   it('replaces the old default contact fields with the friendly ones', async () => {

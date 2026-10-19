@@ -1,4 +1,5 @@
 import type { MappingRow } from "src/contacts/friendly/mapping";
+import type { LayoutSettings } from "src/contacts/layout";
 
 export type AuthType = "basic" | "apikey";
 
@@ -13,6 +14,8 @@ export interface ContactsPluginSettings {
   defaultSource: string;
   createFieldsKeys: string[]
   friendly: FriendlySettings;
+  /** Whether a contact is one note or a folder with a folder note. */
+  layout: LayoutSettings;
 }
 
 export interface FriendlySettings {

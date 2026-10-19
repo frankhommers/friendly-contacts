@@ -15,6 +15,16 @@ export const DEFAULT_LAYOUT: LayoutSettings = { layout: "note", noteName: "{{nam
 
 const NAME_TOKEN = "{{name}}";
 
+/** Stored layout settings with every missing or unknown value replaced by its default. */
+export function normalizeLayout(raw: unknown): LayoutSettings {
+  const r = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  return {
+    layout: r.layout === "note" || r.layout === "folder" ? r.layout : DEFAULT_LAYOUT.layout,
+    noteName: typeof r.noteName === "string" ? r.noteName : DEFAULT_LAYOUT.noteName,
+    location: r.location === "inside" || r.location === "next" ? r.location : DEFAULT_LAYOUT.location,
+  };
+}
+
 export interface FsStep {
   kind: "createFolder" | "move" | "deleteFolderIfEmpty";
   from?: string;

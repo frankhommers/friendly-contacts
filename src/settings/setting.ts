@@ -1,4 +1,5 @@
 import { DEFAULT_MAPPING } from "src/contacts/friendly/mapping";
+import { DEFAULT_LAYOUT } from "src/contacts/layout";
 import { ContactsPluginSettings } from "src/settings/settings";
 
 /** Upstream's default contact fields; a stored list equal to this is replaced by the friendly default. */
@@ -38,5 +39,6 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
   ],
   friendly: {
     mapping: DEFAULT_MAPPING
-  }
+  },
+  layout: DEFAULT_LAYOUT
 }

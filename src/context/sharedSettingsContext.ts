@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals-core";
+import { normalizeLayout } from "src/contacts/layout";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import { ContactsPluginSettings } from "src/settings/settings.d";
@@ -46,7 +47,8 @@ export async function initSettings(
       // so an old mirrorRelations value in data.json is dropped.
       friendly: {
         mapping: loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping
-      }
+      },
+      layout: normalizeLayout(loaded.layout)
     };
     await setSettings(initializedSettings);
     return { migratedFrom };
