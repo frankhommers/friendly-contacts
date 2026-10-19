@@ -138,15 +138,33 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
 
   return (
     <div className="vcf-source">
+      <div className="setting-item setting-item-heading js-keep">
+        <div className="setting-item-info">
+          <div className="setting-item-name">
+            {source.name}
+            {isDefault ? <span className="vcf-source-badge">default</span> : null}
+          </div>
+          <div className="setting-item-description">
+            {source.enabled
+              ? <div className="mod-success">Sync on. {connectionLabel(saved)}.</div>
+              : <div>Sync off. Fill in the connection below and press Enable.</div>}
+            {warning ? <div className="mod-warning">{warning}</div> : null}
+          </div>
+        </div>
+        <div className="setting-item-control">
+          {source.enabled
+            ? <button className="mod-destructive" onClick={() => { void disable(); }}>Disable</button>
+            : <button className="mod-cta" onClick={() => { void enable(); }}>Enable</button>}
+        </div>
+      </div>
+
       <div className="setting-item js-keep">
         <div className="setting-item-info">
-          <div className="setting-item-name">Address book name</div>
+          <div className="setting-item-name">Name</div>
           <div className="setting-item-description">
             Notes refer to this address book with <code>source: {source.name}</code>.
-            {source.enabled ? <div className="mod-success">Sync enabled. {connectionLabel(saved)}.</div> : null}
             {source.enabled ? <div>Disable sync to change the connection settings.</div> : null}
             {nameError ? <div className="mod-warning">{nameError}</div> : null}
-            {warning ? <div className="mod-warning">{warning}</div> : null}
           </div>
         </div>
         <div className="setting-item-control">
@@ -158,9 +176,6 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
             onChange={(e) => setName(e.target.value)}
             onBlur={() => { void commitName(); }}
           />
-          {source.enabled
-            ? <button className="mod-destructive" onClick={() => { void disable(); }}>Disable</button>
-            : <button className="mod-cta" onClick={() => { void enable(); }}>Enable</button>}
         </div>
       </div>
 
@@ -175,16 +190,39 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
       <div className="setting-item">
         <div className="setting-item-info">
           <div className="setting-item-name">Default for new contacts</div>
+          <div className="setting-item-description">
+            {isDefault
+              ? "New contacts are created in this address book."
+              : "Turn on to create new contacts in this address book instead."}
+          </div>
         </div>
         <div className="setting-item-control">
-          <input
-            type="radio"
-            name="vcf-default-source"
+          <div
+            className={`checkbox-container${isDefault ? " is-enabled" : ""}`}
+            role="switch"
+            aria-checked={isDefault}
+            aria-disabled={isDefault}
             aria-label={`Make ${source.name} the default address book`}
-            checked={isDefault}
-            onChange={() => { void attempt(onMakeDefault); }}
-          />
-          <button className="mod-warning" onClick={() => { void remove(); }}>Remove</button>
+            tabIndex={0}
+            onClick={() => { if (!isDefault) void attempt(onMakeDefault); }}
+            onKeyDown={(e) => { if (!isDefault && (e.key === " " || e.key === "Enter")) { e.preventDefault(); void attempt(onMakeDefault); } }}
+          >
+            <input type="checkbox" tabIndex={-1} checked={isDefault} readOnly />
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-item">
+        <div className="setting-item-info">
+          <div className="setting-item-name">Remove address book</div>
+          <div className="setting-item-description">
+            {isDefault
+              ? "The default address book cannot be removed. Make another one the default first."
+              : "Removes it from Friendly Contacts. The cards on the server stay."}
+          </div>
+        </div>
+        <div className="setting-item-control">
+          <button className="mod-warning" disabled={isDefault} onClick={() => { void remove(); }}>Remove</button>
         </div>
       </div>
     </div>
@@ -222,6 +260,12 @@ export function SourcesSettings({ app }: { app: App }) {
 
   return (
     <>
+      <div className="setting-item setting-item-heading js-keep">
+        <div className="setting-item-info">
+          <div className="setting-item-name">Address books</div>
+          <div className="setting-item-description">Each address book is a CardDAV address book on a server. New contacts go to the default one.</div>
+        </div>
+      </div>
       {state.sources.map((source) => (
         <SourceBlock
           key={source.id}
@@ -238,8 +282,7 @@ export function SourcesSettings({ app }: { app: App }) {
       ))}
       <div className="setting-item js-keep">
         <div className="setting-item-info">
-          <div className="setting-item-name">Address books</div>
-          <div className="setting-item-description">Each address book is a CardDAV server. New contacts go to the default one.</div>
+          <div className="setting-item-description">Another address book, for example a shared family book or one on another server.</div>
         </div>
         <div className="setting-item-control">
           <button className="mod-cta" onClick={() => { void attempt(add); }}>Add address book</button>

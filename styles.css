@@ -780,3 +780,24 @@ textarea.friendly-review-edit {
 	display: block;
 	touch-action: none;
 }
+
+/* One framed block per address book in the settings. */
+.vcf-source {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 0 var(--size-4-3);
+  margin: var(--size-4-3) 0;
+}
+.vcf-source .setting-item-heading .setting-item-name {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+.vcf-source-badge {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-radius: var(--radius-s);
+  padding: 0 var(--size-4-1);
+}
