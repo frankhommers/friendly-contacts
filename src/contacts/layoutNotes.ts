@@ -285,11 +285,32 @@ export async function renameContact(app: App, file: TFile, newName: string): Pro
   const links = hasFixedNoteName(effectiveLayout()) ? recordRelationLinks(app, [file]) : [];
   try {
     const result = await runSteps(app, plan.steps);
-    if (result.failed.length > 0) throw new Error(result.failed.map((f) => f.reason).join("; "));
+    const failure = result.failed[0];
+    if (failure !== undefined) {
+      // The folder must not keep the new name while the note keeps the old one: undo what moved.
+      const failedAt = plan.steps.indexOf(failure.step);
+      const stuck = await undoMoves(app, plan.steps.slice(0, failedAt));
+      if (stuck.length > 0) throw new Error(splitReason(stuck, plan.steps.slice(failedAt), failure.reason));
+      throw new Error(failure.reason);
+    }
   } finally {
     await rewriteRelationLinks(app, links);
   }
   return "renamed";
+}
+
+/** Moves the done `steps` back, last first (best effort); returns the moves that could not be undone. */
+async function undoMoves(app: App, steps: FsStep[]): Promise<FsStep[]> {
+  const done = steps.filter((step) => step.kind === "move" && step.from !== undefined);
+  await runSteps(app, [[...done].reverse().map((step): FsStep => ({ kind: "move", from: step.to, to: step.from as string }))]);
+  return done.filter((step) => byPath(app, step.from as string) === null && byPath(app, step.to) !== null);
+}
+
+/** Why a contact is now in two places: what moved, what stayed, the first reason. */
+function splitReason(stuck: FsStep[], notDone: { from?: string }[], reason: string): string {
+  const moved = stuck.map((step) => `${step.from} moved to ${step.to}`).join(", ");
+  const stayed = notDone.flatMap((step) => (step.from === undefined ? [] : [`${step.from} stayed`])).join(", ");
+  return `SPLIT: ${moved} but ${stayed} (${reason}); put them together by hand`;
 }
 
 /**
@@ -639,16 +660,14 @@ export async function moveContactFolders(
     }
     const reason = result.failed.find((f) => f.step === groups[i][failedAt])?.reason as string;
     // A contact must not end up split: put back what already moved (best effort).
-    const done = groups[i].slice(0, failedAt).filter((step) => step.kind === "move");
-    await runSteps(app, [[...done].reverse().map((step): FsStep => ({ kind: "move", from: step.to, to: step.from as string }))]);
-    const stuck = done.filter((step) => byPath(app, step.from as string) === null && byPath(app, step.to) !== null);
+    const done = groups[i].slice(0, failedAt);
+    const stuck = await undoMoves(app, done);
     const name = list[g.unit].paths[0];
     if (stuck.length === 0) {
       skipped.push({ from: name, reason });
     } else {
-      const left = g.moves.filter((m) => !done.some((step) => step.from === m.from));
-      const detail = `${stuck.map((step) => `${step.from} moved to ${step.to}`).join(", ")} but ${left.map((m) => `${m.from} stayed`).join(", ")}`;
-      skipped.push({ from: name, reason: `SPLIT: ${detail} (${reason}); put them together by hand` });
+      const left = g.moves.filter((m) => !done.some((step) => step.kind === "move" && step.from === m.from));
+      skipped.push({ from: name, reason: splitReason(stuck, left, reason) });
     }
   }
   await rewriteRelationLinks(app, links);

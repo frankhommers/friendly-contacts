@@ -490,6 +490,40 @@ describe("rename", () => {
     expect(v.paths()).toEqual(["Contacts", "Contacts/Jan", "Contacts/Jan.md", "Contacts/Jan/Photo.md"]);
   });
 
+  it("note rename fails after the folder was renamed: the folder is renamed back", async () => {
+    for (const layout of [inside, next]) {
+      useLayout(layout);
+      const v = fakeApp();
+      const jan = v.note(layout === inside ? "Contacts/Jan/Jan.md" : "Contacts/Jan.md");
+      v.note("Contacts/Jan/Photo.md", null);
+      const before = v.paths();
+      const fm = (v.app as unknown as { fileManager: { renameFile: (n: Node, to: string) => Promise<void> } }).fileManager;
+      const renameFile = fm.renameFile;
+      fm.renameFile = async (node, to) => {
+        if (node === jan) throw new Error("note is locked");
+        await renameFile(node, to);
+      };
+      await expect(renameContact(v.app, jan as never, "Jan Bakker")).rejects.toThrow("note is locked");
+      expect(v.paths()).toEqual(before);
+    }
+  });
+
+  it("when the folder cannot be renamed back either, the split is reported", async () => {
+    useLayout(next);
+    const v = fakeApp();
+    const jan = v.note("Contacts/Jan.md");
+    v.note("Contacts/Jan/Photo.md", null);
+    const fm = (v.app as unknown as { fileManager: { renameFile: (n: Node, to: string) => Promise<void> } }).fileManager;
+    const renameFile = fm.renameFile;
+    fm.renameFile = async (node, to) => {
+      if (node === jan || to === "Contacts/Jan") throw new Error("locked");
+      await renameFile(node, to);
+    };
+    await expect(renameContact(v.app, jan as never, "Jan Bakker")).rejects.toThrow(
+      "SPLIT: Contacts/Jan moved to Contacts/Jan Bakker but Contacts/Jan.md stayed (locked); put them together by hand",
+    );
+  });
+
   it("the review knows why a rename is blocked", () => {
     useLayout(inside);
     const v = fakeApp();
