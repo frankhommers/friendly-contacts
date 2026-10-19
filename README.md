@@ -47,6 +47,7 @@ To try the test releases:
       + [🖼️ Adding Avatars](#-adding-avatars)
       + [📞 Quick Actions](#-quick-actions)
       + [➕ Create a New Contact](#-create-a-new-contact)
+      + [📂 A folder per contact](#-a-folder-per-contact)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
    * [📖 Understanding the vCard (VCF) Format](#-understanding-the-vcard-vcf-format)
    * [📄 Example Contact Note (Foo Bar)](#-example-contact-note-foo-bar)
@@ -199,6 +200,56 @@ Existing fields are not overwritten.
 4. Your contact is now saved as a markdown file and export-ready!
 
 > Supports all vCard 4.0-compatible fields. Feel free to link, tag, or extend notes as needed!
+
+---
+
+<!-- TOC --><a name="-a-folder-per-contact"></a>
+### 📂 A folder per contact
+
+By default every contact is one note. If you also keep other things about a person, such as a poem you wrote for them, a speech or their photos, you can give each contact a folder of its own. The contact's note is the **folder note**: the note that stands for the folder. Everything else sits in that folder next to it.
+
+With **Folder per contact** and the default settings, Jan de Vries looks like this:
+
+```
+Contacts/
+  Jan de Vries/
+    Jan de Vries.md      <- the contact note (the folder note)
+    poem for Jan.md
+    holiday.jpg
+```
+
+**Settings → Contact layout**
+
+- **Layout**: *One note per contact* or *Folder per contact*. New contacts follow this. Existing contacts stay where they are until you move them (see the commands below). When you change the layout and there are contacts to move, the plugin asks whether to do it now ("Put N contacts in their own folder?" or "Take N contacts out of their folders?"). You can say **Not now** and use the command later.
+- **Folder note name**: the file name of the folder note, without `.md`. `{{name}}` stands for the contact's name, so the default `{{name}}` gives `Jan de Vries/Jan de Vries.md`. You can also type a fixed name such as `index`, then every contact's note is called `index.md` (`Jan de Vries/index.md`) and the folder carries the name. A name that cannot work (empty, ending in `.md`, a character that is not allowed in file names, any `{{...}}` other than `{{name}}`) is shown with the reason and is not saved until you fix it. While the folder settings are not usable, the plugin works as one note per contact and shows a notice that says why.
+- **Fixed-name hint**: with a fixed name, the settings page adds "Obsidian's graph and tabs will show every contact as "index"." Obsidian shows file names there, and they are all the same. (Links to the contact get the contact's name as a label, see below.)
+- **Folder note location**: *Inside the folder* (`Contacts/Jan de Vries/Jan de Vries.md`) or *Next to the folder* (the note is beside its folder: `Contacts/Jan de Vries.md` and `Contacts/Jan de Vries/`). *Next to the folder* needs `{{name}}` in the folder note name, otherwise every contact would get the same file name.
+- **Copy from Folder Notes**: when the Folder Notes plugin is installed, this button copies its folder note name (its `{{folder_name}}` becomes `{{name}}`) and location, so the two plugins agree. If Folder Notes is set up differently from this plugin, the settings page says "Folder Notes uses different settings." Copying is refused, with a notice that says why, when Folder Notes uses something that cannot be copied: a folder note type other than `.md`, or folder notes stored in the vault folder.
+
+**Creating a contact**
+
+A new contact is created in the contacts folder, or in the folder of the note you have open when that is inside the contacts folder. In folder layout it is never created inside another contact's folder: then it goes next to that folder. If the contact's folder already holds a contact (for example an `index.md` from before you changed the folder note name), the plugin asks before creating the note there anyway.
+
+**Switching existing contacts: two commands**
+
+- **Put each contact in its own folder** creates a folder for every contact note in the contacts folder and moves the note into it, using the settings above. Set the layout to *Folder per contact* first. Links to the notes keep working, because the notes are moved through Obsidian.
+- **Take contacts out of their folders** moves each contact note out of its folder, next to where the folder was, named after the contact (`Jan de Vries.md`). The folder is removed only when nothing else is left in it. A folder that still holds a poem or a photo stays, with those files in it, and only the note leaves.
+
+Both commands only touch contact notes in the contacts folder. They never move or delete your other files, never overwrite anything (a contact whose target folder or note exists already is skipped), never delete a folder that is not empty, and never move the contacts folder itself. Contacts that are already in the wanted layout, and notes inside another contact's folder, are left alone. When it is done a notice says how many were moved and skipped and how many folders were kept because other files are in them; the details (which note, why) are in the developer console. Running a command again is safe.
+
+**Renaming a contact**
+
+You rename a contact through Sync, like before: change the name in the note and run **Sync this contact**. When the note is in its own folder, the review screen offers **Rename folder and note to <new name>** (ticked); otherwise it offers **Rename note to <new name>**. Whatever else is in the folder, such as the poem, moves along with the folder. With a fixed note name only the folder is renamed, the note stays `index.md`. Untick the box to keep the names.
+
+The rename is blocked, and the box is disabled with the reason below it, when a folder or note with the new name already exists, or when the contact's folder holds other contacts (then it is a category rather than this person's folder: rename it by hand). Nothing is ever overwritten.
+
+**Moving the contacts folder**
+
+**Move contacts to folder…** works as before, and in folder layout a contact moves together with its whole folder and everything in it. With *Next to the folder* the folder and its note move together. A contact whose target already exists is skipped, never merged, and you cannot move contacts into a contact's own folder. If a move fails half way, what already moved is put back; if that is not possible the console says which files are now apart.
+
+**Links when the folder note has a fixed name**
+
+A link to `index` says nothing about whom it is, so with a fixed note name the plugin writes relationship links with the contact's name as the label, for example `[[Contacts/Jan de Vries/index|Jan de Vries]]`. The contact's name is then taken from the folder's name. When you import a contact from the address book, relationships in other notes that pointed to nobody but name this contact become links to the new note (a label you wrote yourself is kept). This only happens with a fixed note name.
 
 ---
 

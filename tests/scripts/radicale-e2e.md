@@ -154,6 +154,33 @@ book's name; below that is written as **<book>**.
       *Check relationships*. It reports the one-sided pair.
 - [ ] **Move contacts:** run the command *Move contacts to folder…* and pick a new folder. The notes move, the
       "Contacts folder location" setting follows, and links still resolve.
+- [ ] **Folder per contact: switch and put in folders:** Settings → **Contact layout**, set **Layout** to *Folder per
+      contact* (name `{{name}}`, *Inside the folder*). The dialog "Put N contacts in their own folder?" appears; choose
+      **Not now** and check nothing moved. Run the command *Put each contact in its own folder*. Each contact is now
+      `<contacts folder>/<name>/<name>.md`, links still resolve, and the notice says "Moved N, skipped 0, kept 0 folders".
+      Run it again: nothing moves ("N contacts were in this layout already" is in the console).
+- [ ] **Folder per contact: a poem and a rename:** put a note `poem.md` in Jan's folder. Sync Jan with the server.
+      Change Jan's `name` in the note (for example to "Johan de Vries") and Sync: the review offers **Rename folder and
+      note to Johan de Vries**, ticked. Apply: the folder and the note carry the new name and `poem.md` is still in
+      the folder. With the box unticked nothing is renamed. Make a second contact folder with the target name first:
+      the box is disabled and says that a folder or note with that name exists.
+- [ ] **Folder per contact: fixed note name:** set **Folder note name** to `index`. The hint "Obsidian's graph and tabs
+      will show every contact as "index"." shows. Set *Next to the folder*: the field shows a warning and the setting is
+      not saved. Back to *Inside*. Add a child relation to a contact: the link is written as
+      `[[<folder>/<name>/index|<name>]]`. Rename a contact through Sync: only the folder is renamed, the note stays
+      `index`. Import a server contact that other notes name in a relationship without a note: those entries become
+      links to the new note.
+- [ ] **Folder per contact: Copy from Folder Notes:** with the Folder Notes plugin installed and set to another name or
+      to "parent folder", the plugin's section shows "Folder Notes uses different settings." Click **Copy from Folder
+      Notes**: name and location follow, the warning goes. With Folder Notes set to a type other than `.md`, or to
+      the vault folder, a notice says why it cannot be copied and nothing changes.
+- [ ] **Folder per contact: take out:** with the poem still in Jan's folder, run *Take contacts out of their folders*.
+      Every contact note is `<contacts folder>/<name>.md` again. Folders without other files are gone; Jan's folder
+      stays with `poem.md` in it, and the notice counts it as kept.
+- [ ] **Folder per contact: Move contacts to folder…:** put the contacts in folders again, then run *Move contacts to
+      folder…* and pick a new folder. Every contact moves with its whole folder (the poem too), the "Contacts folder
+      location" setting follows and links resolve. Try a target that already has a folder with a contact's name: that
+      contact is skipped, not merged.
 - [ ] **Property names settings:** Settings → **Property names**. Rename `mobile` to `gsm`. Accept the offer to
       rename it in the contact notes. **Sync** still writes the TEL line. *Reset to defaults* brings `mobile` back.
 - [ ] **Second address book:** make a distinct card (new UID, name Anna) from the fixture without editing it, and
