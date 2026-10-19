@@ -379,3 +379,74 @@ Each part is shippable on its own and keeps all existing tests passing.
 - The settings widgets for the source list.
 - Whether "Sync this contact" also appears in the file menu.
 - People graph colours (from the theme where possible), node sizes, force parameters, exact zoom thresholds.
+
+## Part 6: Card versions, and relationships phones understand
+
+Added 2026-10-19 on the owner's request after testing alpha.6 with DAVx5 (Android) against Radicale.
+
+### Why
+
+- vCard 3.0 has no `RELATED`. Apple and DAVx5 (and others that copied them) store relationships in 3.0 cards as
+  `itemN.X-ABRELATEDNAMES:<name>` with `itemN.X-ABLabel:_$!<Spouse>!$_` (built-in labels) or a plain label text.
+  DAVx5 writes this for every 3.0 card and reads both `RELATED` and `X-ABRELATEDNAMES`; Android shows a `RELATED`
+  URI (`urn:uuid:…`) as the person's name.
+- The plugin writes `RELATED;TYPE=x:urn:uuid:<uid>` in every card: invisible or shown as a code on phones, and
+  relationships entered on a phone are not read.
+- 3.0 has no `ANNIVERSARY` either; Apple and DAVx5 use `itemN.X-ABDATE` with label `_$!<Anniversary>!$_`.
+
+### Goals
+
+- Every card keeps its own version; each property is written in the form that version uses.
+- Every form is read, whatever the version.
+- Relationships show as names on every client; the plugin keeps exact links where it can.
+- A `partner` relationship next to `spouse`.
+- The address book is chosen when a contact is created; new cards follow the version the address book uses.
+
+### Non-goals
+
+- Converting cards between versions (the owner decided against an upgrade button: phones rewrite cards in their own
+  version anyway).
+
+### Reading
+
+- `RELATED` with a `urn:uuid:` value (as today), with `VALUE=text` (a name), and with the hint parameter
+  `X-FRIENDLY-UID=<uid>`: the hint wins when it resolves to a contact, else the value.
+- `X-ABRELATEDNAMES` with the label of its group (`X-ABLabel`): `_$!<Label>!$_` and plain labels; a comma-separated
+  label (DAVx5 writes e.g. `Domestic-partner, Spouse`) matches when any part matches. The value is a name (with the
+  hint parameter when the plugin wrote it). Unlabeled or unknown labels are not mapped (the line stays untouched).
+- `X-ABDATE` with label `_$!<Anniversary>!$_` (or plain `Anniversary`) reads as `anniversary` (same date rules as
+  `ANNIVERSARY`, including the Apple year-less form).
+- Labels per relation row (first one is written; matching ignores case):
+  spouse: Spouse · partner: Partner · children: Child · parents: Parent, Mother, Father · siblings: Sibling, Brother,
+  Sister · family: Kin, Relative · friends: Friend · colleagues: Colleague, Co-worker, Assistant, Manager ·
+  neighbours: Neighbor · housemates: Co-resident · acquaintances: Acquaintance · met: Met · emergency: Emergency.
+  Apple's built-in labels use the `_$!<…>!$_` form: Spouse, Partner, Child, Parent, Mother, Father, Brother, Sister,
+  Friend, Assistant, Manager; the others are written as plain text.
+- New default row `partner` (vCard 4 type `sweetheart`, label Partner, mirrored by itself, single like `spouse`).
+  Graph kind: partner.
+
+### Writing (only what changed; untouched lines stay byte-identical)
+
+- vCard 3.0 card: a relationship is `itemN.X-ABRELATEDNAMES;X-FRIENDLY-UID=<uid>:<name>` plus
+  `itemN.X-ABLabel:<label>` (N = next free item number; the hint only when the target has a UID). An anniversary is
+  `itemN.X-ABDATE:<date>` plus `itemN.X-ABLabel:_$!<Anniversary>!$_` (year-less: Apple form).
+- vCard 4.0 card: `RELATED;TYPE=<type>;VALUE=text;X-FRIENDLY-UID=<uid>:<name>`; `ANNIVERSARY` as today.
+- `<name>` is the target's display name (`name` property or the contact's name), never a path or alias.
+- Removing a relationship removes its line and its label.
+- Legacy lines the plugin wrote before (`RELATED…:urn:uuid:…` on a 3.0 card) are rewritten into the 3.0 form on the
+  next Apply that writes that card; when this is the only difference, the review screen opens with the line
+  "Relationships on this card are rewritten in the form phones understand." and Apply (no property rows).
+
+### New cards and address books
+
+- Each address book gets "New contacts: Automatic / vCard 3.0 / vCard 4.0" (default Automatic). Automatic = the
+  version most cards in that address book have (ties and empty books: 3.0, the most widely understood).
+- The settings show per address book, on request ("Count card versions"), e.g. "118 × vCard 3.0, 4 × vCard 4.0".
+- "Create Contact" gets an **Address book** dropdown (default address book preselected; hidden with one address book;
+  absent without address books); the choice is written as `source:` in the new note.
+
+### Testing
+
+- Fixtures shaped like DAVx5 3.0 cards (relationships, anniversary, custom labels) and 4.0 cards; reading every form;
+  writing per version; legacy rewrite; mapping migration of stored settings (new row `partner`, labels added to
+  existing rows, renamed rows keep their names); e2e round trip against Radicale for both versions.
