@@ -50,7 +50,8 @@ export class FileExistsModal extends Modal {
 	}
 
 	onOpen() {
-		this.titleEl.setText("File Exists");
+		// With a message no file exists: the contact's folder already holds another contact.
+		this.titleEl.setText(this.message === undefined ? "File Exists" : "Folder in use");
 
 		// Create React root and render
 		this.reactRoot = createRoot(this.contentEl);
