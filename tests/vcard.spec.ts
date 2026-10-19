@@ -128,6 +128,28 @@ describe('vcard creatEmpty', () => {
     expect(books.offered).toEqual([{ names: ['Work', 'Family'], selected: 'Work' }]);
     expect(empty['source']).toBe('Family');
   });
+
+  it('a disabled default and one enabled address book: no dropdown, that book is written as source', async () => {
+    books.sources = [
+      { id: 'a', name: 'Old', enabled: false },
+      { id: 'b', name: 'Work', enabled: true },
+    ];
+    books.defaultSource = 'a';
+    const empty = await vcard.createEmpty();
+    expect(books.offered).toEqual([undefined]);
+    expect(empty['source']).toBe('Work');
+  });
+
+  it('an enabled default as the only enabled book needs no source', async () => {
+    books.sources = [
+      { id: 'a', name: 'Work', enabled: true },
+      { id: 'b', name: 'Old', enabled: false },
+    ];
+    books.defaultSource = 'a';
+    const empty = await vcard.createEmpty();
+    expect(books.offered).toEqual([undefined]);
+    expect(empty).not.toHaveProperty('source');
+  });
 });
 
 describe('vcard parse', () => {

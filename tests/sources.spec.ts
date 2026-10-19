@@ -1,5 +1,6 @@
 import {
   bookChoice,
+  fixedBook,
   CardLocation,
   cardVersionStats,
   countCardVersions,
@@ -331,5 +332,21 @@ describe('bookChoice', () => {
     // Fewer than two enabled books: nothing to choose.
     expect(bookChoice({ sources: [source('a', 'Work'), off(source('b', 'Old'))], defaultSource: 'b' })).toBeUndefined();
     expect(bookChoice({ sources: [off(source('a', 'Work')), off(source('b', 'Old'))], defaultSource: 'a' })).toBeUndefined();
+  });
+});
+
+describe('fixedBook', () => {
+  const off = (s: Source): Source => ({ ...s, enabled: false });
+
+  it('is the one enabled book when the default is disabled or gone', () => {
+    expect(fixedBook({ sources: [off(source('a', 'Old')), source('b', 'Work')], defaultSource: 'a' })).toBe('Work');
+    expect(fixedBook({ sources: [source('b', 'Work'), off(source('a', 'Old'))], defaultSource: 'gone' })).toBe('Work');
+  });
+
+  it('is none when the default is the enabled book, or there is something (or nothing) to choose', () => {
+    expect(fixedBook({ sources: [source('a', 'Work'), off(source('b', 'Old'))], defaultSource: 'a' })).toBeUndefined();
+    expect(fixedBook({ sources: [off(source('a', 'Old')), source('b', 'Work'), source('c', 'Family')], defaultSource: 'a' })).toBeUndefined();
+    expect(fixedBook({ sources: [off(source('a', 'Old')), off(source('b', 'Older'))], defaultSource: 'a' })).toBeUndefined();
+    expect(fixedBook({ sources: [], defaultSource: '' })).toBeUndefined();
   });
 });

@@ -312,3 +312,14 @@ export function bookChoice(settings: SourceList): BookChoice | undefined {
   const selected = (preferred?.enabled ? preferred : enabled[0]).name;
   return { names: enabled.map((s) => s.name), selected };
 }
+
+/**
+ * The address book "Create Contact" writes as `source:` without asking: the one enabled book when the default is
+ * not it (disabled or gone), else undefined (with two or more enabled books `bookChoice` asks; the default needs no
+ * `source:`).
+ */
+export function fixedBook(settings: SourceList): string | undefined {
+  const enabled = settings.sources.filter((s) => s.enabled);
+  if (enabled.length !== 1) return undefined;
+  return defaultSourceOf(settings)?.id === enabled[0].id ? undefined : enabled[0].name;
+}

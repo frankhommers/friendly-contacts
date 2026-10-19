@@ -329,6 +329,8 @@ book's name; below that is written as **<book>**.
       the dialog has an **Address book** dropdown with the default selected. Choose the second book and create
       "Test Twee": the note has `source:` with that book's name, and its first **Sync** creates the card in that book
       (not in the other). With one enabled address book the dropdown is not shown; a disabled book is never listed.
+      Disable the default book, leaving one enabled: **Create Contact** shows no dropdown and the note gets `source:`
+      with the enabled book.
 - [ ] **New contacts version:** in an address book's settings click **Count card versions**: the text reads
       like "3 × vCard 3.0, 0 × vCard 4.0; Automatic gives new contacts vCard 3.0." Set **New contacts** to
       vCard 4.0, create a contact in that book and **Sync**: the card says `VERSION:4.0`. Set it back to Automatic.
