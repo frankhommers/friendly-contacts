@@ -5,6 +5,12 @@ export const CONTACTS_VIEW_CONFIG = {
 	icon: "contact",
 };
 
+export const PEOPLE_GRAPH_VIEW = {
+	type: "friendly-contacts-people-graph",
+	name: "People graph",
+	icon: "network",
+};
+
 export enum Sort {
 	NAME,
 	BIRTHDAY,

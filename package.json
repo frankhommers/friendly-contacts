@@ -22,6 +22,10 @@
 	"author": "",
 	"license": "MIT",
 	"devDependencies": {
+		"@types/d3-drag": "^3.0.7",
+		"@types/d3-force": "^3.0.10",
+		"@types/d3-selection": "^3.0.12",
+		"@types/d3-zoom": "^3.0.9",
 		"@types/jsdom": "^21.1.7",
 		"@types/node": "^22.15.29",
 		"@types/react": "^18.0.26",
@@ -41,6 +45,10 @@
 	},
 	"dependencies": {
 		"@preact/signals-core": "^1.11.0",
+		"d3-drag": "^3.0.0",
+		"d3-force": "^3.0.0",
+		"d3-selection": "^3.0.0",
+		"d3-zoom": "^3.0.0",
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0"
 	}

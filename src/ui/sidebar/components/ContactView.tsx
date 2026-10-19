@@ -5,6 +5,7 @@ import { getApp } from "src/context/sharedAppContext";
 import { fileId, openFile } from "src/file/file";
 import { sync } from "src/sync";
 import { useSyncEnabled } from "src/ui/hooks/syncEnabledHook";
+import { openPeopleGraph } from "src/ui/graph/peopleGraphView";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import Avatar from "src/ui/sidebar/components/elements/Avatar";
 import { CopyableItem } from "src/ui/sidebar/components/CopyableItem";
@@ -258,6 +259,19 @@ export const ContactView = (props: ContactProps) => {
 								onClick={(event) => {
                   event.stopPropagation();
                   props.exportVCF(contact.file);
+                }}
+							>
+							</div>
+							<div
+								data-icon="network"
+								className={
+									"clickable-icon nav-action-button "
+								}
+								aria-label="Graph"
+								ref={(element) => (buttons.current[3] = element)}
+								onClick={(event) => {
+                  event.stopPropagation();
+                  void openPeopleGraph(getApp(), contact.file.path);
                 }}
 							>
 							</div>

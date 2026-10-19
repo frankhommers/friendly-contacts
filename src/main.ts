@@ -7,7 +7,7 @@ import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
 import { getSettings, initSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
-import { CONTACTS_VIEW_CONFIG } from "src/util/constants";
+import { CONTACTS_VIEW_CONFIG, PEOPLE_GRAPH_VIEW } from "src/util/constants";
 import myScrollTo from "src/util/myScrollTo";
 
 import {updateFrontMatter} from "./contacts";
@@ -25,6 +25,8 @@ import { runLayoutCommand } from "src/ui/modals/layoutChangeModal";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
+import { graphCentre } from "src/graph/vaultGraph";
+import { openPeopleGraph, PeopleGraphView } from "src/ui/graph/peopleGraphView";
 
 export default class ContactsPlugin extends Plugin {
 	settings!: ContactsPluginSettings;
@@ -47,9 +49,15 @@ export default class ContactsPlugin extends Plugin {
 			(leaf) => new ContactsView(leaf, this)
 		);
 
+		this.registerView(PEOPLE_GRAPH_VIEW.type, (leaf) => new PeopleGraphView(leaf));
+
 		this.addRibbonIcon('contact', 'Contacts', () => {
 			this.activateSidebarView();
       myScrollTo.handleLeafEvent(null);
+		});
+
+		this.addRibbonIcon(PEOPLE_GRAPH_VIEW.icon, 'Open people graph', () => {
+			void this.openPeopleGraph();
 		});
 
 		this.addSettingTab(new ContactsSettingTab(this.app, this));
@@ -175,7 +183,34 @@ export default class ContactsPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "friendly-contacts-people-graph",
+      name: "Open people graph",
+      callback: () => {
+        void this.openPeopleGraph();
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-people-graph-contact",
+      name: "Open people graph for this contact",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || !contactNotes(this.app).some((n) => n.file.path === file.path)) {
+          new Notice("Open a contact note first.");
+          return;
+        }
+        void openPeopleGraph(this.app, file.path);
+      },
+    });
+
     this.setupRelationMirror();
+	}
+
+	/** The people graph centred on "me", else on the active contact, else everyone. */
+	private openPeopleGraph(): Promise<void> {
+		const centre = graphCentre(this.app, getSettings().meUid, this.app.workspace.getActiveFile()?.path);
+		return openPeopleGraph(this.app, centre);
 	}
 
 	/** Mirrors relationship properties between contact notes (`children` <-> `parents`). */

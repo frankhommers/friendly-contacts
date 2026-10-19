@@ -33,6 +33,8 @@ describe('the sync core, the layout model and relationship editing load without 
     'src/contacts/relationMirror.ts',
     'src/contacts/relationEdit.ts',
     'src/graph/graphModel.ts',
+    'src/graph/graphColors.ts',
+    'src/graph/graphLayout.ts',
     'src/util/versionStore.ts',
     'src/util/sharedListing.ts',
   ]) {
