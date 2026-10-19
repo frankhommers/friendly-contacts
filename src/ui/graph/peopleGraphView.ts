@@ -1,13 +1,13 @@
-/** The people graph view: a toolbar (depth, kinds, recenter) above a canvas drawn by GraphRenderer. */
+/** The people graph view: a toolbar (depth, kinds, open note, recenter) above a canvas drawn by GraphRenderer. */
 
 import { type App, debounce, ItemView, Keymap, Notice, setIcon, TFile, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { isInside, normalizeFolder } from "src/contacts/moveContacts";
 import { contactNotes, remoteContacts, type RemoteContact } from "src/contacts/obsidianNotes";
 import { ghostAction } from "src/contacts/relationEdit";
-import { getSettings } from "src/context/sharedSettingsContext";
-import { isFileInFolder } from "src/file/file";
+import { getSettings, settings as settingsSignal } from "src/context/sharedSettingsContext";
 import { GRAPH_KINDS, kindColorVar } from "src/graph/graphColors";
-import { DEPTH_CHOICES, type GraphViewState, normalizeGraphState } from "src/graph/graphLayout";
-import { buildGraph, type GraphNode, neighbourhood, type RelationKind } from "src/graph/graphModel";
+import { DEPTH_CHOICES, type GraphViewState, keptCentre, normalizeGraphState } from "src/graph/graphLayout";
+import { buildGraph, ghostTarget, type GraphNode, neighbourhood, type RelationKind } from "src/graph/graphModel";
 import { graphCentre, graphContacts } from "src/graph/vaultGraph";
 import { isSyncAvailable } from "src/sync/adapters";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
@@ -26,15 +26,25 @@ const KIND_LABEL: Record<RelationKind, string> = {
   other: "Other",
 };
 
+/** In the contacts folder or below it (`Contacts` does not contain `Contacts old/Jan.md`). */
+const inContactsFolder = (path: string): boolean => isInside(path, normalizeFolder(getSettings().contactsFolder));
+
+/** What a change of these settings changes in the graph: the contacts, their relations, and "me". */
+const graphSettingsKey = (value: { contactsFolder: string; meUid: string; friendly: { mapping: unknown } }): string =>
+  JSON.stringify([value.contactsFolder, value.meUid, value.friendly.mapping]);
+
 export class PeopleGraphView extends ItemView {
   private state: GraphViewState = normalizeGraphState(undefined);
   private renderer: GraphRenderer | undefined;
   private depthSelect: HTMLSelectElement | undefined;
+  private openButton: HTMLButtonElement | undefined;
   private readonly pills = new Map<RelationKind, HTMLElement>();
   private messageEl: HTMLElement | undefined;
   private canvasHost: HTMLElement | undefined;
   private firstDraw = 0;
   private ghostBusy = false;
+  /** A refresh was skipped while the view was hidden; `focus`: it was to pan to the centre too. */
+  private stale: { focus: boolean } | undefined;
   private readonly refreshSoon = debounce(() => this.refresh(), LIVE_UPDATE_DELAY, true);
 
   constructor(leaf: WorkspaceLeaf) {
@@ -64,8 +74,7 @@ export class PeopleGraphView extends ItemView {
     this.syncToolbar();
     window.clearTimeout(this.firstDraw);
     this.refreshSoon.cancel();
-    this.refresh();
-    this.renderer?.focusCentre();
+    this.refresh(true);
     await super.setState(state, result);
   }
 
@@ -102,6 +111,14 @@ export class PeopleGraphView extends ItemView {
       this.pills.set(kind, pill);
     }
 
+    // On a phone there is no double-click: this (or a tap on the centre) opens the centre's note.
+    const open = toolbar.createEl("button", { cls: "clickable-icon friendly-graph-open", attr: { "aria-label": "Open note" } });
+    setIcon(open, "file-text");
+    this.registerDomEvent(open, "click", () => {
+      if (this.state.centre !== undefined) void this.app.workspace.openLinkText(this.state.centre, "");
+    });
+    this.openButton = open;
+
     const recenter = toolbar.createEl("button", { cls: "clickable-icon friendly-graph-recenter", attr: { "aria-label": "Recenter" } });
     setIcon(recenter, "locate-fixed");
     this.registerDomEvent(recenter, "click", () => this.renderer?.recenter());
@@ -112,11 +129,12 @@ export class PeopleGraphView extends ItemView {
     this.renderer = new GraphRenderer(this.canvasHost, {
       onNodeClick: (node, event) => this.nodeClicked(node, event),
       onNodeDoubleClick: (node) => this.openNode(node),
+      onResize: () => this.refreshIfStale(),
     });
     this.syncToolbar();
 
     const { metadataCache, vault, workspace } = this.app;
-    const isContactPath = (file: unknown): file is TFile => file instanceof TFile && file.extension === "md" && isFileInFolder(file);
+    const isContactPath = (file: unknown): file is TFile => file instanceof TFile && file.extension === "md" && inContactsFolder(file.path);
     this.registerEvent(metadataCache.on("changed", (file) => {
       if (isContactPath(file)) this.refreshSoon();
     }));
@@ -124,16 +142,39 @@ export class PeopleGraphView extends ItemView {
       if (isContactPath(file)) this.refreshSoon();
     }));
     this.registerEvent(vault.on("rename", (file, oldPath) => {
-      const wasContact = oldPath.endsWith(".md") && oldPath.startsWith(getSettings().contactsFolder);
+      const wasContact = oldPath.endsWith(".md") && inContactsFolder(oldPath);
       if (!wasContact && !isContactPath(file)) return;
       if (this.state.centre === oldPath) this.state.centre = file.path;
       this.renderer?.renameNode(oldPath, file.path);
       this.refreshSoon();
     }));
     this.registerEvent(workspace.on("css-change", () => this.renderer?.refreshColors()));
+    // Before Obsidian has read every note the graph is incomplete: draw again once it has (the first time only).
+    if (!(metadataCache as unknown as { resolved?: boolean }).resolved) {
+      const ref = metadataCache.on("resolved", () => {
+        metadataCache.offref(ref);
+        this.refreshSoon();
+      });
+      this.registerEvent(ref);
+    }
+    let graphSettings = graphSettingsKey(getSettings());
+    this.register(
+      settingsSignal.subscribe((value) => {
+        if (!value || graphSettingsKey(value) === graphSettings) return;
+        graphSettings = graphSettingsKey(value);
+        this.refreshSoon();
+      }),
+    );
+    // A refresh skipped while hidden happens when the view shows again.
+    this.registerEvent(workspace.on("active-leaf-change", () => this.refreshIfStale()));
+    this.registerEvent(workspace.on("layout-change", () => this.refreshIfStale()));
 
     // setState usually follows right away and draws; otherwise draw with the defaults.
     this.firstDraw = window.setTimeout(() => workspace.onLayoutReady(() => this.refresh()), 0);
+  }
+
+  onResize(): void {
+    this.refreshIfStale();
   }
 
   async onClose(): Promise<void> {
@@ -154,6 +195,7 @@ export class PeopleGraphView extends ItemView {
 
   private syncToolbar(): void {
     if (this.depthSelect) this.depthSelect.value = String(this.state.depth);
+    if (this.openButton) this.openButton.disabled = this.state.centre === undefined;
     for (const [kind, pill] of this.pills) {
       const on = this.state.kinds.includes(kind);
       pill.toggleClass("is-active", on);
@@ -161,21 +203,36 @@ export class PeopleGraphView extends ItemView {
     }
   }
 
-  /** Builds the graph from the contact notes and draws the part around the centre. */
-  private refresh(): void {
+  private refreshIfStale(): void {
+    if (this.stale && this.containerEl.isShown()) this.refresh(this.stale.focus);
+  }
+
+  /**
+   * Builds the graph from the contact notes and draws the part around the centre (`focus`: and pans to it). While
+   * the view is hidden (a background tab) this waits until it shows.
+   */
+  private refresh(focus = false): void {
     const renderer = this.renderer;
     if (!renderer || !this.messageEl || !this.canvasHost) return;
+    if (!this.containerEl.isShown()) {
+      this.stale = { focus: focus || this.stale?.focus === true };
+      return;
+    }
+    this.stale = undefined;
     const settings = getSettings();
     const rows = settings.friendly.mapping;
     const full = buildGraph(graphContacts(this.app, rows), rows);
     // A centre that is no longer a contact note (deleted) falls back to "me", else everyone.
-    if (this.state.centre !== undefined && !full.nodes.some((n) => n.id === this.state.centre && !n.ghost)) {
-      this.state.centre = graphCentre(this.app, settings.meUid, undefined);
-    }
+    this.state.centre = keptCentre(this.state.centre, full, () => graphCentre(this.app, settings.meUid, undefined));
+    this.syncToolbar();
     const result = neighbourhood(full, this.state.centre, this.state.depth, new Set(this.state.kinds));
     if ("tooMany" in result) {
       renderer.clear();
-      this.showMessage(`Too many people to draw (${result.tooMany}). Choose a smaller depth.`);
+      this.showMessage(
+        this.state.centre === undefined
+          ? `Too many people to draw (${result.tooMany}). Set "This is me" in the settings or open the graph from a contact.`
+          : `Too many people to draw (${result.tooMany}). Choose a smaller depth.`,
+      );
       return;
     }
     if (result.graph.nodes.length === 0) {
@@ -186,6 +243,7 @@ export class PeopleGraphView extends ItemView {
     this.messageEl.hide();
     this.canvasHost.show();
     renderer.setGraph(result.graph, this.state.centre);
+    if (focus) renderer.focusCentre();
   }
 
   private showMessage(text: string): void {
@@ -199,14 +257,13 @@ export class PeopleGraphView extends ItemView {
       void this.ghostClicked(node);
       return;
     }
-    if (Keymap.isModEvent(event)) {
+    // A click on the centre opens its note: on a phone there is no double-click or Ctrl-click.
+    if (Keymap.isModEvent(event) || node.id === this.state.centre) {
       this.openNode(node);
       return;
     }
-    if (node.id === this.state.centre) return;
     this.state.centre = node.id;
-    this.refresh();
-    this.renderer?.focusCentre();
+    this.refresh(true);
     this.app.workspace.requestSaveLayout();
   }
 
@@ -225,17 +282,24 @@ export class PeopleGraphView extends ItemView {
   private async ghostClicked(node: GraphNode): Promise<void> {
     if (this.ghostBusy) return;
     this.ghostBusy = true;
+    // The address books may have to be read first; say so, the answer can take a moment.
+    let lookingUp: Notice | undefined;
     try {
       if (isSyncAvailable()) {
+        lookingUp = new Notice(`Looking up ${node.name}…`, 0);
         let remote: RemoteContact[] = [];
         try {
           remote = await remoteContacts();
         } catch (error) {
           console.error("Friendly Contacts: reading the address books failed", error);
         }
+        lookingUp.hide();
+        lookingUp = undefined;
+        const uidKey = (uid: string) => cleanUid(uid).toLowerCase();
         const byUid = new Map<string, string>();
-        for (const { file, uid } of contactNotes(this.app)) if (uid !== undefined) byUid.set(cleanUid(uid), file.path);
-        const action = ghostAction(node.name, remote, (uid) => byUid.get(cleanUid(uid)), "");
+        for (const { file, uid } of contactNotes(this.app)) if (uid !== undefined) byUid.set(uidKey(uid), file.path);
+        // Looked up by the link text, as the sidebar does; the name shown may be the link's label.
+        const action = ghostAction(ghostTarget(node.id) ?? node.name, remote, (uid) => byUid.get(uidKey(uid)), "");
         if (action && "link" in action) {
           await this.app.workspace.openLinkText(action.link, "");
           return;
@@ -248,6 +312,7 @@ export class PeopleGraphView extends ItemView {
       }
       new Notice(`${node.name} has no note.`);
     } finally {
+      lookingUp?.hide();
       this.ghostBusy = false;
     }
   }

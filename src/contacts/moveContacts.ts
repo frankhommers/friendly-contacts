@@ -20,7 +20,8 @@ export function normalizeFolder(folder: string): string {
   return folder.trim().replace(/^\/+|\/+$/g, "");
 }
 
-function isInside(path: string, folder: string): boolean {
+/** True when `path` is in `folder` (normalized, see `normalizeFolder`) or below it; everything is in the vault root. */
+export function isInside(path: string, folder: string): boolean {
   return folder === "" || path.startsWith(folder + "/");
 }
 
