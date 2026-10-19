@@ -24,7 +24,9 @@ import {
   hitTest,
   hopDistances,
   initials,
+  LABEL_T,
   parallelOffsets,
+  quadraticPoint,
   safeImageSrc,
 } from "src/graph/graphLayout";
 import { type Graph, type GraphEdge, type GraphNode, lodTier, type RelationKind } from "src/graph/graphModel";
@@ -352,7 +354,7 @@ export class GraphRenderer {
     const colors = this.colors;
 
     // Edges: a straight line, or a curve when two people have more than one relation.
-    const mids: { x: number; y: number; text: string; color: string }[] = [];
+    const edgeLabels: { x: number; y: number; text: string; color: string }[] = [];
     ctx.lineWidth = Math.max(1.5, 1 / k);
     for (const link of this.links) {
       const s = link.source as SimNode;
@@ -374,13 +376,11 @@ export class GraphRenderer {
       else ctx.quadraticCurveTo(cx, cy, t.x, t.y);
       ctx.stroke();
       if (labels) {
-        // The middle of the quadratic curve (t = 0.5).
-        mids.push({
-          x: (s.x + 2 * cx + t.x) / 4,
-          y: (s.y + 2 * cy + t.y) / 4,
-          text: edgeLabel(link.edge, this.distances),
-          color,
-        });
+        // Near the person the label describes, so it is clear which end it is about.
+        const { text, towards } = edgeLabel(link.edge, this.distances);
+        const along = towards === t.id ? LABEL_T : 1 - LABEL_T;
+        const at = quadraticPoint({ x: s.x, y: s.y }, { x: cx, y: cy }, { x: t.x, y: t.y }, along);
+        edgeLabels.push({ ...at, text, color });
       }
     }
 
@@ -389,12 +389,12 @@ export class GraphRenderer {
       ctx.font = `${size}px ${this.font}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      for (const mid of mids) {
-        const w = ctx.measureText(mid.text).width + 6 * textScale;
+      for (const label of edgeLabels) {
+        const w = ctx.measureText(label.text).width + 6 * textScale;
         ctx.fillStyle = colors.background;
-        ctx.fillRect(mid.x - w / 2, mid.y - size * 0.7, w, size * 1.4);
-        ctx.fillStyle = mid.color;
-        ctx.fillText(mid.text, mid.x, mid.y);
+        ctx.fillRect(label.x - w / 2, label.y - size * 0.7, w, size * 1.4);
+        ctx.fillStyle = label.color;
+        ctx.fillText(label.text, label.x, label.y);
       }
     }
 

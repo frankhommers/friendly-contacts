@@ -2,6 +2,7 @@ import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import {
   findOneSided,
   inverseProperty,
+  linkAlias,
   linkTarget,
   planMirrorWrites,
   relationSnapshot,
@@ -27,6 +28,20 @@ describe('linkTarget', () => {
   it('markdown link target', () => {
     expect(linkTarget('[Anna](People/Anna%20de%20Vries.md)')).toBe('People/Anna de Vries');
     expect(linkTarget('[Anna](<People/Anna de Vries.md>)')).toBe('People/Anna de Vries');
+  });
+});
+
+describe('linkAlias', () => {
+  it('is the label of a wikilink or a markdown link', () => {
+    expect(linkAlias('[[Contacts/Jan/index|Jan de Vries]]')).toBe('Jan de Vries');
+    expect(linkAlias('[[Contacts/Jan/index| Jan ]]')).toBe('Jan');
+    expect(linkAlias('[Anna](People/Anna%20de%20Vries.md)')).toBe('Anna');
+  });
+
+  it('is undefined without a label', () => {
+    expect(linkAlias('[[Contacts/Jan/index]]')).toBeUndefined();
+    expect(linkAlias('[[Jan| ]]')).toBeUndefined();
+    expect(linkAlias('Jan')).toBeUndefined();
   });
 });
 

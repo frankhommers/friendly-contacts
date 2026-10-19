@@ -1,6 +1,6 @@
 /**
- * Pure helpers of the people graph view: distances from the centre, edge labels, hit-testing, position carry-over,
- * initials, photo sources and the view state. No obsidian / src/context imports.
+ * Pure helpers of the people graph view: distances from the centre, edge labels and where they go, hit-testing,
+ * position carry-over, initials, photo sources and the view state (and its centre). No obsidian / src/context imports.
  */
 
 import { GRAPH_KINDS } from "./graphColors";
@@ -35,14 +35,50 @@ export function hopDistances(graph: Graph, centre: string | undefined): Map<stri
   return distances;
 }
 
+/** Labels whose one-way form is not just "<type> of". */
+const ONE_WAY: Record<string, string> = { emergency: "emergency contact of" };
+
 /**
- * The label of `edge` as seen from the end nearer the centre: B's label when B is strictly nearer (and known),
- * else A's. An end missing from `distances` counts as farthest.
+ * The label of a relation without a mirror read from its other end: Jan `emergency: Piet` seen from Piet is
+ * "emergency contact of" (Jan), any other type `t` is "t of".
  */
-export function edgeLabel(edge: GraphEdge, distances: Map<string, number>): string {
+export function oneWayLabel(type: string): string {
+  return ONE_WAY[type.trim().toLowerCase()] ?? `${type} of`;
+}
+
+/**
+ * The label of `edge` as seen from the end nearer the centre, and the node it describes (the other end, where it is
+ * drawn). B's view when B is strictly nearer, else A's (also on a tie and without a centre). An end missing from
+ * `distances` counts as farthest. B's label is the mirror's type; a relation without a mirror reads `oneWayLabel`.
+ */
+export function edgeLabel(edge: GraphEdge, distances: Map<string, number>): { text: string; towards: string } {
   const da = distances.get(edge.a) ?? Infinity;
   const db = distances.get(edge.b) ?? Infinity;
-  return db < da && edge.labelFromB !== undefined ? edge.labelFromB : edge.labelFromA;
+  if (db < da) return { text: edge.labelFromB ?? oneWayLabel(edge.labelFromA), towards: edge.a };
+  return { text: edge.labelFromA, towards: edge.b };
+}
+
+/** How far along its edge (from the viewing end) a label is drawn: near the node it describes. */
+export const LABEL_T = 0.68;
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+/** The point at `t` (0..1) on the quadratic curve from `s` through control point `c` to `e`. */
+export function quadraticPoint(s: Point, c: Point, e: Point, t: number): Point {
+  const u = 1 - t;
+  return { x: u * u * s.x + 2 * u * t * c.x + t * t * e.x, y: u * u * s.y + 2 * u * t * c.y + t * t * e.y };
+}
+
+/**
+ * The centre to draw around: `centre` while it is a contact in `graph`; `fallback()` once it is gone (deleted, or
+ * now a ghost). An empty graph (the notes are not read yet) keeps it, so a saved centre is not lost at startup.
+ */
+export function keptCentre(centre: string | undefined, graph: Graph, fallback: () => string | undefined): string | undefined {
+  if (centre === undefined || graph.nodes.length === 0) return centre;
+  return graph.nodes.some((n) => n.id === centre && !n.ghost) ? centre : fallback();
 }
 
 /**

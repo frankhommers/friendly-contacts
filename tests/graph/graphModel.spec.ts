@@ -1,6 +1,8 @@
 import { DEFAULT_MAPPING, renameRow } from "src/contacts/friendly/mapping";
 import {
   buildGraph,
+  ghostName,
+  ghostTarget,
   GraphContact,
   lodTier,
   neighbourhood,
@@ -90,18 +92,97 @@ describe("buildGraph", () => {
     ]);
   });
 
-  it("one-sided relation is an edge", () => {
+  it("one-sided relation is an edge, labelled from B by the mirror's type", () => {
     const g = buildGraph(
       [contact("Jan.md", { children: ["Sem.md"] }), contact("Sem.md")],
       DEFAULT_MAPPING,
     );
-    expect(g.edges).toHaveLength(1);
-    expect(g.edges[0]).toMatchObject({
-      a: "Jan.md",
-      b: "Sem.md",
-      labelFromA: "child",
-    });
-    expect(g.edges[0].labelFromB).toBeUndefined();
+    // Centred on Sem the edge must say "parent" (Jan is Sem's parent), never "child".
+    expect(g.edges).toEqual([
+      {
+        a: "Jan.md",
+        b: "Sem.md",
+        kind: "family",
+        labelFromA: "child",
+        labelFromB: "parent",
+      },
+    ]);
+  });
+
+  it("a ghost two contacts link to gets the mirror's type from its side", () => {
+    const g = buildGraph(
+      [
+        contact("A.md", { children: ["Piet"] }),
+        contact("B.md", { colleagues: ["Piet"] }),
+      ],
+      DEFAULT_MAPPING,
+    );
+    expect(g.edges).toEqual([
+      {
+        a: "A.md",
+        b: "ghost:Piet",
+        kind: "family",
+        labelFromA: "child",
+        labelFromB: "parent",
+      },
+      {
+        a: "B.md",
+        b: "ghost:Piet",
+        kind: "work",
+        labelFromA: "colleague",
+        labelFromB: "colleague",
+      },
+    ]);
+  });
+
+  it("a relation without a mirror has no label from B", () => {
+    const g = buildGraph(
+      [contact("Jan.md", { emergency: ["Piet.md"] }), contact("Piet.md")],
+      DEFAULT_MAPPING,
+    );
+    expect(g.edges).toEqual([
+      { a: "Jan.md", b: "Piet.md", kind: "other", labelFromA: "emergency" },
+    ]);
+  });
+
+  it("a contradiction (both say the other is their child) is two edges", () => {
+    const g = buildGraph(
+      [
+        contact("Jan.md", { children: ["Sem.md"] }),
+        contact("Sem.md", { children: ["Jan.md"] }),
+      ],
+      DEFAULT_MAPPING,
+    );
+    expect(g.edges).toEqual([
+      {
+        a: "Jan.md",
+        b: "Sem.md",
+        kind: "family",
+        labelFromA: "child",
+        labelFromB: "parent",
+      },
+      {
+        a: "Sem.md",
+        b: "Jan.md",
+        kind: "family",
+        labelFromA: "child",
+        labelFromB: "parent",
+      },
+    ]);
+  });
+
+  it("a relation without a mirror listed on both sides is two edges", () => {
+    const g = buildGraph(
+      [
+        contact("Jan.md", { emergency: ["Piet.md"] }),
+        contact("Piet.md", { emergency: ["Jan.md"] }),
+      ],
+      DEFAULT_MAPPING,
+    );
+    expect(g.edges.map((e) => [e.a, e.b])).toEqual([
+      ["Jan.md", "Piet.md"],
+      ["Piet.md", "Jan.md"],
+    ]);
   });
 
   it("different kinds between the same pair are two edges", () => {
@@ -131,6 +212,28 @@ describe("buildGraph", () => {
       ["A.md", "ghost:Piet"],
       ["B.md", "ghost:Piet"],
     ]);
+  });
+
+  it("names a ghost by the link's alias, else by the last part of its path", () => {
+    const g = buildGraph(
+      [
+        {
+          ...contact("A.md", {
+            friends: ["Contacts/Jan/index", "Contacts/Piet/index", "Lot", "constructor"],
+          }),
+          aliases: new Map([["Contacts/Jan/index", "Jan de Vries"]]),
+        },
+      ],
+      DEFAULT_MAPPING,
+    );
+    expect(g.nodes.filter((n) => n.ghost)).toEqual([
+      { id: "ghost:Contacts/Jan/index", name: "Jan de Vries", ghost: true },
+      { id: "ghost:Contacts/Piet/index", name: "index", ghost: true },
+      { id: "ghost:Lot", name: "Lot", ghost: true },
+      { id: "ghost:constructor", name: "constructor", ghost: true },
+    ]);
+    expect(ghostTarget("ghost:Contacts/Jan/index")).toBe("Contacts/Jan/index");
+    expect(ghostTarget("Contacts/Jan.md")).toBeUndefined();
   });
 
   it("keeps the photo on the node", () => {
@@ -236,6 +339,46 @@ describe("neighbourhood", () => {
     expect(neighbourhood(g, "A.md", "all", ALL)).toEqual({ graph: g });
   });
 
+  it("the whole graph leaves out people without a relationship, except the centre", () => {
+    const g = buildGraph(
+      [
+        contact("A.md", { friends: ["B.md"] }),
+        contact("B.md", { colleagues: ["C.md"] }),
+        contact("C.md"),
+        contact("Alone.md"),
+      ],
+      DEFAULT_MAPPING,
+    );
+    const whole = neighbourhood(g, undefined, 1, ALL) as {
+      graph: ReturnType<typeof buildGraph>;
+    };
+    expect(ids(whole.graph)).toEqual(["A.md", "B.md", "C.md"]);
+    // C has only a work relation: with work filtered out it is alone too.
+    const friends = neighbourhood(
+      g,
+      undefined,
+      "all",
+      new Set<RelationKind>(["friends"]),
+    ) as { graph: ReturnType<typeof buildGraph> };
+    expect(ids(friends.graph)).toEqual(["A.md", "B.md"]);
+    const centred = neighbourhood(g, "Alone.md", "all", ALL) as {
+      graph: ReturnType<typeof buildGraph>;
+    };
+    expect(ids(centred.graph)).toEqual(["A.md", "Alone.md", "B.md", "C.md"]);
+  });
+
+  it("people without a relationship do not count towards too many", () => {
+    const contacts = [
+      contact("A.md", { friends: ["B.md"] }),
+      contact("B.md"),
+      ...Array.from({ length: 600 }, (_, i) => contact(`Alone${i}.md`)),
+    ];
+    const r = neighbourhood(buildGraph(contacts, DEFAULT_MAPPING), undefined, "all", ALL) as {
+      graph: ReturnType<typeof buildGraph>;
+    };
+    expect(ids(r.graph)).toEqual(["A.md", "B.md"]);
+  });
+
   it("filtered kinds break paths", () => {
     const g = buildGraph(
       [
@@ -289,6 +432,16 @@ describe("neighbourhood", () => {
     expect(neighbourhood(chain(), "Nope.md", 2, ALL)).toEqual({
       graph: { nodes: [], edges: [] },
     });
+  });
+});
+
+describe("ghostName", () => {
+  it("is the alias, else the last part of the path without .md", () => {
+    expect(ghostName("Contacts/Jan/index", " Jan ")).toBe("Jan");
+    expect(ghostName("Contacts/Jan/index", "  ")).toBe("index");
+    expect(ghostName("Contacts/Sem de Vries.md", undefined)).toBe("Sem de Vries");
+    expect(ghostName("Piet", undefined)).toBe("Piet");
+    expect(ghostName("Contacts/", undefined)).toBe("Contacts/");
   });
 });
 

@@ -4,7 +4,7 @@ import type { App } from "obsidian";
 import { coerceNoteProps } from "src/contacts/friendly/merge";
 import type { MappingRow } from "src/contacts/friendly/mapping";
 import { photoImageSrc } from "src/contacts/friendly/photo";
-import { relationSnapshot } from "src/contacts/friendly/relations";
+import { linkAlias, linkTarget, relationSnapshot } from "src/contacts/friendly/relations";
 import { contactDisplayName } from "src/contacts/layoutNotes";
 import { contactNotes } from "src/contacts/obsidianNotes";
 import type { GraphContact } from "src/graph/graphModel";
@@ -29,11 +29,33 @@ export function graphContacts(app: App, rows: MappingRow[]): GraphContact[] {
       name: contactDisplayName(app, file),
       snapshot: relationSnapshot(props, rows, resolve),
     };
+    const aliases = unresolvedAliases(props, rows, resolve);
+    if (aliases.size > 0) contact.aliases = aliases;
     const rawPhoto: unknown = Array.isArray(frontmatter.photo) ? frontmatter.photo[0] : frontmatter.photo;
     const photo = typeof rawPhoto === "string" ? photoImageSrc(rawPhoto) : undefined;
     if (photo !== undefined) contact.photo = photo;
     return contact;
   });
+}
+
+/** Link target -> label, for the relation entries that do not resolve to a contact note (named after the label). */
+function unresolvedAliases(
+  props: Record<string, unknown>,
+  rows: MappingRow[],
+  resolve: (linkpath: string) => string | undefined,
+): Map<string, string> {
+  const aliases = new Map<string, string>();
+  for (const row of rows) {
+    if (row.kind !== "relation") continue;
+    const raw = props[row.property];
+    for (const value of Array.isArray(raw) ? raw : [raw]) {
+      if (typeof value !== "string") continue;
+      const target = linkTarget(value.trim());
+      const alias = linkAlias(value);
+      if (target !== "" && alias !== undefined && resolve(target) === undefined && !aliases.has(target)) aliases.set(target, alias);
+    }
+  }
+  return aliases;
 }
 
 /**

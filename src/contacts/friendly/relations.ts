@@ -46,6 +46,13 @@ export function linkTarget(value: string): string {
   return value;
 }
 
+/** The label of a link: `[[x|Label]]` / `[Label](x)` -> `Label`; undefined without one (or for plain text). */
+export function linkAlias(value: string): string | undefined {
+  const text = value.trim();
+  const alias = /^\[\[[^|\]]*\|([^\]]*)\]\]$/.exec(text)?.[1] ?? /^\[([^\]]+)\]\(/.exec(text)?.[1];
+  return alias?.trim() || undefined;
+}
+
 /** Relation property -> sorted, unique link targets (file paths when resolvable). */
 export type RelationSnapshot = Record<string, string[]>;
 

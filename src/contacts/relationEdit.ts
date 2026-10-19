@@ -4,7 +4,7 @@
  */
 
 import { MappingRow } from 'src/contacts/friendly/mapping';
-import { inverseProperty, linkTarget, resolveRemoteName } from 'src/contacts/friendly/relations';
+import { inverseProperty, linkAlias, linkTarget, resolveRemoteName } from 'src/contacts/friendly/relations';
 import { MirrorEnv, relationItems, removeEntries } from 'src/contacts/relationMirror';
 
 export interface RelationPerson {
@@ -42,9 +42,7 @@ const resolveEntry = (env: MirrorEnv, text: string, fromPath: string): string | 
 
 /** `[[x|Alias]]` / `[Alias](x)` -> Alias, else the link target text. */
 function fallbackDisplay(text: string): string {
-  const value = text.trim();
-  const alias = /^\[\[[^|\]]*\|([^\]]*)\]\]$/.exec(value)?.[1] ?? /^\[([^\]]+)\]\(/.exec(value)?.[1];
-  return alias?.trim() || linkTarget(value);
+  return linkAlias(text) ?? linkTarget(text.trim());
 }
 
 const baseName = (path: string): string => path.replace(/^.*\//, '').replace(/\.md$/, '');

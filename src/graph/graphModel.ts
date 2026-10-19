@@ -5,12 +5,13 @@ import { RelationSnapshot } from "../contacts/friendly/relations";
 
 export type RelationKind = "partner" | "family" | "friends" | "work" | "other";
 
-/** `id` is the note path. */
+/** `id` is the note path. `aliases`: an unresolved link target -> the label written in the link (`[[x|Label]]`). */
 export interface GraphContact {
   id: string;
   name: string;
   photo?: string;
   snapshot: RelationSnapshot;
+  aliases?: Map<string, string>;
 }
 
 /** A ghost node (a link that does not resolve to a note) has id `ghost:<link text>`. */
@@ -21,7 +22,11 @@ export interface GraphNode {
   ghost: boolean;
 }
 
-/** `labelFromA` is the vCard type on A's side: Jan `children: Sem` -> a=Jan, b=Sem, labelFromA `child`. */
+/**
+ * `labelFromA` is the vCard type on A's side: Jan `children: Sem` -> a=Jan, b=Sem, labelFromA `child` (what B is to
+ * A). `labelFromB` is the type of the relation's mirror (`parent`, what A is to B), also when B does not list it;
+ * absent for a relation without a mirror (`emergency`).
+ */
 export interface GraphEdge {
   a: string;
   b: string;
@@ -61,6 +66,30 @@ export function relationKind(row: RelationRow): RelationKind {
 
 const GHOST = "ghost:";
 
+/** The link target of a ghost node's id; undefined for a contact note. */
+export function ghostTarget(id: string): string | undefined {
+  return id.startsWith(GHOST) ? id.slice(GHOST.length) : undefined;
+}
+
+/** A ghost's name: the link's alias, else the last part of the link target (without `.md`). */
+export function ghostName(target: string, alias: string | undefined): string {
+  const label = alias?.trim();
+  if (label) return label;
+  const last = target.split("/").pop()?.replace(/\.md$/i, "").trim();
+  return last || target;
+}
+
+/**
+ * One key for a relation and its mirror seen from the other side: (from, to, property) is the same edge as
+ * (to, from, mirror). Without a mirror only the same direction is the same edge.
+ */
+function directedKey(from: string, to: string, property: string, mirror: string | undefined): string {
+  const forward = [from, to, property].join("\u0000");
+  if (mirror === undefined) return forward;
+  const backward = [to, from, mirror].join("\u0000");
+  return forward < backward ? forward : backward;
+}
+
 export function buildGraph(
   contacts: GraphContact[],
   rows: MappingRow[],
@@ -78,37 +107,40 @@ export function buildGraph(
   const noteIds = new Set(nodes.keys());
 
   const edges: GraphEdge[] = [];
-  const edgeByKey = new Map<string, GraphEdge>();
+  const edgeKeys = new Set<string>();
 
   for (const c of contacts) {
     for (const [property, targets] of Object.entries(c.snapshot)) {
       const row = relationRows.get(property);
       if (!row) continue;
       const label = row.types[0] ?? property;
-      // A relation and its mirror are one edge: key by the pair and by the property pair.
-      const group = [property, row.mirror ?? property].sort().join("\u0000");
+      const mirrorRow =
+        row.mirror !== undefined ? relationRows.get(row.mirror) : undefined;
+      const mirrorLabel = mirrorRow && (mirrorRow.types[0] ?? mirrorRow.property);
       for (const target of targets) {
         if (target === c.id) continue;
         let other = target;
         if (!noteIds.has(target)) {
           other = GHOST + target;
           if (!nodes.has(other))
-            nodes.set(other, { id: other, name: target, ghost: true });
+            nodes.set(other, {
+              id: other,
+              name: ghostName(target, c.aliases?.get(target)),
+              ghost: true,
+            });
         }
-        const key = [c.id, other].sort().join("\u0000") + "\u0001" + group;
-        const existing = edgeByKey.get(key);
-        if (!existing) {
-          const edge: GraphEdge = {
-            a: c.id,
-            b: other,
-            kind: relationKind(row),
-            labelFromA: label,
-          };
-          edgeByKey.set(key, edge);
-          edges.push(edge);
-        } else if (existing.a === other && existing.labelFromB === undefined) {
-          existing.labelFromB = label;
-        }
+        // Jan `children: Sem` and Sem `parents: Jan` are one edge; Jan and Sem both `children` of the other are two.
+        const key = directedKey(c.id, other, property, mirrorRow?.property);
+        if (edgeKeys.has(key)) continue;
+        edgeKeys.add(key);
+        const edge: GraphEdge = {
+          a: c.id,
+          b: other,
+          kind: relationKind(row),
+          labelFromA: label,
+        };
+        if (mirrorLabel !== undefined) edge.labelFromB = mirrorLabel;
+        edges.push(edge);
       }
     }
   }
@@ -117,8 +149,9 @@ export function buildGraph(
 
 /**
  * The part of the graph to draw. Edges of a kind not in `kinds` are ignored. From `centre`, breadth-first up to
- * `depth` steps; no centre or depth 'all' -> the whole filtered graph (ghosts left without an edge are dropped).
- * An unknown centre gives an empty graph. More than MAX_NODES nodes -> `{ tooMany: count }`.
+ * `depth` steps; no centre or depth 'all' -> the whole filtered graph, without the people (and ghosts) left without
+ * an edge, except the centre. An unknown centre gives an empty graph. More than MAX_NODES nodes ->
+ * `{ tooMany: count }`.
  */
 export function neighbourhood(
   graph: Graph,
@@ -137,7 +170,7 @@ export function neighbourhood(
   if (centre === undefined || depth === "all") {
     keep = new Set(
       graph.nodes
-        .filter((n) => !n.ghost || adjacent.has(n.id))
+        .filter((n) => adjacent.has(n.id) || n.id === centre)
         .map((n) => n.id),
     );
   } else {

@@ -5,8 +5,12 @@ import {
   hitTest,
   hopDistances,
   initials,
+  keptCentre,
+  LABEL_T,
   normalizeGraphState,
+  oneWayLabel,
   parallelOffsets,
+  quadraticPoint,
   safeImageSrc,
 } from "src/graph/graphLayout";
 import type { Graph, GraphEdge } from "src/graph/graphModel";
@@ -34,25 +38,83 @@ describe("hopDistances", () => {
 describe("edgeLabel", () => {
   const e = edge("jan", "sem", "child", "parent");
 
-  it("uses A's label when A is nearer the centre", () => {
-    expect(edgeLabel(e, new Map([["jan", 0], ["sem", 1]]))).toBe("child");
+  it("uses A's label when A is nearer the centre, placed towards B (the one it describes)", () => {
+    expect(edgeLabel(e, new Map([["jan", 0], ["sem", 1]]))).toEqual({ text: "child", towards: "sem" });
   });
 
-  it("uses B's label when B is nearer the centre", () => {
-    expect(edgeLabel(e, new Map([["jan", 1], ["sem", 0]]))).toBe("parent");
+  it("uses B's label when B is nearer the centre, placed towards A", () => {
+    expect(edgeLabel(e, new Map([["jan", 1], ["sem", 0]]))).toEqual({ text: "parent", towards: "jan" });
   });
 
   it("uses A's label on a tie or without a centre", () => {
-    expect(edgeLabel(e, new Map([["jan", 2], ["sem", 2]]))).toBe("child");
-    expect(edgeLabel(e, new Map())).toBe("child");
+    expect(edgeLabel(e, new Map([["jan", 2], ["sem", 2]]))).toEqual({ text: "child", towards: "sem" });
+    expect(edgeLabel(e, new Map())).toEqual({ text: "child", towards: "sem" });
   });
 
   it("treats an unreachable end as farthest", () => {
-    expect(edgeLabel(e, new Map([["sem", 3]]))).toBe("parent");
+    expect(edgeLabel(e, new Map([["sem", 3]]))).toEqual({ text: "parent", towards: "jan" });
   });
 
-  it("falls back to A's label when B's side is unknown (one-sided relation)", () => {
-    expect(edgeLabel(edge("jan", "sem", "child"), new Map([["jan", 1], ["sem", 0]]))).toBe("child");
+  it("reads a relation without a mirror the other way round from B", () => {
+    // Jan `emergency: Piet`, centred on Piet: Piet is the emergency contact of Jan.
+    const oneWay = edge("jan", "piet", "emergency");
+    expect(edgeLabel(oneWay, new Map([["jan", 1], ["piet", 0]]))).toEqual({
+      text: "emergency contact of",
+      towards: "jan",
+    });
+    expect(edgeLabel(oneWay, new Map([["jan", 0], ["piet", 1]]))).toEqual({ text: "emergency", towards: "piet" });
+  });
+});
+
+describe("oneWayLabel", () => {
+  it("is the type followed by 'of', emergency spelled out", () => {
+    expect(oneWayLabel("emergency")).toBe("emergency contact of");
+    expect(oneWayLabel("Emergency")).toBe("emergency contact of");
+    expect(oneWayLabel("mentor")).toBe("mentor of");
+  });
+});
+
+describe("quadraticPoint", () => {
+  it("is the start at 0, the end at 1 and between them on a straight line", () => {
+    const s = { x: 0, y: 0 };
+    const t = { x: 100, y: 0 };
+    const mid = { x: 50, y: 0 };
+    expect(quadraticPoint(s, mid, t, 0)).toEqual({ x: 0, y: 0 });
+    expect(quadraticPoint(s, mid, t, 1)).toEqual({ x: 100, y: 0 });
+    const p = quadraticPoint(s, mid, t, LABEL_T);
+    expect(p.x).toBeCloseTo(100 * LABEL_T);
+    expect(p.y).toBe(0);
+  });
+
+  it("follows the curve", () => {
+    expect(quadraticPoint({ x: 0, y: 0 }, { x: 50, y: 40 }, { x: 100, y: 0 }, 0.5)).toEqual({ x: 50, y: 20 });
+  });
+
+  it("puts a label clearly nearer the end it describes", () => {
+    expect(LABEL_T).toBeGreaterThanOrEqual(0.65);
+    expect(LABEL_T).toBeLessThanOrEqual(0.7);
+  });
+});
+
+describe("keptCentre", () => {
+  const graph: Graph = { nodes: [node("jan"), node("ghost:x", true)], edges: [] };
+  const fallback = () => "me";
+
+  it("keeps a centre that is a contact in the graph", () => {
+    expect(keptCentre("jan", graph, fallback)).toBe("jan");
+  });
+
+  it("falls back when the centre is gone or is a ghost", () => {
+    expect(keptCentre("gone", graph, fallback)).toBe("me");
+    expect(keptCentre("ghost:x", graph, fallback)).toBe("me");
+  });
+
+  it("keeps a saved centre while the graph is empty (notes not read yet)", () => {
+    expect(keptCentre("jan", { nodes: [], edges: [] }, fallback)).toBe("jan");
+  });
+
+  it("leaves no centre alone", () => {
+    expect(keptCentre(undefined, graph, fallback)).toBeUndefined();
   });
 });
 

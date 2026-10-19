@@ -69,6 +69,22 @@ describe("graphContacts", () => {
   });
 });
 
+describe("graphContacts aliases", () => {
+  it("keeps the label of a link that does not resolve, for the ghost's name", () => {
+    const app = setup([
+      { path: "Contacts/Sem.md" },
+      {
+        path: "Contacts/Jan.md",
+        fm: { friends: ["[[Elsewhere/Piet/index|Piet Jansen]]", "[[Lot]]", "[[Sem|My boy]]"] },
+      },
+    ]);
+    const jan = graphContacts(app, DEFAULT_MAPPING).find((c) => c.id === "Contacts/Jan.md")!;
+    expect(jan.snapshot.friends).toEqual(["Contacts/Sem.md", "Elsewhere/Piet/index", "Lot"]);
+    expect(jan.aliases).toEqual(new Map([["Elsewhere/Piet/index", "Piet Jansen"]]));
+    expect("aliases" in graphContacts(app, DEFAULT_MAPPING).find((c) => c.id === "Contacts/Sem.md")!).toBe(false);
+  });
+});
+
 describe("photoImageSrc", () => {
   it("keeps data URIs and URLs, completes bare base64 and drops anything else", () => {
     expect(photoImageSrc(" https://x/p.jpg ")).toBe("https://x/p.jpg");
