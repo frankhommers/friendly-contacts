@@ -265,6 +265,12 @@ A link to `index` says nothing about whom it is, and Obsidian's short form `[[in
 
 When Obsidian updates links after a move it may write the short form again (with its default link format, "Shortest path when possible"). So when you put contacts in folders, rename a contact through Sync or move the contacts folder, the plugin notes beforehand which relationship entries point to those contacts and afterwards writes them as full paths again. A label that was the contact's old name gets the new one, also when the name was changed on the server; a label you wrote yourself is kept. Taking contacts out of their folders moves each note twice (via its temporary name), so there too the plugin notes the entries beforehand and afterwards makes every entry that no longer opens the contact point to its note again. Only relationship properties of contact notes are changed.
 
+**Links in Obsidian's path formats**
+
+Relationship links follow Obsidian's **New link format** (Settings → Files and links). With "Relative path to file" or "Absolute path in vault" a link is a path, such as `../Ger Verhallen/Ger Verhallen`, and a property shows that path. So the plugin writes such a link with the contact's name as the label: `[[../Ger Verhallen/Ger Verhallen|Ger Verhallen]]`. With "Shortest path when possible" a link to a note named for the contact stays `[[Ger Verhallen]]`. This works the same with or without the Folder Notes plugin. Properties only understand `[[wikilinks]]`, so relationship links are always wikilinks, whatever **Use [[Wikilinks]]** says.
+
+**Tidy relationship links** (command) gives the links already in your notes this form: every relationship entry that is a path without a label gets the contact's name as its label. Putting contacts in their own folders does this for the contacts it moves. A label you wrote yourself is kept, and only relationship properties of contact notes are changed.
+
 When you import a contact from the address book, relationships in other notes that pointed to nobody but name this contact become links to the new note (a label you wrote yourself is kept). **Import all** in the Import panel does this once at the end, for all the contacts it imported. This only happens with a fixed note name.
 
 ---

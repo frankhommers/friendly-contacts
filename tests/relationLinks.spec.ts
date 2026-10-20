@@ -86,7 +86,7 @@ function dirname(path: string): string {
   return i < 0 ? "" : path.slice(0, i);
 }
 
-function fakeApp() {
+function fakeApp(options: { pathLinks?: boolean } = {}) {
   const nodes = new Map<string, Node>();
   const root = new h.TFolder("");
   nodes.set("", root);
@@ -153,7 +153,9 @@ function fakeApp() {
       getFileCache: (file: File) => (file.frontmatter ? { frontmatter: file.frontmatter } : null),
       getFirstLinkpathDest: (link: string) =>
         files().find((f) => stem(f) === link || f.path === link) ?? files().find((f) => f.basename === link) ?? null,
-      fileToLinktext: (file: File) => (files().filter((f) => f.basename === file.basename).length === 1 ? file.basename : stem(file)),
+      // Obsidian's "absolute path" link format with `pathLinks`, else "shortest".
+      fileToLinktext: (file: File) =>
+        !options.pathLinks && files().filter((f) => f.basename === file.basename).length === 1 ? file.basename : stem(file),
     },
     workspace: { getActiveFile: () => null },
   };
@@ -180,8 +182,12 @@ describe("link text with an alias", () => {
     expect(linkWithAlias("Contacts/J/index", "[]")).toBe("Contacts/J/index");
   });
 
+  it("a path gets the name as alias, also when it ends in the name", () => {
+    expect(linkWithAlias("Contacts/Jan de Vries/Jan de Vries", "Jan de Vries")).toBe("Contacts/Jan de Vries/Jan de Vries|Jan de Vries");
+    expect(linkWithAlias("../Ger Verhallen/Ger Verhallen", "Ger Verhallen")).toBe("../Ger Verhallen/Ger Verhallen|Ger Verhallen");
+  });
+
   it("no alias when equal", () => {
-    expect(linkWithAlias("Contacts/Jan de Vries/Jan de Vries", "Jan de Vries")).toBe("Contacts/Jan de Vries/Jan de Vries");
     expect(linkWithAlias("Jan de Vries", "Jan de Vries")).toBe("Jan de Vries");
   });
 
@@ -216,6 +222,23 @@ describe("link text with an alias", () => {
       // the `name` property wins over the file name
       expect(ctx.displayName("jan-uid")).toBe("Jan");
       expect(obsidianMirrorEnv(v.app).linkTo("Contacts/Jan de Vries/Jan de Vries.md", "Contacts/Piet.md")).toBe("[[Jan de Vries]]");
+    }
+  });
+});
+
+describe("links in a path link format", () => {
+  it("a path from Obsidian's link format gets the contact's name as alias", () => {
+    for (const layout of [noteLayout, nameLayout]) {
+      useLayout(layout);
+      const v = fakeApp({ pathLinks: true });
+      v.folder("Contacts");
+      const path = layout === nameLayout ? "Contacts/Ger Verhallen/Ger Verhallen" : "Contacts/Ger Verhallen";
+      const ger = v.note(`${path}.md`, { name: "Ger Verhallen", uid: "ger-uid" });
+      const ctx = new ObsidianRelationContext(v.app, "Contacts/Jose.md", [{ file: ger as never, uid: "ger-uid" }], []);
+      expect(ctx.uidToName("ger-uid")).toBe(`${path}|Ger Verhallen`);
+      expect(ctx.displayName("ger-uid")).toBe("Ger Verhallen");
+      expect(obsidianMirrorEnv(v.app).linkTo(`${path}.md`, "Contacts/Jose.md")).toBe(`[[${path}|Ger Verhallen]]`);
+      expect(ctx.resolveLink(path)).toEqual({ uid: "ger-uid" });
     }
   });
 });
@@ -293,7 +316,7 @@ describe("links to a fixed note name are never short", () => {
     v.folder("Contacts");
     const anna = v.note("Contacts/Anna.md", { name: "Anna", uid: "a" });
     const ctx = new ObsidianRelationContext(v.app, "Contacts/Piet.md", [{ file: anna as never, uid: "a" }], []);
-    expect(ctx.uidToName("a")).toBe("Contacts/Anna");
+    expect(ctx.uidToName("a")).toBe("Contacts/Anna|Anna");
   });
 
   it("a contact left in a folder with a fixed note name gets the full path in any layout", () => {

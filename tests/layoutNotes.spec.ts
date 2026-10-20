@@ -88,6 +88,7 @@ import { DEFAULT_SETTINGS } from "src/settings/setting";
 import { createContactFile } from "src/file/file";
 import {
   changeLayout,
+  tidyRelationLinks,
   contactNameFor,
   contactsInOtherFolders,
   layoutChangeCount,
@@ -117,7 +118,7 @@ function dirname(path: string): string {
  * `Contacts/Jan` when `Contacts/jan` exists then gives no error and is the same folder (what lands in it is merged),
  * and a move onto a path that differs only in case from another file fails.
  */
-function fakeApp(options: { caseInsensitive?: boolean } = {}) {
+function fakeApp(options: { caseInsensitive?: boolean; pathLinks?: boolean } = {}) {
   const nodes = new Map<string, Node>();
   const sameOnDisk = (path: string): Node | undefined =>
     options.caseInsensitive ? [...nodes.entries()].find(([p]) => p.toLowerCase() === path.toLowerCase())?.[1] : nodes.get(path);
@@ -187,7 +188,8 @@ function fakeApp(options: { caseInsensitive?: boolean } = {}) {
   const resolve = (link: string): File | null =>
     files().find((f) => stem(f) === link || f.path === link) ?? files().find((f) => f.basename === link) ?? null;
   /** Obsidian's "shortest path when possible". */
-  const linktext = (f: File) => (files().filter((o) => o.basename === f.basename).length === 1 ? f.basename : stem(f));
+  // Obsidian's "absolute path" link format with `pathLinks`, else "shortest".
+  const linktext = (f: File) => (!options.pathLinks && files().filter((o) => o.basename === f.basename).length === 1 ? f.basename : stem(f));
   const WIKI = /^\[\[([^|\]#]*)((?:\|[^\]]*)?)\]\]$/;
   /** Like Obsidian after a rename: links in properties that pointed into the moved files get the new (shortest) link text. */
   const updateLinks = (moved: Node, apply: () => void) => {
@@ -1400,6 +1402,50 @@ describe("links with a fixed note name", () => {
 
     expect(anna.path).toBe("Areas/Anna.md");
     expect(anna.frontmatter?.friends).toEqual(["[[Areas/Jan/index|Jan]]"]);
+  });
+
+  it("into folders in a path link format: links show the contact's name", async () => {
+    useLayout(inside);
+    const v = fakeApp({ pathLinks: true });
+    const jose = v.note("Contacts/Jose.md", { name: "Jose", uid: "jose", children: ["[[Contacts/Ger]]", "[[Contacts/Noor|Noortje]]"] });
+    v.note("Contacts/Ger.md", { name: "Ger Verhallen", uid: "ger" });
+    v.note("Contacts/Noor.md", { name: "Noor", uid: "noor" });
+
+    await changeLayout(v.app, "into");
+
+    expect(jose.path).toBe("Contacts/Jose/Jose.md");
+    // the alias the user wrote stays
+    expect(jose.frontmatter?.children).toEqual(["[[Contacts/Ger/Ger|Ger Verhallen]]", "[[Contacts/Noor/Noor|Noortje]]"]);
+  });
+
+  it("tidy gives path links the contact's name and leaves the rest alone", async () => {
+    useLayout(inside);
+    const v = fakeApp({ pathLinks: true });
+    const jose = v.note("Contacts/Jose/Jose.md", {
+      name: "Jose",
+      uid: "jose",
+      children: ["[[Contacts/Ger/Ger]]", "[[Contacts/Noor/Noor|Noortje]]", "[[Piet]]"],
+      spouse: "[[Contacts/Ger/Ger|Ger Verhallen]]",
+      title: "[[Contacts/Ger/Ger]]",
+    });
+    v.note("Contacts/Ger/Ger.md", { name: "Ger Verhallen", uid: "ger" });
+    v.note("Contacts/Noor/Noor.md", { name: "Noor", uid: "noor" });
+
+    expect(await tidyRelationLinks(v.app)).toBe(1);
+    expect(jose.frontmatter?.children).toEqual(["[[Contacts/Ger/Ger|Ger Verhallen]]", "[[Contacts/Noor/Noor|Noortje]]", "[[Piet]]"]);
+    expect(jose.frontmatter?.spouse).toBe("[[Contacts/Ger/Ger|Ger Verhallen]]");
+    // not a relationship property
+    expect(jose.frontmatter?.title).toBe("[[Contacts/Ger/Ger]]");
+    expect(await tidyRelationLinks(v.app)).toBe(0);
+  });
+
+  it("tidy leaves short links alone", async () => {
+    useLayout(inside);
+    const v = fakeApp();
+    const jose = v.note("Contacts/Jose/Jose.md", { name: "Jose", uid: "jose", children: ["[[Ger]]"] });
+    v.note("Contacts/Ger/Ger.md", { name: "Ger Verhallen", uid: "ger" });
+    expect(await tidyRelationLinks(v.app)).toBe(0);
+    expect(jose.frontmatter?.children).toEqual(["[[Ger]]"]);
   });
 
   it("names in links stay as they are when the note is named for the contact", async () => {
