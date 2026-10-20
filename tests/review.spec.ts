@@ -141,35 +141,4 @@ describe('reviewRows', () => {
     expect(changed(rs)).toEqual([]);
     expect(rs.find((x) => x.property === 'photo')?.kind).toBe('photo');
   });
-
-  describe('a photo the server damaged', () => {
-    const PHOTO = 'data:image/png;base64,iVBOR';
-    const DAMAGED = 'data:image/png\\;base64';
-
-    it('with an intact base: no difference, nothing pulled', () => {
-      expect(changed(review({ photo: PHOTO }, { photo: DAMAGED }, { photo: PHOTO }))).toEqual([]);
-    });
-
-    it('with an intact base: a change in the note is pushed', () => {
-      const r = changed(review({ photo: PHOTO }, { photo: DAMAGED }, { photo: 'data:image/png;base64,NEW' }));
-      expect(r).toMatchObject([{ property: 'photo', preselect: 'local' }]);
-    });
-
-    it('with an intact base: a photo removed in the note is removed', () => {
-      const r = changed(review({ photo: PHOTO }, { photo: DAMAGED }, {}));
-      expect(r).toMatchObject([{ property: 'photo', local: undefined, preselect: 'local' }]);
-    });
-
-    it('without a usable base: the note photo is written back, never the damaged one pulled', () => {
-      for (const base of [undefined, { photo: DAMAGED }]) {
-        const r = changed(review(base, { photo: DAMAGED }, { photo: PHOTO }));
-        expect(r).toMatchObject([{ property: 'photo', server: DAMAGED, local: PHOTO, preselect: 'local' }]);
-      }
-    });
-
-    it('without a usable base and no photo in the note: nothing to review', () => {
-      expect(changed(review({ photo: DAMAGED }, { photo: DAMAGED }, {}))).toEqual([]);
-      expect(changed(review(undefined, { photo: DAMAGED }, {}))).toEqual([]);
-    });
-  });
 });

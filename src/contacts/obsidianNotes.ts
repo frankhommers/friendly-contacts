@@ -8,7 +8,7 @@ import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
 import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
-import { isDamagedPhotoProperty } from "src/contacts/friendly/photo";
+import { repairDamagedPhotos } from "src/contacts/friendly/photo";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
@@ -465,8 +465,6 @@ export async function importCard(
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(newContactLocation(app, fileName, contactsFolder).note));
   const props = { ...toFriendly(lines, friendly.mapping, ctx).props, ...extra };
-  // A photo the server damaged holds no image: the new note gets none (see isDamagedPhoto).
-  for (const [property, value] of Object.entries(props)) if (isDamagedPhotoProperty(property, value)) delete props[property];
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;
@@ -488,12 +486,15 @@ export async function importRemoteCard(
   source: Source,
   options: { relinkLater?: { uid: string; path: string }[] } = {},
 ): Promise<ImportOutcome> {
-  const imported = await importCard(app, pulled.raw, { source: source.name });
+  // A photo the server damaged holds no image: neither the note nor the base gets it (see repairDamagedPhotos).
+  const { lines, repaired } = repairDamagedPhotos(parseCard(pulled.raw), []);
+  const raw = repaired ? serializeCard(lines) : pulled.raw;
+  const imported = await importCard(app, raw, { source: source.name });
   if (!imported) return "unnamed";
   // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
   if (imported.uid !== "" && imported.written) {
     await contactSyncState(source.id, app).set(imported.uid, {
-      raw: pulled.raw,
+      raw,
       etag: pulled.etag || meta.etag || "",
       href: pulled.href || meta.href,
       reader: CURRENT_READER,

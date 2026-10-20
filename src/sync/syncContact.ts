@@ -11,7 +11,7 @@
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
-import { isDamagedPhotoProperty } from 'src/contacts/friendly/photo';
+import { notePhotoLines, repairDamagedPhotos } from 'src/contacts/friendly/photo';
 import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
 import { CURRENT_READER, Friendly, FriendlyValue, needsLegacyRewrite, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -64,7 +64,11 @@ export interface PreparedSync {
   local: Props;
   /** Mapped properties + source as read, for the staleness check at Apply. */
   noteSnapshot: string;
-  server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string };
+  /**
+   * `raw` is the card as the server sent it (for staleness checks); `lines`, `friendly` and `baseRaw` (what is stored
+   * as the base when the card is not written) are the card with damaged photos put back (`repairDamagedPhotos`).
+   */
+  server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string; baseRaw: string };
   base?: Props;
   rows: ReviewRow[];
   /** The card holds relationship lines the plugin wrote that Apply puts right (`needsLegacyRewrite`), 3.0 or 4.0. */
@@ -138,24 +142,29 @@ export async function prepareSync(
 
     const state = where.move ? where.move.state : deps.state;
     const baseEntry = lookup ? await state.get(uid) : undefined;
+    // A photo the server damaged is put back once, here, from the base and else the note: the review, the result,
+    // the note and the stored base all see the repaired card (see repairDamagedPhotos). A base stored before this
+    // existed may hold one too.
+    const storedBase = baseEntry ? parseCard(baseEntry.raw) : undefined;
+    const baseLines = storedBase && repairDamagedPhotos(storedBase, notePhotoLines(local, storedBase)).lines;
+    const repair = (lines: VCardLine[]) => repairDamagedPhotos(lines, [...(baseLines ?? []), ...notePhotoLines(local, lines)]);
 
     let server: PreparedSync['server'];
     if (where.move) {
       const { from, adapter } = where.move;
       const pulled = await pullCard(adapter, from.href, uid);
-      server = serverCard(pulled, from.href, pulled.etag || from.etag, deps);
+      server = serverCard(pulled, from.href, pulled.etag || from.etag, deps, repair);
     } else {
       const meta = lookup ? await findCard(deps.adapter, uid) : undefined;
       if (meta) {
         const pulled = await pullCard(deps.adapter, meta.href, uid);
-        server = serverCard(pulled, meta.href, pulled.etag || meta.etag, deps);
+        server = serverCard(pulled, meta.href, pulled.etag || meta.etag, deps, repair);
       } else if (baseEntry) {
         // A synced card that is gone (deleted, or not found by the lookup) is never silently recreated as a duplicate.
         throw new SyncError(`${typeof local.name === 'string' ? local.name : uid} was not found on the server.`);
       }
     }
 
-    const baseLines = baseEntry ? parseCard(baseEntry.raw) : undefined;
     // Read the way it was stored: lines an older reader ignored then are the server's additions now.
     const baseCard = baseLines && {
       lines: baseLines,
@@ -182,7 +191,7 @@ export async function prepareSync(
     if (server && !where.move && isUpToDate(rows, rewriteRelations)) {
       // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
       if (!baseEntry) {
-        await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href, reader: CURRENT_READER });
+        await deps.state.set(uid, { raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER });
       }
       return { kind: 'upToDate' };
     }
@@ -195,10 +204,16 @@ export async function prepareSync(
   }
 }
 
-function serverCard(pulled: VCardRaw, href: string, etag: string | undefined, deps: SyncDeps): NonNullable<PreparedSync['server']> {
-  const lines = parseCard(pulled.raw);
+function serverCard(
+  pulled: VCardRaw,
+  href: string,
+  etag: string | undefined,
+  deps: SyncDeps,
+  repair: (lines: VCardLine[]) => { lines: VCardLine[]; repaired: boolean },
+): NonNullable<PreparedSync['server']> {
+  const { lines, repaired } = repair(parseCard(pulled.raw));
   const friendly = canonicalFriendly(toFriendly(lines, deps.rows, deps.readOnlyCtx), deps);
-  return { lines, friendly, href, etag: etag ?? '', raw: pulled.raw };
+  return { lines, friendly, href, etag: etag ?? '', raw: pulled.raw, baseRaw: repaired ? serializeCard(lines) : pulled.raw };
 }
 
 /**
@@ -256,7 +271,7 @@ export async function applySync(
         ? canonicalRelations(toFriendly(patched.lines, deps.rows, deps.ctx).props, deps.readOnlyCtx, deps.rows)
         : server.friendly.props;
       if (prepared.move) {
-        const moved = await applyMove(prepared, prepared.move, serverChanged ? raw : server.raw, deps);
+        const moved = await applyMove(prepared, prepared.move, serverChanged ? raw : server.baseRaw, deps);
         if (moved.kind !== 'done') return moved;
         oldKept = moved.oldKept;
         serverChanged = true;
@@ -271,7 +286,7 @@ export async function applySync(
         // Without an ETag in the response the base keeps etag ''; the base etag is never used for If-Match.
         stored = { raw, etag: responseEtag(res), href: server.href, reader: CURRENT_READER };
       } else {
-        stored = { raw: server.raw, etag: server.etag, href: server.href, reader: CURRENT_READER };
+        stored = { raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER };
       }
     }
 
@@ -443,8 +458,6 @@ async function writeNote(
   for (const [property, value] of Object.entries(final)) {
     // `urn:uuid:X` in the note and `X` on the card are the same UID: the note keeps its spelling.
     if (property === 'uid' && typeof value === 'string' && typeof current.uid === 'string' && cleanUid(value) === cleanUid(current.uid)) continue;
-    // A photo the server damaged never replaces the note's photo; the note keeps what it has (see isDamagedPhoto).
-    if (isDamagedPhotoProperty(property, value)) continue;
     if (!sameValue(value, current[property], property)) set[property] = value;
   }
   const remove = Object.keys(current).filter((p) => !(p in final) && isMappedProperty(p, deps.rows));

@@ -3,14 +3,11 @@
 import { normalizeNoteDate, noteDateFor } from './dates';
 import { VCardLine } from './lines';
 import { isMappedProperty, MappingRow, rowForProperty } from './mapping';
-import { photoKey } from './photo';
+import { isPhotoProperty, photoKey } from './photo';
 import { linkTarget } from './relations';
 import { Friendly, FriendlyValue } from './translate';
 
 type Props = Record<string, FriendlyValue>;
-
-/** `photo` and `photo-2`, ...: compared as image data (the fixed name, see FIXED_PROPERTIES). */
-const isPhoto = (property: string | undefined): boolean => property !== undefined && /^photo(-\d+)?$/.test(property);
 
 /**
  * Absent (undefined, '' or []) -> undefined; text -> trimmed; list -> sorted unique link targets;
@@ -22,7 +19,7 @@ function canonical(value: FriendlyValue | undefined, property?: string): string 
     const items = new Set(value.map((v) => linkTarget(v.trim())).filter((v) => v !== ''));
     return items.size === 0 ? undefined : [...items].sort();
   }
-  const text = isPhoto(property) ? photoKey(value) : value.trim();
+  const text = isPhotoProperty(property) ? photoKey(value) : value.trim();
   return text === '' ? undefined : text;
 }
 

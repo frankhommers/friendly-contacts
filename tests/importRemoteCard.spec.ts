@@ -90,6 +90,16 @@ describe("importRemoteCard", () => {
     expect(await contactSyncState("s3", app).get("abc-1")).toBeDefined();
   });
 
+  it("a photo the server damaged reaches neither the note nor the base", async () => {
+    const app = fakeApp();
+    const damaged = card.replace("VERSION:3.0", "VERSION:4.0").replace("END:VCARD", "PHOTO:data:image/png\\;base64\r\nEND:VCARD");
+    expect(await importRemoteCard(app, { ...pulled, raw: damaged }, { href: "/abc-1.vcf" }, { ...source, id: "s4" })).toBe("imported");
+    expect(state.files.get("Contacts/Anna Jansen.md")).not.toMatch(/photo|base64/i);
+    const base = await contactSyncState("s4", app).get("abc-1");
+    expect(base?.raw).toContain("FN:Anna Jansen");
+    expect(base?.raw).not.toMatch(/PHOTO/);
+  });
+
   it("reports a card without a name as unnamed", async () => {
     const nameless = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:zzz\r\nEND:VCARD\r\n";
     expect(await importRemoteCard(fakeApp(), { uid: "zzz", raw: nameless }, { href: "/z.vcf" }, source)).toBe("unnamed");

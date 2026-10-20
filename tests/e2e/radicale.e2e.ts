@@ -1009,7 +1009,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await sync(roos)).toBe('unchanged');
     expect(rewriteLine).toBeUndefined();
   });
-  it.each([['3.0'], ['4.0']])('20. %s: a photo added in the note survives Radicale and later Syncs; pushed once', async (version) => {
+  it.each([['3.0'], ['4.0']])('20. %s: a note photo survives Radicale, other edits, a phone edit and its removal', async (version) => {
     // Radicale (vobject) damages a vCard 4.0 data URI photo to `data:image/png\\;base64`; 3.0 ENCODING=b is intact.
     const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     const photo = `data:image/png;base64,${PNG}`;
@@ -1017,16 +1017,33 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     const href = `${BOOK}photo-${version}.vcf`;
     await putCard(href, ['BEGIN:VCARD', `VERSION:${version}`, `UID:${uid}`, 'FN:Foto Test', 'N:Test;Foto;;;', 'END:VCARD', ''].join('\r\n'));
     const note = await importCard(href);
-    note.frontmatter.photo = photo;
+    const photoOnServer = async () => unfolded(await serverCard(href)).filter((l) => /^PHOTO/i.test(l));
 
+    // Added in the note: pushed once, then up to date.
+    note.frontmatter.photo = photo;
     expect(await sync(note)).toBe('pushed');
-    let total = pushes.length;
-    for (let i = 0; i < 3; i++) {
-      expect(await sync(note)).toBe('unchanged');
-      total += pushes.length;
-    }
-    expect(total).toBe(1);
-    expect(note.frontmatter.photo).toBe(photo);
+    if (version === '4.0') expect(await photoOnServer()).toEqual([expect.stringMatching(/^PHOTO:data:image\/png\\;base64$/i)]);
+    expect(await sync(note)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+
+    // Another note edit: one push, without the photo coming back as a difference.
+    note.frontmatter.title = 'Fotograaf';
+    expect(await sync(note)).toBe('pushed');
+    expect(await sync(note)).toBe('unchanged');
+
+    // A phone edits the card: pulled, no photo row and no push.
+    const card = await serverCard(href);
+    await putCard(href, card.replace('END:VCARD', 'NICKNAME:Flits\r\nEND:VCARD'));
+    expect(await sync(note)).toBe('pulled');
+    expect(pushes).toEqual([]);
+    expect(note.frontmatter).toMatchObject({ photo, nickname: 'Flits' });
+    expect(await sync(note)).toBe('unchanged');
+
+    // Removed in the note: removed on the server.
+    delete note.frontmatter.photo;
+    expect(await sync(note)).toBe('pushed');
+    expect(await photoOnServer()).toEqual([]);
+    expect(await sync(note)).toBe('unchanged');
     expect(unfolded(await serverCard(href))).toContain(`VERSION:${version}`);
   });
 });
