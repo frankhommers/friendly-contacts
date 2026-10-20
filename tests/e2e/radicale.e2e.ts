@@ -1009,4 +1009,24 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await sync(roos)).toBe('unchanged');
     expect(rewriteLine).toBeUndefined();
   });
+  it.each([['3.0'], ['4.0']])('20. %s: a photo added in the note survives Radicale and later Syncs; pushed once', async (version) => {
+    // Radicale (vobject) damages a vCard 4.0 data URI photo to `data:image/png\\;base64`; 3.0 ENCODING=b is intact.
+    const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const photo = `data:image/png;base64,${PNG}`;
+    const uid = `C0FFEE00-0000-4000-8000-0000000002${version === '3.0' ? '03' : '04'}`;
+    const href = `${BOOK}photo-${version}.vcf`;
+    await putCard(href, ['BEGIN:VCARD', `VERSION:${version}`, `UID:${uid}`, 'FN:Foto Test', 'N:Test;Foto;;;', 'END:VCARD', ''].join('\r\n'));
+    const note = await importCard(href);
+    note.frontmatter.photo = photo;
+
+    expect(await sync(note)).toBe('pushed');
+    let total = pushes.length;
+    for (let i = 0; i < 3; i++) {
+      expect(await sync(note)).toBe('unchanged');
+      total += pushes.length;
+    }
+    expect(total).toBe(1);
+    expect(note.frontmatter.photo).toBe(photo);
+    expect(unfolded(await serverCard(href))).toContain(`VERSION:${version}`);
+  });
 });

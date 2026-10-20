@@ -11,6 +11,7 @@
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
+import { isDamagedPhotoProperty } from 'src/contacts/friendly/photo';
 import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
 import { CURRENT_READER, Friendly, FriendlyValue, needsLegacyRewrite, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -442,6 +443,8 @@ async function writeNote(
   for (const [property, value] of Object.entries(final)) {
     // `urn:uuid:X` in the note and `X` on the card are the same UID: the note keeps its spelling.
     if (property === 'uid' && typeof value === 'string' && typeof current.uid === 'string' && cleanUid(value) === cleanUid(current.uid)) continue;
+    // A photo the server damaged never replaces the note's photo; the note keeps what it has (see isDamagedPhoto).
+    if (isDamagedPhotoProperty(property, value)) continue;
     if (!sameValue(value, current[property], property)) set[property] = value;
   }
   const remove = Object.keys(current).filter((p) => !(p in final) && isMappedProperty(p, deps.rows));

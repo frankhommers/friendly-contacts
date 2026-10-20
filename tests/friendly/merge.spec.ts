@@ -1,6 +1,7 @@
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { parseCard } from 'src/contacts/friendly/lines';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
+import { isDamagedPhoto } from 'src/contacts/friendly/photo';
 import { toFriendly } from 'src/contacts/friendly/translate';
 import { describe, expect, it } from 'vitest';
 
@@ -25,6 +26,24 @@ describe('sameValue', () => {
     expect(sameValue('/9j/AABB', 'data:image/jpeg;base64,/9j/AA BB', 'photo')).toBe(true);
     expect(sameValue('/9j/AA\n BB', '/9j/AABB', 'photo')).toBe(true);
     expect(sameValue('/9j/AABB', 'data:image/png;base64,iVBOR', 'photo')).toBe(false);
+  });
+});
+
+describe('isDamagedPhoto', () => {
+  it('a data URI that lost its data is damaged (as Radicale returns a vCard 4.0 photo)', () => {
+    expect(isDamagedPhoto('data:image/png\\;base64')).toBe(true);
+    expect(isDamagedPhoto('data:image/jpeg;base64')).toBe(true);
+    expect(isDamagedPhoto('data:image/jpeg;base64,')).toBe(true);
+    expect(isDamagedPhoto(' DATA:image/png\\;base64 ')).toBe(true);
+  });
+
+  it('a photo with data, a URL or bare base64 is not damaged', () => {
+    expect(isDamagedPhoto('data:image/png;base64,iVBOR')).toBe(false);
+    expect(isDamagedPhoto('https://example.org/a.jpg')).toBe(false);
+    expect(isDamagedPhoto('/9j/AABB')).toBe(false);
+    expect(isDamagedPhoto('')).toBe(false);
+    expect(isDamagedPhoto(undefined)).toBe(false);
+    expect(isDamagedPhoto(['data:image/png;base64'])).toBe(false);
   });
 });
 

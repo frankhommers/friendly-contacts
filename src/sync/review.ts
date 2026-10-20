@@ -2,6 +2,7 @@
 
 import { MappingRow, rowForProperty } from '../contacts/friendly/mapping';
 import { sameValue } from '../contacts/friendly/merge';
+import { isDamagedPhotoProperty } from '../contacts/friendly/photo';
 import { FriendlyValue } from '../contacts/friendly/translate';
 
 type Props = Record<string, FriendlyValue>;
@@ -56,9 +57,20 @@ export function reviewRows(
 
   const result: ReviewRow[] = [];
   for (const property of properties) {
-    const s = server[property];
+    let s = server[property];
     const l = local[property];
     const kind = kindOf(property, rows);
+    if (isDamagedPhotoProperty(property, s)) {
+      // Never pulled into the note. With an intact base the server counts as still holding the base's photo, so
+      // only a change in the note is pushed. Without one, the note's photo (if any) is written back, once: after
+      // that the base is the card as pushed.
+      if (base && !isDamagedPhotoProperty(property, base[property])) s = base[property];
+      else if (isAbsent(l)) continue;
+      else {
+        result.push({ property, server: s, local: l, preselect: 'local', kind, changed: true });
+        continue;
+      }
+    }
     if (sameValue(s, l, property)) {
       if (isAbsent(s) && isAbsent(l)) continue;
       result.push({ property, server: s, local: l, preselect: 'server', kind, changed: false });

@@ -8,6 +8,7 @@ import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
 import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
+import { isDamagedPhotoProperty } from "src/contacts/friendly/photo";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
@@ -464,6 +465,8 @@ export async function importCard(
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(newContactLocation(app, fileName, contactsFolder).note));
   const props = { ...toFriendly(lines, friendly.mapping, ctx).props, ...extra };
+  // A photo the server damaged holds no image: the new note gets none (see isDamagedPhoto).
+  for (const [property, value] of Object.entries(props)) if (isDamagedPhotoProperty(property, value)) delete props[property];
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;

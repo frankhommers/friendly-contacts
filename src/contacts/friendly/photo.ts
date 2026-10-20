@@ -2,6 +2,21 @@
 
 const DATA_URI = /^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]*)$/i;
 const URL_VALUE = /^https?:\/\//i;
+/** A data URI without its data: no comma (`data:image/png\;base64`), or nothing after it. */
+const EMPTY_DATA_URI = /^data:[^,]*(,\s*)?$/i;
+
+/**
+ * A photo value a server damaged: a data URI that lost its data. Radicale does this to every `data:` URI it
+ * stores (its vCard parser escapes the `;` and cuts the value at the comma), so a vCard 4.0 photo comes back as
+ * `data:image/png\;base64`. Such a value holds no image; Sync treats it as saying nothing about the photo.
+ */
+export function isDamagedPhoto(value: unknown): boolean {
+  return typeof value === 'string' && EMPTY_DATA_URI.test(value.trim());
+}
+
+/** `isDamagedPhoto` for a friendly property: only `photo`, `photo-2`, ... can hold one. */
+export const isDamagedPhotoProperty = (property: string, value: unknown): boolean =>
+  /^photo(-\d+)?$/.test(property) && isDamagedPhoto(value);
 
 /** The image data as compared by the merge: a data URI and the bare base64 of the same image are equal. */
 export function photoKey(value: string): string {

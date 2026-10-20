@@ -1127,6 +1127,68 @@ describe('relationship names a phone rewrote', () => {
   });
 });
 
+describe('a server that damages data URI photos (Radicale with vCard 4.0)', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const PHOTO = `data:image/png;base64,${PNG}`;
+  const V4 = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan de Vries', 'N:de Vries;Jan;;;', 'END:VCARD', ''].join('\r\n');
+  /** What Radicale stores for a PHOTO data URI: `;` escaped, everything from the comma gone. */
+  const damage = (raw: string) => raw.replace(/^(PHOTO[^:]*:data:[^;,\r\n]+);base64,[^\r\n]*(\r\n[ \t][^\r\n]*)*/gm, '$1\\;base64');
+  /** The fake server stores every card the way Radicale does; the etag stays the PUT's. */
+  const damaging = (t: ReturnType<typeof setup>) => {
+    for (const card of t.cards.values()) card.raw = damage(card.raw);
+  };
+
+  it('a photo added in the note is pushed once and stays in the note', async () => {
+    const t = setup({ server: V4, base: V4, local: { ...friendlyOf(V4), photo: PHOTO, source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    damaging(t);
+    expect(t.cards.get(HREF)!.raw).toContain('PHOTO:data:image/png\\;base64\r\n');
+    for (let i = 0; i < 3; i++) expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter.photo).toBe(PHOTO);
+  });
+
+  it('a changed photo is pushed once more; the note keeps the new one', async () => {
+    const t = setup({ server: V4, base: V4, local: { ...friendlyOf(V4), photo: PHOTO, source: 'Radicale' } });
+    await t.sync();
+    damaging(t);
+    const other = 'data:image/jpeg;base64,/9j/AABB';
+    t.note.frontmatter.photo = other;
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    damaging(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(2);
+    expect(t.note.frontmatter.photo).toBe(other);
+  });
+
+  it('a damaged card without a base: the note photo is written back once, never replaced', async () => {
+    const t = setup({ server: damage(edit(V4, 'END:VCARD', `PHOTO:${PHOTO}\r\nEND:VCARD`)), local: { ...friendlyOf(V4), photo: PHOTO, source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    damaging(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter.photo).toBe(PHOTO);
+  });
+
+  it('another change on a card with a damaged photo leaves the note photo alone', async () => {
+    const damaged = damage(edit(V4, 'END:VCARD', `PHOTO:${PHOTO}\r\nEND:VCARD`));
+    const t = setup({ server: edit(damaged, 'END:VCARD', 'TITLE:Baker\r\nEND:VCARD'), base: damaged, local: { ...friendlyOf(V4), photo: PHOTO, source: 'Radicale' } });
+    await t.sync();
+    damaging(t);
+    expect(t.note.frontmatter).toMatchObject({ title: 'Baker', photo: PHOTO });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('a 3.0 card keeps working as before: the photo is intact and nothing is special', async () => {
+    const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), photo: PHOTO, source: 'Radicale' } });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    damaging(t);
+    expect(t.cards.get(HREF)!.raw).toContain(`PHOTO;ENCODING=b;TYPE=PNG:${PNG.slice(0, 20)}`);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.note.frontmatter.photo).toBe(PHOTO);
+  });
+});
+
 describe('source is a note-only property', () => {
   it('source is never sent to a created card and is written as the target name', async () => {
     const t = setup({ local: { ...friendlyOf(V1), source: 'Family' } });
