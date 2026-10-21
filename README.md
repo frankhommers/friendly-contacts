@@ -335,11 +335,11 @@ item4.X-ABLabel:Sem de Vries
 ```
 
 - **For phones.** The link is a website entry on the card, the same in vCard 3.0 and 4.0 cards. On Android (DAVx5) you tap it in the contact to open the note in Obsidian. Whether the contacts app opens `obsidian://` links depends on the app, so test it with one contact on your phone first.
-- **Vault name on your phone.** The link names the vault to open. When you turn the setting on, the field **Vault name on your phone** is filled with the name of this vault. Change it when the vault on your phone has another name; an empty field gives the name of this vault again.
+- **Vault name on your phone.** The link names the vault to open. The first time you turn the setting on, the field **Vault name on your phone** is filled with the name of this vault. Change it when the vault on your phone has another name; an empty field gives the name of this vault again. Links with an earlier vault name are replaced at each contact's next Sync.
 - **One link per contact note.** A person you have two relationships with gets one link. Relationships to someone without a contact note get no link, and a card gets no link to its own note.
 - **At each contact's next Sync.** Links follow the relationships, a renamed contact, the vault name and turning the setting off. A card that has to change shows the line "Links to Obsidian notes on this card are updated." on the review screen; click **Apply**. A link you delete on the phone, or a label you change there, is put back at the next Sync. Turning the setting off removes the links from the cards.
-- **Only the plugin's own links.** The links never appear in your notes, and websites you added yourself, in a note or on the phone, are never touched, not even an `obsidian://` link of your own.
-- **Update every desktop first.** Update the plugin on every desktop that syncs before you turn the setting on: an older version reads the links as websites and puts them in your notes.
+- **Only the plugin's own links.** The links never appear in your notes. An `obsidian://` website in a group (like `item4.URL` above) to the vault named in the field (or a name it had before) counts as one of the plugin's links, even one you typed on the phone, and is replaced or removed. Websites in your notes (written to the card as plain website lines) and links to other vaults are never touched.
+- **Update every desktop first.** Update the plugin on every desktop that syncs before you turn the setting on: an older version reads the links as websites and puts them in your notes. The other desktops must also pick up the setting before they sync. They do so by themselves when the plugin's settings file syncs to them (Obsidian Sync or another file sync); otherwise restart Obsidian there.
 
 ---
 
