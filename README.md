@@ -50,6 +50,7 @@ To try the test releases:
       + [📂 A folder per contact](#-a-folder-per-contact)
       + [👪 Relationships in the sidebar](#-relationships-in-the-sidebar)
       + [📱 Relationships on phones](#-relationships-on-phones)
+      + [🔗 Links to Obsidian notes on cards](#-links-to-obsidian-notes-on-cards)
       + [📅 Dates with a label](#-dates-with-a-label)
       + [🕸️ People graph](#-people-graph)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
@@ -320,6 +321,25 @@ Each address book has a setting **New contacts** (in the address book's section 
 **Count card versions** next to it counts the versions in the address book and shows, for example, "118 × vCard 3.0, 4 × vCard 4.0; Automatic gives new contacts vCard 3.0." Nothing is changed by counting.
 
 **When your server starts offering vCard 4.0.** Existing cards keep the version they have: the plugin never converts a card from one version to another (phones rewrite a card in their own version anyway). Only new cards follow: as phones and the server store more 4.0 cards, the majority in the address book changes, and Automatic starts creating 4.0 cards once most of the cards are 4.0. Set the book to vCard 3.0 or vCard 4.0 to fix the version of new cards yourself.
+
+---
+
+<!-- TOC --><a name="-links-to-obsidian-notes-on-cards"></a>
+### 🔗 Links to Obsidian notes on cards
+
+With the setting **Links to Obsidian notes on cards** (in the synchronization settings of the plugin, right below the address books) every card gets a website for each relationship with a contact note: an `obsidian://` link to that note, labelled with the person's name. It is off by default.
+
+```
+item4.URL:obsidian://open?vault=Phone%20Notes&file=Contacts%2FSem%20de%20Vries
+item4.X-ABLabel:Sem de Vries
+```
+
+- **For phones.** The link is a website entry on the card, the same in vCard 3.0 and 4.0 cards. On Android (DAVx5) you tap it in the contact to open the note in Obsidian. Whether the contacts app opens `obsidian://` links depends on the app, so test it with one contact on your phone first.
+- **Vault name on your phone.** The link names the vault to open. When you turn the setting on, the field **Vault name on your phone** is filled with the name of this vault. Change it when the vault on your phone has another name; an empty field gives the name of this vault again.
+- **One link per contact note.** A person you have two relationships with gets one link. Relationships to someone without a contact note get no link, and a card gets no link to its own note.
+- **At each contact's next Sync.** Links follow the relationships, a renamed contact, the vault name and turning the setting off. A card that has to change shows the line "Links to Obsidian notes on this card are updated." on the review screen; click **Apply**. A link you delete on the phone, or a label you change there, is put back at the next Sync. Turning the setting off removes the links from the cards.
+- **Only the plugin's own links.** The links never appear in your notes, and websites you added yourself, in a note or on the phone, are never touched, not even an `obsidian://` link of your own.
+- **Update every desktop first.** Update the plugin on every desktop that syncs before you turn the setting on: an older version reads the links as websites and puts them in your notes.
 
 ---
 
