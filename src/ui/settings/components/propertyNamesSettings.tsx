@@ -20,6 +20,12 @@ import { DateLabelsSettings } from "src/ui/settings/components/dateLabelsSetting
 const splitPatterns = (text: string): string[] =>
   text.split(",").map((p) => p.trim()).filter((p) => p !== "");
 
+/** A failed add or remove of a date with a label: a notice, and the error in the console. */
+const reportFailure = (action: "add" | "remove", property: string, error: unknown) => {
+  console.error(`Friendly Contacts: could not ${action} ${property}`, error);
+  new Notice(`Could not ${action} ${property}: ${error instanceof Error ? error.message : String(error)}`);
+};
+
 export function PropertyNamesSettings({ app }: { app: App }) {
   const [rows, setRows] = React.useState<MappingRow[]>(() => getSettings().friendly.mapping);
   const saved = React.useRef<MappingRow[]>(rows);
@@ -99,11 +105,16 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     return commit(renameRow(rows, from, to));
   };
 
-  /** Restores the default property names; the dates with a label are the owner's own and stay. */
+  /**
+   * Restores the default property names; the dates with a label are the owner's own and stay. When one of them has
+   * a name a default row takes back, nothing is saved and the errors show, as for an edit.
+   */
   const reset = async () => {
     const defaults = withLabelledDateRows(DEFAULT_MAPPING, saved.current);
     setRows(defaults);
-    setErrors([]);
+    const problems = validateMapping(defaults);
+    setErrors(problems);
+    if (problems.length > 0) return;
     await saveWithRenames(defaults);
   };
 
@@ -119,7 +130,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
    * Adds a date with a label. The notes of contacts whose last-synced card holds such a date get the property first
    * (after a confirmation), so Sync never reads the date as removed in Obsidian; the row is only saved when every
    * note was filled. What is saved is built again from the mapping saved by then: a rename saved while the notes
-   * were read or the confirmation was open is kept, not undone.
+   * were read or the confirmation was open is kept, not undone. The row is saved with the time it is added
+   * (`since`): a sync base stored before then, on any device, is read without it (see `rowsForBase`).
+   * A failure (reading the notes, filling, saving) is a notice, never an unhandled rejection.
    */
   const addLabelledDate = async (label: string, property: string) => {
     const row = labelledDateRow(readableLabel(label), property);
@@ -131,7 +144,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     setErrors([]);
     /** Saves the row on the mapping as saved now; false (errors shown, nothing saved) when it no longer fits. */
     const saveAdded = async (): Promise<boolean> => {
-      const now = mappingWithLabelledDate(saved.current, row);
+      const now = mappingWithLabelledDate(saved.current, { ...row, since: Date.now() });
       if ("errors" in now) {
         setErrors(now.errors);
         new Notice(`Not added: the property names changed in the meantime, see the errors in the settings.`);
@@ -140,27 +153,37 @@ export function PropertyNamesSettings({ app }: { app: App }) {
       await saveRows(now.rows);
       return true;
     };
-    const fills = planDateFill(await notesWithBases(app), first.rows, row);
-    if (fills.length === 0) {
-      await saveAdded();
-      return;
+    try {
+      const fills = planDateFill(await notesWithBases(app), first.rows, row);
+      if (fills.length === 0) {
+        await saveAdded();
+        return;
+      }
+      const n = fills.length;
+      new ConfirmModal(
+        app,
+        `Add ${row.property} to ${n} contact notes, from their last Sync?`,
+        "Add",
+        () => {
+          void (async () => {
+            try {
+              const { failed } = await fillNotes(app, fills);
+              if (failed.length > 0) {
+                console.log(`Friendly Contacts: ${row.property} not added, could not fill:\n${failed.join("\n")}`);
+                new Notice(`Not added: ${failed.length} contact notes could not be filled, see console.`);
+                return;
+              }
+              if (await saveAdded()) new Notice(`Added ${row.property} to ${n} contact notes.`);
+            } catch (error) {
+              reportFailure("add", row.property, error);
+            }
+          })();
+        },
+        "Cancel",
+      ).open();
+    } catch (error) {
+      reportFailure("add", row.property, error);
     }
-    const n = fills.length;
-    new ConfirmModal(
-      app,
-      `Add ${row.property} to ${n} contact notes, from their last Sync?`,
-      "Add",
-      async () => {
-        const { failed } = await fillNotes(app, fills);
-        if (failed.length > 0) {
-          console.log(`Friendly Contacts: ${row.property} not added, could not fill:\n${failed.join("\n")}`);
-          new Notice(`Not added: ${failed.length} contact notes could not be filled, see console.`);
-          return;
-        }
-        if (await saveAdded()) new Notice(`Added ${row.property} to ${n} contact notes.`);
-      },
-      "Cancel",
-    ).open();
   };
 
   /**
@@ -174,23 +197,33 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     const row = saved.current.find((r) => isLabelledDateRow(r) && readableLabel(r.appleDateLabel).toLowerCase() === label);
     if (!row) return;
     const next = saved.current.filter((r) => r !== row);
-    const n = notesWithRowProperties(app, row).length;
-    if (n === 0) {
-      await saveRows(next);
-      return;
-    }
-    new ConfirmModal(
-      app,
-      `Remove ${row.property} from ${n} contact notes? The dates stay on the cards.`,
-      "Remove",
-      async () => {
+    try {
+      const n = notesWithRowProperties(app, row).length;
+      if (n === 0) {
         await saveRows(next);
-        const { removed, failed } = await removeRowProperties(app, row);
-        if (failed.length > 0) console.log(`Friendly Contacts: could not remove ${row.property} from:\n${failed.join("\n")}`);
-        new Notice(`Removed ${row.property} from ${removed} contact notes` + (failed.length > 0 ? `; ${failed.length} failed, see console` : ""));
-      },
-      "Cancel",
-    ).open();
+        return;
+      }
+      new ConfirmModal(
+        app,
+        `Remove ${row.property} from ${n} contact notes? The dates stay on the cards.`,
+        "Remove",
+        () => {
+          void (async () => {
+            try {
+              await saveRows(next);
+              const { removed, failed } = await removeRowProperties(app, row);
+              if (failed.length > 0) console.log(`Friendly Contacts: could not remove ${row.property} from:\n${failed.join("\n")}`);
+              new Notice(`Removed ${row.property} from ${removed} contact notes` + (failed.length > 0 ? `; ${failed.length} failed, see console` : ""));
+            } catch (error) {
+              reportFailure("remove", row.property, error);
+            }
+          })();
+        },
+        "Cancel",
+      ).open();
+    } catch (error) {
+      reportFailure("remove", row.property, error);
+    }
   };
 
   return (

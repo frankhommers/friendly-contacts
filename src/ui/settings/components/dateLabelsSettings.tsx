@@ -1,4 +1,4 @@
-import { App } from "obsidian";
+import { App, Notice } from "obsidian";
 import * as React from "react";
 import { isLabelledDateRow, readableLabel, suggestPropertyName } from "src/contacts/friendly/dateLabels";
 import { isFixedProperty, MappingRow } from "src/contacts/friendly/mapping";
@@ -30,7 +30,11 @@ export function DateLabelsSettings({ app, rows, revision, onRename, onAdd, onRem
   const propertyInput = React.useRef<HTMLInputElement>(null);
   /** The label of the last Add: the add line is cleared once a row with that label shows up. */
   const added = React.useRef<string | null>(null);
-  /** True while an Add reads the notes and their bases (until the confirmation opens or the row is saved). */
+  /**
+   * True while an Add reads the notes and their bases (until the confirmation opens or the row is saved). The ref
+   * guards (a second Enter before the re-render is ignored); the state disables the button.
+   */
+  const addingRef = React.useRef(false);
   const [adding, setAdding] = React.useState(false);
   const [found, setFound] = React.useState<{ labels?: { label: string; contacts: number }[]; finding?: boolean; error?: string }>();
 
@@ -49,12 +53,18 @@ export function DateLabelsSettings({ app, rows, revision, onRename, onAdd, onRem
   shown.sort((a, b) => Number(isLabelledDateRow(a.row)) - Number(isLabelledDateRow(b.row)));
 
   const add = async () => {
-    if (adding) return;
+    if (addingRef.current) return;
+    addingRef.current = true;
     added.current = label;
     setAdding(true);
     try {
       await onAdd(label, property);
+    } catch (error) {
+      const name = property.trim();
+      console.error(`Friendly Contacts: could not add ${name}`, error);
+      new Notice(`Could not add ${name}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
+      addingRef.current = false;
       setAdding(false);
     }
   };
