@@ -16,6 +16,8 @@ export interface SyncStateEntry {
   href: string;
   /** The card reader the base was stored with (see `Reader`); absent: stored before readers were recorded (1). */
   reader?: number;
+  /** When the base was stored (ms since epoch); `set` records the time when absent. Absent: stored before it was recorded. */
+  storedAt?: number;
 }
 
 export interface SyncState {
@@ -24,7 +26,7 @@ export interface SyncState {
   remove(uid: string): Promise<void>;
 }
 
-type SyncIndex = Record<string, { etag: string; href: string; reader?: number }>;
+type SyncIndex = Record<string, { etag: string; href: string; reader?: number; storedAt?: number }>;
 
 /** A safe file name per UID, one-to-one: other characters (and `_` itself) become `_<hex>_`. */
 const fileNameOf = (uid: string) =>
@@ -32,7 +34,7 @@ const fileNameOf = (uid: string) =>
 
 /**
  * Stores the card as it was at the last successful sync ("base"), per UID:
- * `<dir>/<name>.vcf` holds the raw vCard, `<dir>/index.json` holds etag and href.
+ * `<dir>/<name>.vcf` holds the raw vCard, `<dir>/index.json` holds etag, href, reader and when it was stored.
  */
 export function createSyncState(store: FileStore, dir: string): SyncState {
   const indexPath = `${dir}/index.json`;
@@ -69,16 +71,19 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
       }
       const entry: SyncStateEntry = { raw, etag: meta.etag, href: meta.href };
       if (typeof meta.reader === 'number') entry.reader = meta.reader;
+      if (typeof meta.storedAt === 'number') entry.storedAt = meta.storedAt;
       return entry;
     },
     set(uid, entry) {
       return serialized(async () => {
         await store.write(rawPath(uid), entry.raw);
         const index = await readIndex();
-        index[cleanUid(uid)] =
-          entry.reader === undefined
-            ? { etag: entry.etag, href: entry.href }
-            : { etag: entry.etag, href: entry.href, reader: entry.reader };
+        index[cleanUid(uid)] = {
+          etag: entry.etag,
+          href: entry.href,
+          ...(entry.reader === undefined ? {} : { reader: entry.reader }),
+          storedAt: entry.storedAt ?? Date.now(),
+        };
         await writeIndex(index);
       });
     },

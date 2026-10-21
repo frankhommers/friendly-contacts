@@ -337,11 +337,11 @@ The group **Dates with a label** in the plugin settings, right below the propert
 
 - **English names.** The plugin does not translate labels; you name the property. Use an English name (`dating`, not `verkering`), like the other properties in your notes.
 - **Anniversary** is the first row. Its label is fixed; you can rename its property.
-- **Adding a row.** Type the label and the property in the empty line at the bottom and click **Add**. When contacts already have that date on their card, the plugin asks "Add dating to 2 contact notes, from their last Sync?" and fills the property in those notes first, so the next Sync does not take the date for one you removed in Obsidian. A value you already typed in a note is kept. If a note cannot be filled, the row is not added.
+- **Adding a row.** Type the label and the property in the empty line at the bottom and click **Add**. When contacts already have that date on their card, the plugin asks "Add dating to 2 contact notes, from their last Sync?" and fills the property in those notes first, so the next Sync does not take the date for one you removed in Obsidian. A value you already typed in a note is kept. If a note cannot be filled, the row is not added. On your other devices, and for notes that were not filled, a date that already sits on a card shows up in the note at that contact's next Sync; it is never removed from the card.
 - **Find labels on cards** lists the labels on your contacts' cards that have no row yet, such as "Verkering — on 2 contacts". **Add** next to a label puts it in the empty line with a suggested property name; change that into English and click **Add**. It reads the cards as they were at each contact's last Sync: a label you added on the phone since then shows up after you sync that contact.
 - **Changing a label.** The label of a row cannot be edited: remove the row and add it again.
 - **Removing a row** never touches the cards: the dates stay there and stop showing in Obsidian. The property is removed from your notes (`dating`, `dating-2`, …), after a question that says how many notes change, so a row added again later starts clean.
-- **Reset to defaults** in the property names keeps the rows of this group: they are your own labels.
+- **Reset to defaults** in the property names keeps the rows of this group: they are your own labels. If one of them has a name a default property takes back (say you renamed `birthday` and gave a label the name `birthday`), nothing is saved and the settings show why.
 - **Dates without a label** (Android's "Other" date without a text) are not shown; they stay on the card as they are.
 
 ---

@@ -7,12 +7,14 @@ import {
   planDateFill,
   readableLabel,
   rowPropertyKeys,
+  rowsForBase,
   suggestPropertyName,
   unmappedDateLabels,
   withLabelledDateRows,
+  withUnfilledDates,
 } from 'src/contacts/friendly/dateLabels';
 import { parseCard } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING, MappingRow, renameRow } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, MappingRow, renameRow, validateMapping } from 'src/contacts/friendly/mapping';
 import { describe, expect, it } from 'vitest';
 
 const dating = labelledDateRow('Verkering', 'dating');
@@ -29,6 +31,11 @@ describe('labelled date rows', () => {
       format: 'date',
       appleDateLabel: 'Verkering',
     });
+  });
+
+  it('records since when it is given', () => {
+    expect(labelledDateRow('Verkering', 'dating', 2000)).toEqual({ ...dating, since: 2000 });
+    expect(dating).not.toHaveProperty('since');
   });
 
   it('knows a labelled date row, not the anniversary row', () => {
@@ -68,6 +75,71 @@ describe('inserting rows', () => {
     const merged = withLabelledDateRows(DEFAULT_MAPPING, current);
     expect(names(merged)).toEqual(names(insertLabelledDateRow(DEFAULT_MAPPING, dating)));
     expect(merged).toContainEqual(dating);
+  });
+
+  it('keeps when a labelled row was added', () => {
+    const since = labelledDateRow('Verkering', 'dating', 2000);
+    expect(withLabelledDateRows(DEFAULT_MAPPING, insertLabelledDateRow(DEFAULT_MAPPING, since))).toContainEqual(since);
+  });
+
+  it('a reset whose labelled row took a default name is invalid', () => {
+    // The owner renamed birthday and named a labelled date birthday: the defaults bring birthday back.
+    const current = insertLabelledDateRow(renameRow(DEFAULT_MAPPING, 'birthday', 'born'), labelledDateRow('Verkering', 'birthday'));
+    expect(validateMapping(current)).toEqual([]);
+    expect(validateMapping(withLabelledDateRows(DEFAULT_MAPPING, current))).toEqual(['Duplicate property name: birthday']);
+  });
+});
+
+describe('rowsForBase', () => {
+  const rows = (since?: number) => insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', since));
+
+  it('keeps a row without since', () => {
+    expect(rowsForBase(rows(), 1000)).toEqual(rows());
+    expect(rowsForBase(rows(), undefined)).toEqual(rows());
+  });
+
+  it('keeps a row added before or when the base was stored', () => {
+    expect(rowsForBase(rows(500), 1000)).toEqual(rows(500));
+    expect(rowsForBase(rows(1000), 1000)).toEqual(rows(1000));
+  });
+
+  it('drops a row added after the base was stored', () => {
+    expect(rowsForBase(rows(2000), 1000)).toEqual(DEFAULT_MAPPING);
+  });
+
+  it('a base without storedAt is older than every row with since', () => {
+    expect(rowsForBase(rows(1), undefined)).toEqual(DEFAULT_MAPPING);
+  });
+
+  it('never drops other rows', () => {
+    // Only a labelled row has a since; one on another row (a hand-edited data.json) is ignored.
+    const anniversary = DEFAULT_MAPPING.find((r) => r.property === 'anniversary')!;
+    expect(rowsForBase([{ ...anniversary, since: 5000 } as unknown as MappingRow], 1000)).toHaveLength(1);
+  });
+});
+
+describe('withUnfilledDates', () => {
+  const rows = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 2000));
+  const base = { name: 'Dora', dating: '2012-05-01', 'dating-2': '2014-06-02', birthday: '1990-01-01' };
+
+  it('takes the dates of a row added after the base was stored that the note does not hold', () => {
+    expect(withUnfilledDates({ name: 'Dora' }, base, rows, 1000)).toEqual({
+      name: 'Dora',
+      dating: '2012-05-01',
+      'dating-2': '2014-06-02',
+    });
+  });
+
+  it('keeps what the note holds', () => {
+    expect(withUnfilledDates({ name: 'Dora', dating: '2013-01-01', 'dating-2': '' }, base, rows, 1000)).toEqual({
+      name: 'Dora',
+      dating: '2013-01-01',
+      'dating-2': '2014-06-02',
+    });
+  });
+
+  it('changes nothing for a base stored after the row was added', () => {
+    expect(withUnfilledDates({ name: 'Dora' }, base, rows, 3000)).toEqual({ name: 'Dora' });
   });
 });
 

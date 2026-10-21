@@ -2,13 +2,15 @@
  * One Sync of a contact note with its CardDAV card, in two phases.
  *
  * `prepareSync` reads the note (L), the base (B) and the server card (S) and returns either "up to date" or the
- * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists.
+ * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists (or the
+ * base was read without a date with a label added after it was stored, see `rowsForBase`).
  * `applySync` takes the result R built from the user's choices, checks nothing moved underneath, patches the card
  * line by line and writes it with If-Match, then renames the note (when asked), writes it and stores the base.
  * Nothing from obsidian or src/context: the note, the server and the base store all come in through `deps`.
  */
 
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
+import { rowsForBase } from 'src/contacts/friendly/dateLabels';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
@@ -155,11 +157,13 @@ export async function prepareSync(
     }
 
     const baseLines = baseEntry ? parseCard(baseEntry.raw) : undefined;
-    // Read the way it was stored: lines an older reader ignored then are the server's additions now.
+    // Read the way it was stored: lines an older reader ignored then are the server's additions now. So are the dates
+    // with a label added after the base was stored (the note may never have been filled from it, see rowsForBase).
+    const baseRows = rowsForBase(deps.rows, baseEntry?.storedAt);
     const baseCard = baseLines && {
       lines: baseLines,
       friendly: canonicalFriendly(
-        toFriendly(baseLines, deps.rows, deps.readOnlyCtx, { reader: readerOf(baseEntry?.reader) }),
+        toFriendly(baseLines, baseRows, deps.readOnlyCtx, { reader: readerOf(baseEntry?.reader) }),
         deps,
       ),
     };
@@ -179,8 +183,10 @@ export async function prepareSync(
     // Decided with the same lookups as Apply uses, so a line Apply cannot rewrite never reopens the review.
     const rewriteRelations = server !== undefined && needsLegacyRewrite(server.lines, deps.rows, deps.readOnlyCtx);
     if (server && !where.move && isUpToDate(rows, rewriteRelations)) {
-      // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
-      if (!baseEntry) {
+      // The only writes before Apply (spec): when both sides agree, the card is stored as the base on a first Sync,
+      // and over a base read without some of the rows (a date with a label added after it was stored), so those rows
+      // count for this contact from now on.
+      if (!baseEntry || baseRows.length < deps.rows.length) {
         await deps.state.set(uid, { raw: server.raw, etag: server.etag, href: server.href, reader: CURRENT_READER });
       }
       return { kind: 'upToDate' };

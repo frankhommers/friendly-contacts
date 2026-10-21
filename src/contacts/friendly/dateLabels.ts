@@ -14,7 +14,7 @@ import {
   validateMapping,
 } from './mapping';
 import { RelationContext } from './relations';
-import { Reader, toFriendly } from './translate';
+import { FriendlyValue, Reader, toFriendly } from './translate';
 
 export { isLabelledDateRow, readableLabel };
 export type { LabelledDateRow };
@@ -33,8 +33,9 @@ export const NO_LOOKUPS: RelationContext = {
   resolveLink: (name) => ({ text: name }),
 };
 
-export function labelledDateRow(label: string, property: string): LabelledDateRow {
-  return {
+/** `since`: when the row is added to the mapping (see `LabelledDateRow.since`); absent: always there. */
+export function labelledDateRow(label: string, property: string, since?: number): LabelledDateRow {
+  const row: LabelledDateRow = {
     kind: 'field',
     property: property.trim(),
     read: [],
@@ -42,6 +43,38 @@ export function labelledDateRow(label: string, property: string): LabelledDateRo
     format: 'date',
     appleDateLabel: label.trim(),
   };
+  if (since !== undefined) row.since = since;
+  return row;
+}
+
+/**
+ * The rows a sync base stored at `storedAt` is read with: `rows` without the dates with a label added after it. The
+ * base of the device that added the row holds the date, but the note it belongs to may not have been filled (the
+ * sync bases are per device, the settings travel): read with the row, the date would look removed in the note.
+ * Without it the date is the card's own, so Sync brings it into the note. A base without `storedAt` is older than
+ * every row with a `since`; a row without `since` is always there.
+ */
+export function rowsForBase(rows: MappingRow[], storedAt: number | undefined): MappingRow[] {
+  return rows.filter((row) => !isLabelledDateRow(row) || (row.since ?? 0) <= (storedAt ?? 0));
+}
+
+/**
+ * The note's properties to patch the base with (an export): `note` plus the base's values for the rows `rowsForBase`
+ * leaves out that the note leaves empty. Such a date was not filled into the note, so it is no removal. `base`: the
+ * base read with all `rows`.
+ */
+export function withUnfilledDates(
+  note: Record<string, FriendlyValue>,
+  base: Record<string, FriendlyValue>,
+  rows: MappingRow[],
+  storedAt: number | undefined,
+): Record<string, FriendlyValue> {
+  const kept = rowsForBase(rows, storedAt);
+  const result = { ...note };
+  for (const [key, value] of Object.entries(base)) {
+    if (rowForProperty(key, kept) === undefined && isEmptyValue(note[key])) result[key] = value;
+  }
+  return result;
 }
 
 /** A mechanical property name for a label: lower-case, whitespace to `-`. The owner makes it English. */

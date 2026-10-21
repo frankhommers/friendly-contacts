@@ -1,6 +1,7 @@
 import { parseCard, serializeCard, serializeLine } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
-import { DEFAULT_MAPPING, isMappedProperty } from 'src/contacts/friendly/mapping';
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
+import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -173,22 +174,27 @@ function setup(
     base?: string;
     /** The reader the base was stored with; absent: none recorded (reader 1). */
     reader?: number;
+    /** When the base was stored; absent: not recorded. */
+    storedAt?: number;
     local?: Record<string, unknown>;
+    /** The mapping Sync reads with; the default mapping when absent. */
+    rows?: MappingRow[];
     ctx?: RelationContext;
   } = {},
 ) {
   const fake = fakeAdapter();
   const serverEtag = opts.server !== undefined ? fake.put(opts.href ?? HREF, opts.server) : undefined;
   const reader = opts.reader === undefined ? {} : { reader: opts.reader };
+  const storedAt = opts.storedAt === undefined ? {} : { storedAt: opts.storedAt };
   const { state, entries, sets } = memoryState(
-    opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF, ...reader } } : {},
+    opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF, ...reader, ...storedAt } } : {},
   );
   const { note, io } = memoryNote(opts.local ?? friendlyOf(V1));
   const notices: string[] = [];
   const deps: SyncDeps = {
     adapter: fake.adapter,
     state,
-    rows: DEFAULT_MAPPING,
+    rows: opts.rows ?? DEFAULT_MAPPING,
     ctx: opts.ctx ?? ctx,
     readOnlyCtx: opts.ctx ?? ctx,
     notify: (msg) => notices.push(msg),
@@ -279,6 +285,45 @@ describe('prepareSync', () => {
       const t = setup({ server: PHONE, local: toFriendly(parseCard(PHONE), DEFAULT_MAPPING, ctx).props });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
       expect(t.entries.get(UID)?.reader).toBe(2);
+    });
+  });
+
+  describe('a date with a label added after the base was stored (on another device)', () => {
+    // The phone's date under its own label; the base holds it, the note was never filled from this device's base.
+    const DATED = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nitem9.X-ABDATE:2012-05-01\r\nitem9.X-ABLabel:Verkering\r\n');
+    const rowsSince = (since: number) => insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', since));
+    const note = () => toFriendly(parseCard(DATED), DEFAULT_MAPPING, ctx).props;
+
+    it('the date is the card\'s own: the server is preselected, and Apply pulls it without a PUT', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: note() });
+      expect(t.note.frontmatter.dating).toBeUndefined();
+      expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(DATED);
+      expect(t.note.frontmatter.dating).toBe('2012-05-01');
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('a note that holds the date is up to date, and the card is stored as the base again', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.pushes).toEqual([]);
+      expect(t.note.writes).toEqual([]);
+      expect(t.sets).toEqual([UID]);
+      // No storedAt given: the store records the time it is stored (tests/syncState.spec.ts), later than the row.
+      expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: t.serverEtag, href: HREF, reader: 2 });
+    });
+
+    it('a base that is up to date and has every row is not stored again', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 3000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.sets).toEqual([]);
+    });
+
+    it('a row added before the base was stored: the date was removed in the note', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(500), local: note() });
+      expect(changedRows(await reviewOf(t))).toEqual([['dating', 'local']]);
     });
   });
 

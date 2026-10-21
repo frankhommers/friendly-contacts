@@ -6,6 +6,7 @@
 import { App, normalizePath, Notice, parseYaml, TAbstractFile, TFile, TFolder } from "obsidian";
 import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
 import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
+import { withUnfilledDates } from "src/contacts/friendly/dateLabels";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
@@ -439,7 +440,9 @@ export async function friendlyNoteCard(
   if (base) {
     const baseLines = parseCard(base.raw);
     // Read the way it was stored, so lines an older reader ignored are not taken for relationships removed in the note.
-    lines = patch(baseLines, toFriendly(baseLines, rows, ctx, { reader: readerOf(base.reader) }), props, rows, ctx).lines;
+    const before = toFriendly(baseLines, rows, ctx, { reader: readerOf(base.reader) });
+    // A date with a label added after the base was stored may never have been filled into the note: not a removal.
+    lines = patch(baseLines, before, withUnfilledDates(props, before.props, rows, base.storedAt), rows, ctx).lines;
   } else {
     lines = newCard(props, rows, ctx).lines;
   }

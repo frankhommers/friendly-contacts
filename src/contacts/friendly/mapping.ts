@@ -38,7 +38,16 @@ export type RelationRow = {
 export type MappingRow = FieldRow | ComponentRow | RelationRow;
 
 /** A date the owner named in the settings: written `itemN.X-ABDATE` + `itemN.X-ABLabel`, read by its label alone. */
-export type LabelledDateRow = FieldRow & { format: 'date'; write: 'X-ABDATE'; appleDateLabel: string };
+export type LabelledDateRow = FieldRow & {
+  format: 'date';
+  write: 'X-ABDATE';
+  appleDateLabel: string;
+  /**
+   * When the row was added (ms since epoch); absent: always there. A sync base stored before then was read without
+   * the row, so the note may never have been filled from it (see `rowsForBase`).
+   */
+  since?: number;
+};
 
 const field = (
   property: string,

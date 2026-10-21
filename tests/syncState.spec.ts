@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSyncState, FileStore, migrateSyncStateDir } from "src/sync/syncState";
 
 function memoryStore() {
@@ -28,24 +28,53 @@ function asyncMemoryStore() {
 }
 
 const entry = { raw: 'BEGIN:VCARD\nEND:VCARD', etag: 'e1', href: '/frank/contacts/x.vcf' };
+/** The clock while a base is stored; every stored entry records it. */
+const NOW = 1_700_000_000_000;
+const kept = { ...entry, storedAt: NOW };
+
+beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('SyncState', () => {
   it('set then get returns entry', async () => {
     const { store } = memoryStore();
     const state = createSyncState(store, 'sync');
     await state.set('abc', entry);
-    expect(await state.get('abc')).toEqual(entry);
+    expect(await state.get('abc')).toEqual(kept);
     expect(await state.get('other')).toBeUndefined();
+  });
+
+  it('records when a base was stored, unless the caller says when', async () => {
+    const { files, store } = memoryStore();
+    const state = createSyncState(store, 'sync');
+    await state.set('abc', entry);
+    expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, storedAt: NOW });
+    expect((await state.get('abc'))?.storedAt).toBe(NOW);
+    await state.set('given', { ...entry, storedAt: 1000 });
+    expect((await state.get('given'))?.storedAt).toBe(1000);
+  });
+
+  it('an entry stored before storedAt was recorded has none', async () => {
+    const { files, store } = memoryStore();
+    files.set('sync/old.vcf', entry.raw);
+    files.set('sync/index.json', JSON.stringify({ old: { etag: 'e1', href: entry.href, reader: 2 } }));
+    const old = await createSyncState(store, 'sync').get('old');
+    expect(old).toEqual({ ...entry, reader: 2 });
+    expect(old).not.toHaveProperty('storedAt');
   });
 
   it('keeps the reader a base was stored with; an old index entry has none', async () => {
     const { files, store } = memoryStore();
     const state = createSyncState(store, 'sync');
     await state.set('abc', { ...entry, reader: 2 });
-    expect(await state.get('abc')).toEqual({ ...entry, reader: 2 });
-    expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, reader: 2 });
+    expect(await state.get('abc')).toEqual({ ...kept, reader: 2 });
+    expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, reader: 2, storedAt: NOW });
     await state.set('old', entry);
-    expect(await state.get('old')).toEqual(entry);
+    expect(await state.get('old')).toEqual(kept);
     expect(await state.get('old')).not.toHaveProperty('reader');
   });
 
@@ -54,8 +83,8 @@ describe('SyncState', () => {
     const state = createSyncState(store, 'sync');
     await state.set('urn:uuid:abc', entry);
     expect(files.get('sync/abc.vcf')).toBe(entry.raw);
-    expect(JSON.parse(files.get('sync/index.json')!)).toEqual({ abc: { etag: 'e1', href: entry.href } });
-    expect(await state.get('abc')).toEqual(entry);
+    expect(JSON.parse(files.get('sync/index.json')!)).toEqual({ abc: { etag: 'e1', href: entry.href, storedAt: NOW } });
+    expect(await state.get('abc')).toEqual(kept);
   });
 
   it('replaces unsafe characters in file names', async () => {
@@ -63,7 +92,7 @@ describe('SyncState', () => {
     const state = createSyncState(store, 'sync');
     await state.set('a/b:c*d_e', entry);
     expect([...files.keys()]).toContain('sync/a_2f_b_3a_c_2a_d_5f_e.vcf');
-    expect(await state.get('a/b:c*d_e')).toEqual(entry);
+    expect(await state.get('a/b:c*d_e')).toEqual(kept);
   });
 
   it('remove deletes both', async () => {
@@ -73,7 +102,7 @@ describe('SyncState', () => {
     await state.set('def', entry);
     await state.remove('abc');
     expect(files.has('sync/abc.vcf')).toBe(false);
-    expect(JSON.parse(files.get('sync/index.json')!)).toEqual({ def: { etag: 'e1', href: entry.href } });
+    expect(JSON.parse(files.get('sync/index.json')!)).toEqual({ def: { etag: 'e1', href: entry.href, storedAt: NOW } });
     expect(await state.get('abc')).toBeUndefined();
   });
 
@@ -94,7 +123,7 @@ describe('SyncState', () => {
     const uids = ['a', 'b', 'c', 'd', 'e'];
     await Promise.all(uids.map(uid => state.set(uid, entry)));
     expect(Object.keys(JSON.parse(files.get('sync/index.json')!)).sort()).toEqual(uids);
-    for (const uid of uids) expect(await state.get(uid)).toEqual(entry);
+    for (const uid of uids) expect(await state.get(uid)).toEqual(kept);
   });
 
   it('concurrent set and remove keep the other entries', async () => {
@@ -152,7 +181,7 @@ describe('sync state per source', () => {
     const { store } = memoryStore();
     await createSyncState(store, 's').set('abc', entry);
     await migrateSyncStateDir(store, 's', 'id1');
-    expect(await createSyncState(store, 's/id1').get('abc')).toEqual(entry);
+    expect(await createSyncState(store, 's/id1').get('abc')).toEqual(kept);
   });
 
   it('merge keeps the target\'s newer base', async () => {
