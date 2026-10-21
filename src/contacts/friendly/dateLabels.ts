@@ -171,17 +171,18 @@ export const isEmptyValue = (value: unknown): boolean =>
 /**
  * The properties to fill in each note when `row` is added: what its base holds for the row, read the way Sync reads
  * the base (with the base's reader, `rows` including `row`), so base, card and note agree and Sync never reads the
- * date as removed in the note. A property the note already holds is kept. Notes with nothing to set are left out.
+ * date as removed in the note. `ownVaults`: lines the plugin wrote (links to notes) are not read. A property the note already holds is kept. Notes with nothing to set are left out.
  */
 export function planDateFill(
   notes: FillNote[],
   rows: MappingRow[],
   row: LabelledDateRow,
+  ownVaults: readonly string[] = [],
 ): { path: string; set: Record<string, string> }[] {
   const plan: { path: string; set: Record<string, string> }[] = [];
   for (const note of notes) {
     if (!note.base) continue;
-    const { props } = toFriendly(parseCard(note.base.raw), rows, NO_LOOKUPS, { reader: note.base.reader });
+    const { props } = toFriendly(parseCard(note.base.raw), rows, NO_LOOKUPS, { reader: note.base.reader, ownVaults });
     const set: Record<string, string> = {};
     for (const key of rowPropertyKeys(props, row)) {
       const value = props[key];

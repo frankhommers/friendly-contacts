@@ -19,6 +19,7 @@ vi.mock("src/insights/insightService", () => ({
 }));
 
 import { DEFAULT_MAPPING } from "src/contacts/friendly/mapping";
+import { DEFAULT_NOTE_LINKS } from "src/contacts/friendly/noteLinks";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import type { ContactsPluginSettings, Source } from 'src/settings/settings.d';
 import { afterEach,describe, expect, it, vi } from 'vitest';
@@ -36,6 +37,7 @@ const mockSettings: ContactsPluginSettings = {
   friendly: { mapping: [], mirrorRelations: false } as ContactsPluginSettings['friendly'],
   layout: { layout: 'note', noteName: '{{name}}', location: 'inside' },
   meUid: '',
+  noteLinks: DEFAULT_NOTE_LINKS,
 };
 
 const testDefaultSettings = {
@@ -128,6 +130,15 @@ describe('sharedSettingsContext', () => {
     expect(mapping.map((r) => r.property)).not.toContain('children');
     expect(mapping.find((r) => r.property === 'kinderen')).toMatchObject({ labels: ['Child'] });
     expect(mapping.find((r) => r.property === 'anniversary')).toMatchObject({ appleDateLabel: 'Anniversary' });
+  });
+
+  it('links to Obsidian notes default to off, and a stored setting is kept', async () => {
+    const { noteLinks: _omitted, ...legacy } = mockSettings;
+    await initSettings(async () => legacy, saveData);
+    expect(getSettings().noteLinks).toEqual(DEFAULT_NOTE_LINKS);
+    const stored = { enabled: true, vaultName: 'Notes', formerVaultNames: ['Old'] };
+    await initSettings(async () => ({ ...mockSettings, noteLinks: stored }), saveData);
+    expect(getSettings().noteLinks).toEqual(stored);
   });
 
   it('layout defaults to one note per contact', async () => {

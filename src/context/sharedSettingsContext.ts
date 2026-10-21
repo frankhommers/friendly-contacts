@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals-core";
 import { migrateMapping } from "src/contacts/friendly/mapping";
+import { normalizeNoteLinks } from "src/contacts/friendly/noteLinks";
 import { normalizeLayout } from "src/contacts/layout";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
@@ -51,7 +52,8 @@ export async function initSettings(
         mapping: migrateMapping(loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping)
       },
       layout: normalizeLayout(loaded.layout),
-      meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid
+      meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid,
+      noteLinks: normalizeNoteLinks(loaded.noteLinks)
     };
     await setSettings(initializedSettings);
     return { migratedFrom };

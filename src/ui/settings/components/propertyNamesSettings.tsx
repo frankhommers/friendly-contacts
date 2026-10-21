@@ -9,6 +9,7 @@ import {
   withLabelledDateRows,
 } from "src/contacts/friendly/dateLabels";
 import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
@@ -168,7 +169,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     };
     try {
       const notes = await notesWithBases(app);
-      const fills = planDateFill(notes, first.rows, row);
+      const fills = planDateFill(notes, first.rows, row, noteLinkOptions(getSettings().noteLinks).ownVaults);
       if (fills.length === 0) {
         await saveAdded(notes);
         return;

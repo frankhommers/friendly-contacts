@@ -8,6 +8,7 @@ import { updateFrontMatterValue } from "src/contacts/contactFrontmatter";
 import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, technicalKeys } from "src/contacts/convertNotes";
 import { withUnfilledDates } from "src/contacts/friendly/dateLabels";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
+import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { MappingRow } from "src/contacts/friendly/mapping";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
@@ -337,19 +338,25 @@ export class ObsidianRelationContext implements RelationContext {
   }
 
   /**
-   * A link target as Obsidian resolves it. When Obsidian finds no note at all (a contact in its own folder is not
-   * found by its name, its note is `index`): the one contact note with that display name. Else (also for a link to
-   * a note that is no contact note) the address book listing.
+   * The contact note a link target names, as Obsidian resolves it. When Obsidian finds no note at all (a contact in
+   * its own folder is not found by its name, its note is `index`): the one contact note with that display name.
+   * `ambiguous` for several; none for a link to a note that is no contact note.
+   */
+  private findContactNote(name: string): { note?: ContactNote; ambiguous?: true } {
+    const dest = this.app.metadataCache.getFirstLinkpathDest(name, this.sourcePath);
+    if (dest) return { note: this.contacts.find((c) => c.file.path === dest.path) };
+    const wanted = name.trim().toLowerCase();
+    const named = this.contacts.filter((c) => contactDisplayName(this.app, c.file).trim().toLowerCase() === wanted);
+    return named.length > 1 ? { ambiguous: true } : { note: named[0] };
+  }
+
+  /**
+   * A link target as Obsidian resolves it (see `findContactNote`). Else (also for a link to a note that is no
+   * contact note) the address book listing.
    */
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true } {
-    const dest = this.app.metadataCache.getFirstLinkpathDest(name, this.sourcePath);
-    let note = dest ? this.contacts.find((c) => c.file.path === dest.path) : undefined;
-    if (!note && !dest) {
-      const wanted = name.trim().toLowerCase();
-      const named = this.contacts.filter((c) => contactDisplayName(this.app, c.file).trim().toLowerCase() === wanted);
-      if (named.length > 1) return { ambiguous: true };
-      note = named[0];
-    }
+    const { note, ambiguous } = this.findContactNote(name);
+    if (ambiguous) return { ambiguous: true };
     if (!note || (note.uid === undefined && this.readOnly)) return resolveRemoteName(name, this.remote);
     if (note.uid === undefined) {
       // Like the UID processor: a contact that gets linked needs an identity.
@@ -357,6 +364,12 @@ export class ObsidianRelationContext implements RelationContext {
       this.pending.push(updateFrontMatterValue(note.file, "UID", note.uid));
     }
     return { uid: cleanUid(note.uid) };
+  }
+
+  /** The contact note a link target names, for a link to it on a card: no UID needed, nothing written. */
+  contactNote(target: string): { path: string; name: string } | undefined {
+    const { note } = this.findContactNote(target);
+    return note ? { path: note.file.path, name: contactDisplayName(this.app, note.file) } : undefined;
   }
 
   /** Waits for the UIDs assigned while resolving links to be written. */
@@ -440,7 +453,7 @@ export async function friendlyNoteCard(
   if (base) {
     const baseLines = parseCard(base.raw);
     // Read the way it was stored, so lines an older reader ignored are not taken for relationships removed in the note.
-    const before = toFriendly(baseLines, rows, ctx, { reader: readerOf(base.reader) });
+    const before = toFriendly(baseLines, rows, ctx, { reader: readerOf(base.reader), ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults });
     // A date with a label added after the base was stored may never have been filled into the note: not a removal.
     lines = patch(baseLines, before, withUnfilledDates(props, before.props, rows, base.storedAt), rows, ctx).lines;
   } else {
@@ -466,7 +479,7 @@ export async function importCard(
   const fileName = contactFileName(value("N"), value("FN"));
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(newContactLocation(app, fileName, contactsFolder).note));
-  const props = { ...toFriendly(lines, friendly.mapping, ctx).props, ...extra };
+  const props = { ...toFriendly(lines, friendly.mapping, ctx, { ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults }).props, ...extra };
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;

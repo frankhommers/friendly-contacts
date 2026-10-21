@@ -2,6 +2,7 @@ import {computed} from "@preact/signals-core";
 import {App, Notice, TFile} from "obsidian";
 import {Contact} from "src/contacts";
 import {hasVCardValues} from "src/contacts/friendlyNotes";
+import {noteLinkOptions} from "src/contacts/friendly/noteLinks";
 import {linkTarget, relationSnapshot} from "src/contacts/friendly/relations";
 import {
   cardVersions,
@@ -201,6 +202,7 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
     renameBlocked: (newName) => renameBlocked(app, file, newName),
     renamesFolder: renamesFolder(app, file),
     newCardVersion: newCardVersionIn,
+    noteLinks: noteLinkOptions(settings.noteLinks),
   };
   return syncFlow(deps);
 }

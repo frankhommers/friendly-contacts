@@ -1,4 +1,5 @@
 import type { MappingRow } from "src/contacts/friendly/mapping";
+import type { NoteLinksSettings } from "src/contacts/friendly/noteLinks";
 import type { LayoutSettings } from "src/contacts/layout";
 
 export type AuthType = "basic" | "apikey";
@@ -18,6 +19,8 @@ export interface ContactsPluginSettings {
   layout: LayoutSettings;
   /** UID (cleaned) of the contact that is the vault owner ("This is me"); '' when none is chosen. */
   meUid: string;
+  /** Links to Obsidian notes on cards (see `noteLinks.ts`). */
+  noteLinks: NoteLinksSettings;
 }
 
 export interface FriendlySettings {

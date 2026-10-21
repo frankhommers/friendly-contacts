@@ -449,6 +449,50 @@ describe("a link Obsidian cannot resolve finds the contact note by its name", ()
     expect(ctx.resolveLink("Nobody")).toEqual({ text: "Nobody" });
   });
 
+  describe("contactNote: the contact note a link target names, for the links on cards", () => {
+    it("finds the note by its display name in both modes, with path and name; nothing is written", async () => {
+      const { v, contacts } = vault();
+      for (const readOnly of [true, false]) {
+        const ctx = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, [], readOnly);
+        expect(ctx.contactNote("Sem de Vries")).toEqual({ path: "Contacts/Sem de Vries/index.md", name: "Sem de Vries" });
+        expect(ctx.contactNote(" sem DE vries ")).toEqual({ path: "Contacts/Sem de Vries/index.md", name: "Sem de Vries" });
+        await ctx.settle();
+      }
+      expect(v.processed).toEqual([]);
+    });
+
+    it("a contact note without a UID still gives its path, and nothing is written", async () => {
+      const { v, contacts } = vault();
+      for (const readOnly of [true, false]) {
+        const ctx = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, [], readOnly);
+        expect(ctx.contactNote("Anna Smit")).toEqual({ path: "Contacts/Anna/index.md", name: "Anna Smit" });
+        await ctx.settle();
+      }
+      expect(v.processed).toEqual([]);
+      expect(contacts[1].uid).toBeUndefined();
+    });
+
+    it("a link Obsidian resolves to a note that is no contact note gives undefined", () => {
+      const { v, contacts } = vault();
+      v.note("Projects/Sem de Vries.md", { status: "open" });
+      for (const readOnly of [true, false]) {
+        const ctx = new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", contacts, [], readOnly);
+        expect(ctx.contactNote("Projects/Sem de Vries")).toBeUndefined();
+        expect(ctx.contactNote("Sem de Vries")).toBeUndefined();
+        expect(ctx.contactNote("Nobody")).toBeUndefined();
+      }
+    });
+
+    it("two contact notes with that display name give undefined", () => {
+      const { v, contacts } = vault();
+      const other = v.note("Contacts/Sem 2/index.md", { name: "Sem de Vries", uid: "other-uid" });
+      const all = [...contacts, { file: other as never, uid: "other-uid" }];
+      for (const readOnly of [true, false]) {
+        expect(new ObsidianRelationContext(v.app, "Contacts/Jan/index.md", all, [], readOnly).contactNote("Sem de Vries")).toBeUndefined();
+      }
+    });
+  });
+
   describe("Sync of a contact whose relationship a phone rewrote without the hint", () => {
     const HREF = "/jan.vcf";
     const card = (relation: string, title = "Baker") =>
