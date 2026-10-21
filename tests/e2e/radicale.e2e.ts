@@ -15,9 +15,10 @@ import { join } from 'node:path';
 
 import { parseCard } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
-import { DEFAULT_MAPPING, isMappedProperty } from 'src/contacts/friendly/mapping';
+import { insertLabelledDateRow, labelledDateRow, planDateFill } from 'src/contacts/friendly/dateLabels';
+import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
 import { RelationContext, resolveRemoteName } from 'src/contacts/friendly/relations';
-import { CURRENT_READER, FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
+import { CURRENT_READER, FriendlyValue, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import { contactFileName, renderFriendlyNote } from 'src/contacts/friendlyNotes';
 import { initSettings } from 'src/context/sharedSettingsContext';
 import type { Source } from 'src/settings/settings.d';
@@ -277,6 +278,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   let rewriteLine: string | undefined;
   let jan: Note;
   let notes: { name: string; uid: string }[] = [];
+  /** The rows Sync and import read with; a test that changes the settings puts them back. */
+  let mapping: MappingRow[] = DEFAULT_MAPPING;
 
   /** The real adapter, counting PUTs. */
   const counting: AdapterInterface = {
@@ -310,7 +313,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       note: note.io,
       path: `Contacts/${String(note.frontmatter.name)}.md`,
       name: String(note.frontmatter.name),
-      rows: DEFAULT_MAPPING,
+      rows: mapping,
       sources,
       active: sources,
       defaultSource: 'radicale',
@@ -367,7 +370,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   async function importFrom(book: Book, href: string): Promise<Note> {
     const pulled = await book.adapter.pull(href);
     if (!pulled || !('raw' in pulled)) throw new Error(`pull ${href} failed`);
-    const props = toFriendly(parseCard(pulled.raw), DEFAULT_MAPPING, await relationContext(adapter, notes)).props;
+    const props = toFriendly(parseCard(pulled.raw), mapping, await relationContext(adapter, notes)).props;
     const uid = cleanUid(String(props.uid));
     await book.state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href, reader: CURRENT_READER });
     return memoryNote({ ...props, source: book.source.name });
@@ -1008,5 +1011,72 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     // Done once: no review loop.
     expect(await sync(roos)).toBe('unchanged');
     expect(rewriteLine).toBeUndefined();
+  });
+
+  it.each([
+    ['3.0', '2012-05-01', '2020-02-02', '2020-02-02'],
+    ['4.0', '20120501', '2020-02-02', '20200202'],
+  ])('18. %s: a date with a label: adding its row never removes it, and a new one lands with its label', async (version, onCard, newValue, written) => {
+    const uid = `C0FFEE00-0000-4000-8000-00000000020${version === '3.0' ? '3' : '4'}`;
+    const href = `${BOOK}labelled-date-${version}.vcf`;
+    await putCard(
+      href,
+      [
+        'BEGIN:VCARD',
+        `VERSION:${version}`,
+        `UID:${uid}`,
+        'FN:Dora Vast',
+        'N:Vast;Dora;;;',
+        `item1.X-ABDATE:${onCard}`,
+        'item1.X-ABLabel:Verkering',
+        'END:VCARD',
+        '',
+      ].join('\r\n'),
+    );
+    try {
+      // Without a row for the label the date is not read, and Sync leaves it alone.
+      const dora = await importCard(href);
+      expect(dora.frontmatter.dating).toBeUndefined();
+      expect(await sync(dora)).toBe('unchanged');
+      expect(pushes).toEqual([]);
+      const start = unfolded(await serverCard(href));
+
+      // Add the row, then fill the note from its base the way the settings screen does.
+      const row = labelledDateRow('Verkering', 'dating');
+      mapping = insertLabelledDateRow(DEFAULT_MAPPING, row);
+      const stored = await bookList[0].state.get(cleanUid(uid));
+      if (!stored) throw new Error('no base stored');
+      const plan = planDateFill(
+        [{ path: 'Contacts/Dora Vast.md', frontmatter: dora.frontmatter, base: { raw: stored.raw, reader: readerOf(stored.reader) } }],
+        mapping,
+        row,
+      );
+      expect(plan).toEqual([{ path: 'Contacts/Dora Vast.md', set: { dating: '2012-05-01' } }]);
+      Object.assign(dora.frontmatter, plan[0].set);
+      expect(dora.frontmatter.dating).toBe('2012-05-01');
+
+      // The anti-goal: the card keeps both lines, byte for byte.
+      expect(await sync(dora)).toBe('unchanged');
+      expect(pushes).toEqual([]);
+      expect(unfolded(await serverCard(href))).toEqual(start);
+
+      // A second date with the label lands as a new labelled pair; nothing else changes.
+      dora.frontmatter['dating-2'] = newValue;
+      expect(await sync(dora)).toBe('pushed');
+      const after = unfolded(await serverCard(href));
+      const added = changed(minus(after, start));
+      expect(added).toHaveLength(2);
+      const group = /^(item\d+)\./i.exec(added[0])?.[1];
+      expect(group).toBeDefined();
+      expect(upper(added)).toEqual(upper([`${group}.X-ABDATE:${written}`, `${group}.X-ABLabel:Verkering`]));
+      expect(group?.toLowerCase()).not.toBe('item1');
+      expect(changed(minus(start, after))).toEqual([]);
+      expect(after).toContain(`VERSION:${version}`);
+
+      expect(await sync(dora)).toBe('unchanged');
+      expect(dora.frontmatter).toMatchObject({ dating: '2012-05-01', 'dating-2': newValue });
+    } finally {
+      mapping = DEFAULT_MAPPING;
+    }
   });
 });
