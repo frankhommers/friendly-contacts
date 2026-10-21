@@ -2,6 +2,7 @@ import {
   insertLabelledDateRow,
   isLabelledDateRow,
   labelledDateRow,
+  mappingWithLabelledDate,
   NO_LOOKUPS,
   planDateFill,
   readableLabel,
@@ -67,6 +68,23 @@ describe('inserting rows', () => {
     const merged = withLabelledDateRows(DEFAULT_MAPPING, current);
     expect(names(merged)).toEqual(names(insertLabelledDateRow(DEFAULT_MAPPING, dating)));
     expect(merged).toContainEqual(dating);
+  });
+});
+
+describe('mappingWithLabelledDate', () => {
+  it('adds the row to the mapping it is given, so a rename saved meanwhile is kept', () => {
+    const renamed = renameRow(DEFAULT_MAPPING, 'birthday', 'born');
+    const result = mappingWithLabelledDate(renamed, dating);
+    expect(result).toEqual({ rows: insertLabelledDateRow(renamed, dating) });
+    expect('rows' in result && names(result.rows)).toContain('born');
+    expect('rows' in result && names(result.rows)).not.toContain('birthday');
+  });
+
+  it('refuses a row that no longer fits that mapping', () => {
+    const taken = renameRow(DEFAULT_MAPPING, 'birthday', 'dating');
+    expect(mappingWithLabelledDate(taken, dating)).toEqual({ errors: ['Duplicate property name: dating'] });
+    const labelled = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('verkering', 'courting'));
+    expect(mappingWithLabelledDate(labelled, dating)).toEqual({ errors: ['Two dates have the label "Verkering".'] });
   });
 });
 

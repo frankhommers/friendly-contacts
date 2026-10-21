@@ -11,6 +11,7 @@ import {
   MappingRow,
   readableLabel,
   rowForProperty,
+  validateMapping,
 } from './mapping';
 import { RelationContext } from './relations';
 import { Reader, toFriendly } from './translate';
@@ -57,6 +58,19 @@ export function insertLabelledDateRow(rows: MappingRow[], row: LabelledDateRow):
   const result = [...rows];
   result.splice(at < 0 ? result.length : at + 1, 0, row);
   return result;
+}
+
+/**
+ * `rows` with `row` inserted, or the reasons it does not fit. Build it from the mapping as saved at the moment of
+ * saving, so a rename saved while the notes were read or filled is kept.
+ */
+export function mappingWithLabelledDate(
+  rows: MappingRow[],
+  row: LabelledDateRow,
+): { rows: MappingRow[] } | { errors: string[] } {
+  const next = insertLabelledDateRow(rows, row);
+  const errors = validateMapping(next);
+  return errors.length > 0 ? { errors } : { rows: next };
 }
 
 /** `defaults` plus every labelled-date row of `current`, in their order. */

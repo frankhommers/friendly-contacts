@@ -1,9 +1,9 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
 import {
-  insertLabelledDateRow,
   isLabelledDateRow,
   labelledDateRow,
+  mappingWithLabelledDate,
   planDateFill,
   readableLabel,
   withLabelledDateRows,
@@ -118,17 +118,31 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   /**
    * Adds a date with a label. The notes of contacts whose last-synced card holds such a date get the property first
    * (after a confirmation), so Sync never reads the date as removed in Obsidian; the row is only saved when every
-   * note was filled.
+   * note was filled. What is saved is built again from the mapping saved by then: a rename saved while the notes
+   * were read or the confirmation was open is kept, not undone.
    */
   const addLabelledDate = async (label: string, property: string) => {
     const row = labelledDateRow(readableLabel(label), property);
-    const next = insertLabelledDateRow(saved.current, row);
-    const problems = validateMapping(next);
-    setErrors(problems);
-    if (problems.length > 0) return;
-    const fills = planDateFill(await notesWithBases(app), next, row);
+    const first = mappingWithLabelledDate(saved.current, row);
+    if ("errors" in first) {
+      setErrors(first.errors);
+      return;
+    }
+    setErrors([]);
+    /** Saves the row on the mapping as saved now; false (errors shown, nothing saved) when it no longer fits. */
+    const saveAdded = async (): Promise<boolean> => {
+      const now = mappingWithLabelledDate(saved.current, row);
+      if ("errors" in now) {
+        setErrors(now.errors);
+        new Notice(`Not added: the property names changed in the meantime, see the errors in the settings.`);
+        return false;
+      }
+      await saveRows(now.rows);
+      return true;
+    };
+    const fills = planDateFill(await notesWithBases(app), first.rows, row);
     if (fills.length === 0) {
-      await saveRows(next);
+      await saveAdded();
       return;
     }
     const n = fills.length;
@@ -143,8 +157,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           new Notice(`Not added: ${failed.length} contact notes could not be filled, see console.`);
           return;
         }
-        await saveRows(next);
-        new Notice(`Added ${row.property} to ${n} contact notes.`);
+        if (await saveAdded()) new Notice(`Added ${row.property} to ${n} contact notes.`);
       },
       "Cancel",
     ).open();
