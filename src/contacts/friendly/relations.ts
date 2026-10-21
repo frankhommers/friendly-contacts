@@ -37,6 +37,8 @@ export interface RelationContext {
   displayName(uid: string): string | undefined;
   /** Resolves a link target (a name) to a contact UID, plain text, or "ambiguous". */
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true };
+  /** The contact note a link target resolves to (vault path with `.md`, display name); never writes. Absent: none is known. */
+  contactNote?(target: string): { path: string; name: string } | undefined;
 }
 
 export function toLink(name: string): string {
