@@ -100,6 +100,16 @@ describe('cardNoteLinks', () => {
       { line: 2, url: urlSem },
     ]);
   });
+
+  it('reads unparsed lines in any spelling (as patch writes them)', () => {
+    const lines = [
+      { group: 'item4', name: 'url', params: [], value: url },
+      { group: 'item4', name: 'X-ABLabel', params: [], value: 'Verhallen\\, Ger' },
+    ];
+    expect(isOwnNoteLink(lines[0], ['Notes'])).toBe(true);
+    expect(cardNoteLinks(lines, ['Notes'])).toEqual([{ line: 0, url, label: 'Verhallen, Ger', labelLine: 1 }]);
+    expect(noteLinksDiffer(lines, [{ url, label: 'Verhallen, Ger' }], ['Notes'])).toBe(false);
+  });
 });
 
 describe('wantedNoteLinks', () => {

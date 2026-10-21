@@ -81,7 +81,7 @@ export function parseNoteLink(value: string): { vault: string; file: string } | 
 
 /** A grouped `URL` line holding a note link to one of `ownVaults` (compared ignoring case). */
 export function isOwnNoteLink(line: VCardLine, ownVaults: readonly string[]): boolean {
-  if (line.group === undefined || line.name !== 'URL') return false;
+  if (line.group === undefined || line.name.toUpperCase() !== 'URL') return false;
   const link = parseNoteLink(line.value);
   if (!link) return false;
   const vault = link.vault.toLowerCase();
@@ -96,7 +96,8 @@ export function cardNoteLinks(
   const labels = new Map<string, { label: string; line: number }>();
   lines.forEach((line, index) => {
     const group = line.group?.toLowerCase();
-    if (line.name === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
+    // Upper-case when parsed; lines patch wrote are spelled `X-ABLabel` until the card is serialized.
+    if (line.name.toUpperCase() === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
       labels.set(group, { label: unescapeText(line.value), line: index });
     }
   });

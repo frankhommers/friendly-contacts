@@ -892,6 +892,17 @@ describe('links to Obsidian notes on cards', () => {
     lines.forEach((line, i) => expect(result.lines[i]).toBe(line));
   });
 
+  it('patching an already patched card (not re-parsed) with the same links changes nothing', () => {
+    const once = link(card(...geRelated), [ger, anna]).lines;
+    const fixed = link(card(...geRelated, ...ownGroup('item4', url, 'Ger')), [ger]).lines;
+    for (const [lines, wanted] of [[once, [ger, anna]], [fixed, [ger]]] as const) {
+      const before = read(lines);
+      const again = patch(lines, before, before.props, DEFAULT_MAPPING, ctx, { noteLinks: { wanted: [...wanted], ownVaults: own } });
+      expect(again.lines).toHaveLength(lines.length);
+      lines.forEach((line, i) => expect(again.lines[i]).toBe(line));
+    }
+  });
+
   it('a label changed on the phone is put back in place; nothing else changes', () => {
     const lines = card(...geRelated, ...ownGroup('item4', url, 'Ger'));
     const result = link(lines, [ger]);
