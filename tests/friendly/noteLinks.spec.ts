@@ -206,5 +206,8 @@ describe('settings', () => {
   it('derives the options for Sync', () => {
     expect(noteLinkOptions(DEFAULT_NOTE_LINKS)).toEqual({ enabled: false, vault: '', ownVaults: [] });
     expect(noteLinkOptions({ enabled: true, vaultName: '', formerVaultNames: ['X'] }).enabled).toBe(false);
+    // Off: no links are written, but the stored names stay recognised so Sync can remove the old links.
+    expect(noteLinkOptions({ enabled: false, vaultName: 'Notes', formerVaultNames: ['Old'] }))
+      .toEqual({ enabled: false, vault: 'Notes', ownVaults: ['Notes', 'Old'] });
   });
 });

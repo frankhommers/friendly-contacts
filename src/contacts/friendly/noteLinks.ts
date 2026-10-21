@@ -6,7 +6,7 @@
 import { unescapeText, VCardLine } from './lines';
 import { rowForProperty, MappingRow } from './mapping';
 import { linkTarget, RelationContext } from './relations';
-import { FriendlyValue } from './translate';
+import type { FriendlyValue } from './translate';
 
 /** Stored in data.json. `formerVaultNames`: names links were written with before, still recognised as own. */
 export type NoteLinksSettings = { enabled: boolean; vaultName: string; formerVaultNames: string[] };
