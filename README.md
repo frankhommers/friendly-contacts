@@ -50,6 +50,7 @@ To try the test releases:
       + [📂 A folder per contact](#-a-folder-per-contact)
       + [👪 Relationships in the sidebar](#-relationships-in-the-sidebar)
       + [📱 Relationships on phones](#-relationships-on-phones)
+      + [📅 Dates with a label](#-dates-with-a-label)
       + [🕸️ People graph](#-people-graph)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
    * [📖 Understanding the vCard (VCF) Format](#-understanding-the-vcard-vcf-format)
@@ -319,6 +320,29 @@ Each address book has a setting **New contacts** (in the address book's section 
 **Count card versions** next to it counts the versions in the address book and shows, for example, "118 × vCard 3.0, 4 × vCard 4.0; Automatic gives new contacts vCard 3.0." Nothing is changed by counting.
 
 **When your server starts offering vCard 4.0.** Existing cards keep the version they have: the plugin never converts a card from one version to another (phones rewrite a card in their own version anyway). Only new cards follow: as phones and the server store more 4.0 cards, the majority in the address book changes, and Automatic starts creating 4.0 cards once most of the cards are 4.0. Set the book to vCard 3.0 or vCard 4.0 to fix the version of new cards yourself.
+
+---
+
+<!-- TOC --><a name="-dates-with-a-label"></a>
+### 📅 Dates with a label
+
+A phone can keep a date under a label of its own, for example "Verkering" for the day two people started dating. Apple Contacts and DAVx5 (Android) store it on the card as a date with a label:
+
+```
+item3.X-ABDATE:2012-05-01
+item3.X-ABLabel:Verkering
+```
+
+The group **Dates with a label** in the plugin settings, right below the property names, gives such a label a property in your notes. Each row has the label on the card and the property in the note, for example `Verkering` and `dating`. The note then holds `dating: 2012-05-01`, and the phone keeps showing the date under "Verkering". A date you fill in in the note goes to the card with its label, in vCard 3.0 and 4.0 cards alike. A second date with the same label goes to `dating-2`, the next to `dating-3`, and so on.
+
+- **English names.** The plugin does not translate labels; you name the property. Use an English name (`dating`, not `verkering`), like the other properties in your notes.
+- **Anniversary** is the first row. Its label is fixed; you can rename its property.
+- **Adding a row.** Type the label and the property in the empty line at the bottom and click **Add**. When contacts already have that date on their card, the plugin asks "Add dating to 2 contact notes, from their last Sync?" and fills the property in those notes first, so the next Sync does not take the date for one you removed in Obsidian. A value you already typed in a note is kept. If a note cannot be filled, the row is not added.
+- **Find labels on cards** lists the labels on your contacts' cards that have no row yet, such as "Verkering — on 2 contacts". **Add** next to a label puts it in the empty line with a suggested property name; change that into English and click **Add**. It reads the cards as they were at each contact's last Sync: a label you added on the phone since then shows up after you sync that contact.
+- **Changing a label.** The label of a row cannot be edited: remove the row and add it again.
+- **Removing a row** never touches the cards: the dates stay there and stop showing in Obsidian. The property is removed from your notes (`dating`, `dating-2`, …), after a question that says how many notes change, so a row added again later starts clean.
+- **Reset to defaults** in the property names keeps the rows of this group: they are your own labels.
+- **Dates without a label** (Android's "Other" date without a text) are not shown; they stay on the card as they are.
 
 ---
 

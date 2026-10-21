@@ -1,25 +1,21 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
+import {
+  insertLabelledDateRow,
+  isLabelledDateRow,
+  labelledDateRow,
+  planDateFill,
+  readableLabel,
+  withLabelledDateRows,
+} from "src/contacts/friendly/dateLabels";
 import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import { fillNotes, notesWithBases, notesWithRowProperties, removeRowProperties } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
-
-/** A text input that keeps what is typed locally and hands it over when it loses focus. */
-function CommitInput({ value, onCommit, label }: { value: string; onCommit: (text: string) => void; label: string }) {
-  const [text, setText] = React.useState(value);
-  React.useEffect(() => setText(value), [value]);
-  return (
-    <input
-      type="text"
-      aria-label={label}
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => text !== value && onCommit(text)}
-    />
-  );
-}
+import { CommitInput } from "src/ui/settings/components/commitInput";
+import { DateLabelsSettings } from "src/ui/settings/components/dateLabelsSettings";
 
 const splitPatterns = (text: string): string[] =>
   text.split(",").map((p) => p.trim()).filter((p) => p !== "");
@@ -103,10 +99,85 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     return commit(renameRow(rows, from, to));
   };
 
+  /** Restores the default property names; the dates with a label are the owner's own and stay. */
   const reset = async () => {
-    setRows(DEFAULT_MAPPING);
+    const defaults = withLabelledDateRows(DEFAULT_MAPPING, saved.current);
+    setRows(defaults);
     setErrors([]);
-    await saveWithRenames(DEFAULT_MAPPING);
+    await saveWithRenames(defaults);
+  };
+
+  /** Saves `next` as it is (no renames) and shows it; a draft that was not saved is dropped. */
+  const saveRows = async (next: MappingRow[]) => {
+    await save(next);
+    setRows(next);
+    setErrors([]);
+    setRevision((r) => r + 1);
+  };
+
+  /**
+   * Adds a date with a label. The notes of contacts whose last-synced card holds such a date get the property first
+   * (after a confirmation), so Sync never reads the date as removed in Obsidian; the row is only saved when every
+   * note was filled.
+   */
+  const addLabelledDate = async (label: string, property: string) => {
+    const row = labelledDateRow(readableLabel(label), property);
+    const next = insertLabelledDateRow(saved.current, row);
+    const problems = validateMapping(next);
+    setErrors(problems);
+    if (problems.length > 0) return;
+    const fills = planDateFill(await notesWithBases(app), next, row);
+    if (fills.length === 0) {
+      await saveRows(next);
+      return;
+    }
+    const n = fills.length;
+    new ConfirmModal(
+      app,
+      `Add ${row.property} to ${n} contact notes, from their last Sync?`,
+      "Add",
+      async () => {
+        const { failed } = await fillNotes(app, fills);
+        if (failed.length > 0) {
+          console.log(`Friendly Contacts: ${row.property} not added, could not fill:\n${failed.join("\n")}`);
+          new Notice(`Not added: ${failed.length} contact notes could not be filled, see console.`);
+          return;
+        }
+        await saveRows(next);
+        new Notice(`Added ${row.property} to ${n} contact notes.`);
+      },
+      "Cancel",
+    ).open();
+  };
+
+  /**
+   * Removes the date with a label at `index` (in `rows`). The dates stay on the cards; the property goes from the
+   * notes (after a confirmation), so a row added again later never pushes leftover values as new dates.
+   */
+  const removeLabelledDate = async (index: number) => {
+    const draft = rows[index];
+    if (!isLabelledDateRow(draft)) return;
+    const label = readableLabel(draft.appleDateLabel).toLowerCase();
+    const row = saved.current.find((r) => isLabelledDateRow(r) && readableLabel(r.appleDateLabel).toLowerCase() === label);
+    if (!row) return;
+    const next = saved.current.filter((r) => r !== row);
+    const n = notesWithRowProperties(app, row).length;
+    if (n === 0) {
+      await saveRows(next);
+      return;
+    }
+    new ConfirmModal(
+      app,
+      `Remove ${row.property} from ${n} contact notes? The dates stay on the cards.`,
+      "Remove",
+      async () => {
+        await saveRows(next);
+        const { removed, failed } = await removeRowProperties(app, row);
+        if (failed.length > 0) console.log(`Friendly Contacts: could not remove ${row.property} from:\n${failed.join("\n")}`);
+        new Notice(`Removed ${row.property} from ${removed} contact notes` + (failed.length > 0 ? `; ${failed.length} failed, see console` : ""));
+      },
+      "Cancel",
+    ).open();
   };
 
   return (
@@ -163,7 +234,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {rows.map((row, i) => isLabelledDateRow(row) ? null : (
             <tr key={`${revision}-${i}`}>
               <td>
                 {isFixedProperty(row.property) ? (
@@ -201,6 +272,15 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           ))}
         </tbody>
       </table>
+
+      <DateLabelsSettings
+        app={app}
+        rows={rows}
+        revision={revision}
+        onRename={(index, to) => { void rename(index, to); }}
+        onAdd={addLabelledDate}
+        onRemove={(index) => { void removeLabelledDate(index); }}
+      />
     </>
   );
 }

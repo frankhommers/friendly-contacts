@@ -116,7 +116,8 @@ export function unmappedDateLabels(
   return [...found.values()].sort((a, b) => b.contacts - a.contacts || a.label.localeCompare(b.label));
 }
 
-const isEmpty = (value: unknown): boolean =>
+/** A property value that counts as not filled in: absent, null, blank text or an empty list. */
+export const isEmptyValue = (value: unknown): boolean =>
   value === undefined || value === null || (typeof value === 'string' && value.trim() === '') ||
   (Array.isArray(value) && value.length === 0);
 
@@ -137,7 +138,7 @@ export function planDateFill(
     const set: Record<string, string> = {};
     for (const key of rowPropertyKeys(props, row)) {
       const value = props[key];
-      if (typeof value === 'string' && isEmpty(note.frontmatter[key])) set[key] = value;
+      if (typeof value === 'string' && isEmptyValue(note.frontmatter[key])) set[key] = value;
     }
     if (Object.keys(set).length > 0) plan.push({ path: note.path, set });
   }
