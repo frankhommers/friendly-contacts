@@ -134,6 +134,59 @@ describe('SyncState', () => {
     expect(Object.keys(JSON.parse(files.get('sync/index.json')!)).sort()).toEqual(['b', 'c']);
   });
 
+  describe('touch', () => {
+    it('updates storedAt only', async () => {
+      const { files, store } = memoryStore();
+      const state = createSyncState(store, 'sync');
+      await state.set('abc', { ...entry, reader: 2, storedAt: 1000 });
+      await state.touch('abc', 2000);
+      expect(await state.get('abc')).toEqual({ ...entry, reader: 2, storedAt: 2000 });
+      expect(files.get('sync/abc.vcf')).toBe(entry.raw);
+      expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, reader: 2, storedAt: 2000 });
+    });
+
+    it('gives an entry that has no storedAt one, and keeps it having no reader', async () => {
+      const { files, store } = memoryStore();
+      files.set('sync/old.vcf', entry.raw);
+      files.set('sync/index.json', JSON.stringify({ old: { etag: 'e1', href: entry.href } }));
+      const state = createSyncState(store, 'sync');
+      await state.touch('old', 2000);
+      const touched = await state.get('old');
+      expect(touched).toEqual({ ...entry, storedAt: 2000 });
+      expect(touched).not.toHaveProperty('reader');
+    });
+
+    it('never makes a base older', async () => {
+      const { store } = memoryStore();
+      const state = createSyncState(store, 'sync');
+      await state.set('abc', { ...entry, storedAt: 3000 });
+      await state.touch('abc', 2000);
+      expect((await state.get('abc'))?.storedAt).toBe(3000);
+    });
+
+    it('does nothing for a uid without a base', async () => {
+      const { files, store } = memoryStore();
+      const state = createSyncState(store, 'sync');
+      await state.touch('nobody', 2000);
+      expect(files.size).toBe(0);
+      await state.set('abc', entry);
+      const before = files.get('sync/index.json');
+      await state.touch('nobody', 2000);
+      expect(files.get('sync/index.json')).toBe(before);
+      expect(await state.get('nobody')).toBeUndefined();
+    });
+
+    it('is serialized with set: no index entry is lost', async () => {
+      const { store, files } = asyncMemoryStore();
+      const state = createSyncState(store, 'sync');
+      await state.set('a', { ...entry, storedAt: 1000 });
+      await Promise.all([state.touch('a', 2000), state.set('b', entry), state.touch('a', 2500), state.set('c', entry)]);
+      const index = JSON.parse(files.get('sync/index.json')!);
+      expect(Object.keys(index).sort()).toEqual(['a', 'b', 'c']);
+      expect(index.a.storedAt).toBe(2500);
+    });
+  });
+
   it('a failed write does not block later writes', async () => {
     const { store, files } = memoryStore();
     let fail = true;

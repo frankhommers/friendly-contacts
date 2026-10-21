@@ -15,6 +15,7 @@ const labelled = vi.hoisted(() => ({
   notesWithRowProperties: vi.fn(),
   removeRowProperties: vi.fn(),
   findDateLabels: vi.fn(),
+  touchBases: vi.fn(),
 }));
 
 vi.mock('obsidian', async (importOriginal) => ({
@@ -75,6 +76,7 @@ async function addDate(label: string, property: string) {
 beforeEach(() => {
   notices.length = 0;
   Object.values(labelled).forEach((fn) => fn.mockReset());
+  labelled.touchBases.mockResolvedValue({ touched: 0, failed: [] });
   vi.spyOn(console, 'error').mockImplementation(() => {});
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -121,6 +123,64 @@ describe('adding a date with a label', () => {
     labelled.notesWithBases.mockResolvedValue([]);
     await addDate('Verkering', 'dating');
     expect(getSettings().friendly.mapping).toEqual(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 4242)));
+  });
+
+  describe('the sync bases the add considered', () => {
+    const withBase = { path: 'a.md', frontmatter: {}, base: { raw: DATED, reader: 2 }, baseOf: { source: 'radicale', uid: 'a' } };
+
+    it('are touched with the time the row was saved, after the notes were filled', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(4242);
+      await render(DEFAULT_MAPPING);
+      labelled.notesWithBases.mockResolvedValue([withBase]);
+      labelled.fillNotes.mockResolvedValue({ filled: 1, failed: [] });
+      await addDate('Verkering', 'dating');
+      expect(labelled.touchBases).toHaveBeenCalledTimes(1);
+      expect(labelled.touchBases).toHaveBeenCalledWith(app, [withBase], 4242);
+      expect(labelled.touchBases.mock.invocationCallOrder[0]).toBeGreaterThan(labelled.fillNotes.mock.invocationCallOrder[0]);
+      expect(notices).toEqual(['Added dating to 1 contact notes.']);
+    });
+
+    it('are touched when there was nothing to fill, too', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(4242);
+      await render(DEFAULT_MAPPING);
+      labelled.notesWithBases.mockResolvedValue([{ ...withBase, base: { raw: 'BEGIN:VCARD\r\nEND:VCARD', reader: 2 } }]);
+      await addDate('Verkering', 'dating');
+      expect(labelled.fillNotes).not.toHaveBeenCalled();
+      expect(labelled.touchBases).toHaveBeenCalledWith(app, expect.any(Array), 4242);
+      expect(getSettings().friendly.mapping).toContainEqual(expect.objectContaining({ property: 'dating', since: 4242 }));
+    });
+
+    it('are not touched when the notes could not be filled (the row is not saved)', async () => {
+      await render(DEFAULT_MAPPING);
+      labelled.notesWithBases.mockResolvedValue([withBase]);
+      labelled.fillNotes.mockResolvedValue({ filled: 0, failed: ['a.md'] });
+      await addDate('Verkering', 'dating');
+      expect(labelled.touchBases).not.toHaveBeenCalled();
+      expect(saves).toEqual([]);
+    });
+
+    it('a base that could not be updated is a notice, and the add stays', async () => {
+      await render(DEFAULT_MAPPING);
+      labelled.notesWithBases.mockResolvedValue([withBase]);
+      labelled.fillNotes.mockResolvedValue({ filled: 1, failed: [] });
+      labelled.touchBases.mockResolvedValue({ touched: 0, failed: ['a.md'] });
+      await addDate('Verkering', 'dating');
+      expect(notices).toContain('Some sync bases could not be updated; see console.');
+      expect(notices).not.toContainEqual(expect.stringContaining('Could not add'));
+      expect(getSettings().friendly.mapping).toContainEqual(expect.objectContaining({ property: 'dating' }));
+    });
+
+    it('touchBases rejecting is the same notice, and the add stays', async () => {
+      await render(DEFAULT_MAPPING);
+      labelled.notesWithBases.mockResolvedValue([withBase]);
+      labelled.fillNotes.mockResolvedValue({ filled: 1, failed: [] });
+      labelled.touchBases.mockRejectedValue(new Error('disk full'));
+      await addDate('Verkering', 'dating');
+      expect(notices).toContain('Some sync bases could not be updated; see console.');
+      expect(notices).not.toContainEqual(expect.stringContaining('Could not add'));
+      expect(console.error).toHaveBeenCalled();
+      expect(getSettings().friendly.mapping).toContainEqual(expect.objectContaining({ property: 'dating' }));
+    });
   });
 
   it('a failure reading the notes is a notice', async () => {

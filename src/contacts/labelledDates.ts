@@ -12,16 +12,19 @@ import { contactNotes, contactSyncState } from "src/contacts/obsidianNotes";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { sourceForExport } from "src/sync/sources";
 
+/** A note with its base, and where that base is stored (address book and UID), for `touchBases`. */
+export type NoteWithBase = FillNote & { baseOf?: { source: string; uid: string } };
+
 /**
  * Every contact note with its frontmatter and, when it has a UID, the base of the address book an export would use
  * (the note's `source:`, else the first book holding a base for the UID, else the default book).
  */
-export async function notesWithBases(app: App): Promise<FillNote[]> {
+export async function notesWithBases(app: App): Promise<NoteWithBase[]> {
   const settings = getSettings();
-  const notes: FillNote[] = [];
+  const notes: NoteWithBase[] = [];
   for (const { file, uid } of contactNotes(app)) {
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
-    const note: FillNote = { path: file.path, frontmatter };
+    const note: NoteWithBase = { path: file.path, frontmatter };
     if (uid !== undefined) {
       const noteSource = frontmatter.source;
       const source = await sourceForExport(
@@ -30,11 +33,40 @@ export async function notesWithBases(app: App): Promise<FillNote[]> {
         async (sourceId) => (await contactSyncState(sourceId, app).get(uid)) !== undefined,
       );
       const entry = source ? await contactSyncState(source.id, app).get(uid) : undefined;
-      if (entry) note.base = { raw: entry.raw, reader: readerOf(entry.reader) };
+      if (entry && source) {
+        note.base = { raw: entry.raw, reader: readerOf(entry.reader) };
+        note.baseOf = { source: source.id, uid };
+      }
     }
     notes.push(note);
   }
   return notes;
+}
+
+/**
+ * Marks the bases of `notes` as stored at `storedAt` or later (card, etag, href and reader stay), in the address book
+ * each was read from. Used after a date row with `since` = `storedAt` is added: from then on those bases agree with
+ * the row (see `rowsForBase`), whether the note was filled from them or not. One base failing does not stop the rest.
+ * `touched`: bases handled; `failed`: paths of the notes whose base could not be updated.
+ */
+export async function touchBases(
+  app: App,
+  notes: NoteWithBase[],
+  storedAt: number,
+): Promise<{ touched: number; failed: string[] }> {
+  let touched = 0;
+  const failed: string[] = [];
+  for (const { path, baseOf } of notes) {
+    if (!baseOf) continue;
+    try {
+      await contactSyncState(baseOf.source, app).touch(baseOf.uid, storedAt);
+      touched++;
+    } catch (error) {
+      failed.push(path);
+      console.error(`Friendly Contacts: could not update the sync base of ${path}`, error);
+    }
+  }
+  return { touched, failed };
 }
 
 /** The date labels on the cards as they were at each contact's last Sync that no row has yet. */

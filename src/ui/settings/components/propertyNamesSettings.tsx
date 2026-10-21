@@ -9,7 +9,7 @@ import {
   withLabelledDateRows,
 } from "src/contacts/friendly/dateLabels";
 import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
-import { fillNotes, notesWithBases, notesWithRowProperties, removeRowProperties } from "src/contacts/labelledDates";
+import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -25,6 +25,8 @@ const reportFailure = (action: "add" | "remove", property: string, error: unknow
   console.error(`Friendly Contacts: could not ${action} ${property}`, error);
   new Notice(`Could not ${action} ${property}: ${error instanceof Error ? error.message : String(error)}`);
 };
+
+const BASES_NOT_UPDATED = "Some sync bases could not be updated; see console.";
 
 export function PropertyNamesSettings({ app }: { app: App }) {
   const [rows, setRows] = React.useState<MappingRow[]>(() => getSettings().friendly.mapping);
@@ -133,6 +135,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
    * were read or the confirmation was open is kept, not undone. The row is saved with the time it is added
    * (`since`): a sync base stored before then, on any device, is read without it (see `rowsForBase`).
    * A failure (reading the notes, filling, saving) is a notice, never an unhandled rejection.
+   * Once the row is saved, every base this add considered (filled or not) is marked as stored at `since` or later: on
+   * this device they agree with the row, so a note filled from a base is not read against the base without the row.
+   * That is best effort: a failure is logged and a notice, and the add stays.
    */
   const addLabelledDate = async (label: string, property: string) => {
     const row = labelledDateRow(readableLabel(label), property);
@@ -142,21 +147,30 @@ export function PropertyNamesSettings({ app }: { app: App }) {
       return;
     }
     setErrors([]);
-    /** Saves the row on the mapping as saved now; false (errors shown, nothing saved) when it no longer fits. */
-    const saveAdded = async (): Promise<boolean> => {
-      const now = mappingWithLabelledDate(saved.current, { ...row, since: Date.now() });
+    /** Saves the row on the mapping as saved now, then touches the bases; false (errors shown, nothing saved) when it no longer fits. */
+    const saveAdded = async (notes: NoteWithBase[]): Promise<boolean> => {
+      const since = Date.now();
+      const now = mappingWithLabelledDate(saved.current, { ...row, since });
       if ("errors" in now) {
         setErrors(now.errors);
         new Notice(`Not added: the property names changed in the meantime, see the errors in the settings.`);
         return false;
       }
       await saveRows(now.rows);
+      try {
+        const { failed } = await touchBases(app, notes, since);
+        if (failed.length > 0) new Notice(BASES_NOT_UPDATED);
+      } catch (error) {
+        console.error(`Friendly Contacts: could not update the sync bases after adding ${row.property}`, error);
+        new Notice(BASES_NOT_UPDATED);
+      }
       return true;
     };
     try {
-      const fills = planDateFill(await notesWithBases(app), first.rows, row);
+      const notes = await notesWithBases(app);
+      const fills = planDateFill(notes, first.rows, row);
       if (fills.length === 0) {
-        await saveAdded();
+        await saveAdded(notes);
         return;
       }
       const n = fills.length;
@@ -173,7 +187,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                 new Notice(`Not added: ${failed.length} contact notes could not be filled, see console.`);
                 return;
               }
-              if (await saveAdded()) new Notice(`Added ${row.property} to ${n} contact notes.`);
+              if (await saveAdded(notes)) new Notice(`Added ${row.property} to ${n} contact notes.`);
             } catch (error) {
               reportFailure("add", row.property, error);
             }

@@ -122,6 +122,10 @@ function memoryState(initial: Record<string, SyncStateEntry> = {}) {
       sets.push(uid);
       entries.set(cleanUid(uid), entry);
     },
+    touch: async (uid, storedAt) => {
+      const entry = entries.get(cleanUid(uid));
+      if (entry) entries.set(cleanUid(uid), { ...entry, storedAt: Math.max(entry.storedAt ?? 0, storedAt) });
+    },
     remove: async (uid) => {
       entries.delete(cleanUid(uid));
     },
@@ -319,6 +323,24 @@ describe('prepareSync', () => {
       const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 3000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
       expect(t.sets).toEqual([]);
+    });
+
+    describe('on the device that added the row', () => {
+      // The note was filled from this base (the date is the phone's), then the row was saved with since 2000.
+      const filled = () => ({ ...note(), dating: '2012-05-01' });
+      const SERVER_WITHOUT = V1;
+
+      it('a base left as it was reads the phone\'s deletion as the note\'s addition (the problem)', async () => {
+        const t = setup({ server: SERVER_WITHOUT, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: filled() });
+        expect(changedRows(await reviewOf(t))).toEqual([['dating', 'local']]);
+      });
+
+      it('a touched base keeps the phone\'s deletion: the server is preselected', async () => {
+        const t = setup({ server: SERVER_WITHOUT, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: filled() });
+        await t.deps.state.touch(UID, 2000);
+        expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: 'old', href: HREF, reader: 2, storedAt: 2000 });
+        expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
+      });
     });
 
     it('a row added before the base was stored: the date was removed in the note', async () => {

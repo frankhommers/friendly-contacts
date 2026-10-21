@@ -23,6 +23,11 @@ export interface SyncStateEntry {
 export interface SyncState {
   get(uid: string): Promise<SyncStateEntry | undefined>;
   set(uid: string, entry: SyncStateEntry): Promise<void>;
+  /**
+   * Moves `storedAt` of the base up to `storedAt` (never back), leaving the card, etag, href and reader as they are.
+   * Does nothing when there is no base for `uid`.
+   */
+  touch(uid: string, storedAt: number): Promise<void>;
   remove(uid: string): Promise<void>;
 }
 
@@ -84,6 +89,15 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
           ...(entry.reader === undefined ? {} : { reader: entry.reader }),
           storedAt: entry.storedAt ?? Date.now(),
         };
+        await writeIndex(index);
+      });
+    },
+    touch(uid, storedAt) {
+      return serialized(async () => {
+        const index = await readIndex();
+        const meta = index[cleanUid(uid)];
+        if (!meta) return;
+        index[cleanUid(uid)] = { ...meta, storedAt: Math.max(meta.storedAt ?? 0, storedAt) };
         await writeIndex(index);
       });
     },

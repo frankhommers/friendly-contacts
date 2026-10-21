@@ -63,6 +63,7 @@ import {
   fillNotes,
   findDateLabels,
   notesWithBases,
+  touchBases,
   notesWithRowProperties,
   removeRowProperties,
 } from "src/contacts/labelledDates";
@@ -87,6 +88,18 @@ const disk = new Map<string, string>([
   ["plugin/sync-state/radicale/anna.vcf", ANNA_CARD],
 ]);
 
+/** The adapter every app shares: the sync state of a folder is cached with the first adapter it was made with. */
+const failWrites = { on: false };
+const adapter = {
+  exists: async (path: string) => disk.has(path) || [...disk.keys()].some((key) => key.startsWith(`${path}/`)),
+  read: async (path: string) => disk.get(path)!,
+  write: async (path: string, data: string) => {
+    if (failWrites.on) throw new Error("disk full");
+    disk.set(path, data);
+  },
+  mkdir: async () => {},
+};
+
 function fakeApp() {
   const folder = new h.TFolder("Contacts");
   const note = (path: string, frontmatter: Record<string, unknown>): File => {
@@ -106,10 +119,7 @@ function fakeApp() {
   const app = {
     vault: {
       getAbstractFileByPath: (path: string) => nodes.get(path) ?? null,
-      adapter: {
-        exists: async (path: string) => disk.has(path),
-        read: async (path: string) => disk.get(path)!,
-      },
+      adapter,
     },
     metadataCache: {
       getFileCache: (file: File) => ({ frontmatter: file.frontmatter }),
@@ -132,7 +142,7 @@ describe("dates with a label in the notes", () => {
   it("gathers every contact note with its base and the reader it was stored with", async () => {
     const notes = await notesWithBases(vault.app);
     expect(notes).toEqual([
-      { path: "Contacts/Anna.md", frontmatter: { name: "Anna", uid: "anna" }, base: { raw: ANNA_CARD, reader: 2 } },
+      { path: "Contacts/Anna.md", frontmatter: { name: "Anna", uid: "anna" }, base: { raw: ANNA_CARD, reader: 2 }, baseOf: { source: "radicale", uid: "anna" } },
       { path: "Contacts/Bob.md", frontmatter: { name: "Bob", uid: "bob" } },
     ]);
   });
@@ -140,6 +150,48 @@ describe("dates with a label in the notes", () => {
   it("finds the labels on the last-synced cards that have no row", async () => {
     expect(await findDateLabels(vault.app, DEFAULT_MAPPING)).toEqual([{ label: "Verkering", contacts: 1 }]);
     expect(await findDateLabels(vault.app, [...DEFAULT_MAPPING, datingRow])).toEqual([]);
+  });
+
+  describe("touchBases", () => {
+    const indexOf = (source: string) => JSON.parse(disk.get(`plugin/sync-state/${source}/index.json`)!);
+    const noteOf = (uid: string, source: string) => ({
+      path: `Contacts/${uid}.md`,
+      frontmatter: {},
+      base: { raw: ANNA_CARD, reader: 2 as const },
+      baseOf: { source, uid },
+    });
+
+    it("moves the storedAt of the bases of the notes it is given, in the source they were read from", async () => {
+      disk.set("plugin/sync-state/other/index.json", JSON.stringify({ anna: { etag: "9", href: "/o.vcf", storedAt: 10 }, bob: { etag: "8", href: "/b.vcf" } }));
+      disk.set("plugin/sync-state/other/anna.vcf", ANNA_CARD);
+      disk.set("plugin/sync-state/other/bob.vcf", ANNA_CARD);
+      const notes = await notesWithBases(vault.app);
+      expect(await touchBases(vault.app, [...notes, noteOf("bob", "other")], 5000)).toEqual({ touched: 2, failed: [] });
+      expect(indexOf("radicale").anna).toEqual({ etag: "1", href: "/anna.vcf", reader: 2, storedAt: 5000 });
+      expect(indexOf("other").anna.storedAt).toBe(10);
+      expect(indexOf("other").bob).toEqual({ etag: "8", href: "/b.vcf", storedAt: 5000 });
+      expect(disk.get("plugin/sync-state/radicale/anna.vcf")).toBe(ANNA_CARD);
+    });
+
+    it("skips notes without a base", async () => {
+      const before = disk.get("plugin/sync-state/radicale/index.json");
+      expect(await touchBases(vault.app, [{ path: "Contacts/Bob.md", frontmatter: {} }], 6000)).toEqual({ touched: 0, failed: [] });
+      expect(disk.get("plugin/sync-state/radicale/index.json")).toBe(before);
+    });
+
+    it("reports the notes whose base could not be touched, and goes on", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      failWrites.on = true;
+      let result;
+      try {
+        result = await touchBases(vault.app, [noteOf("anna", "radicale"), noteOf("bob", "other")], 7000);
+      } finally {
+        failWrites.on = false;
+      }
+      expect(result).toEqual({ touched: 0, failed: ["Contacts/anna.md", "Contacts/bob.md"] });
+      expect(spy).toHaveBeenCalledTimes(2);
+      spy.mockRestore();
+    });
   });
 
   it("fills only properties that are still empty when the note is written", async () => {

@@ -89,6 +89,7 @@ function fakeBook(id: string, name: string) {
   const state: SyncState = {
     get: async (uid) => entries.get(cleanUid(uid)),
     set: async (uid, entry) => void entries.set(cleanUid(uid), entry),
+    touch: async () => {},
     remove: async (uid) => void entries.delete(cleanUid(uid)),
   };
   const source: Source = { id, name, addressBookUrl: `https://dav.example${prefix}`, authType: 'basic', authKey: 'k', enabled: true };

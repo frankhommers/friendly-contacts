@@ -66,6 +66,7 @@ function memoryState(name: string, calls: Call[], initial: Record<string, SyncSt
       calls.push(`${name} base set`);
       entries.set(cleanUid(uid), entry);
     },
+    touch: async () => {},
     remove: async (uid) => {
       calls.push(`${name} base remove`);
       entries.delete(cleanUid(uid));
