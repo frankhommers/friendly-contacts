@@ -1,3 +1,4 @@
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
@@ -333,5 +334,46 @@ describe('reading every form', () => {
     expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Other>!$_')).props).toEqual({});
     expect(translate(card('X-ABDATE:2012-06-21')).props).toEqual({});
     expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:Wedding')).props).toEqual({});
+  });
+});
+
+describe('labelled date rows', () => {
+  const rows = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating'));
+  const read = (text: string) => toFriendly(parseCard(text), rows, ctx).props;
+  const card4 = (...body: string[]) => ['BEGIN:VCARD', 'VERSION:4.0', ...body, 'END:VCARD'].join('\r\n');
+
+  it('reads a group with the row\'s label on 3.0 and 4.0', () => {
+    const body = ['item3.X-ABDATE:2012-05-01', 'item3.X-ABLabel:Verkering'];
+    expect(read(card(...body))).toEqual({ dating: '2012-05-01' });
+    expect(read(card4(...body))).toEqual({ dating: '2012-05-01' });
+  });
+
+  it('reads the label in any case and in the Apple form', () => {
+    expect(read(card('item1.X-ABDATE:2012-05-01', 'item1.X-ABLabel:verkering')).dating).toBe('2012-05-01');
+    expect(read(card('item1.X-ABDATE:2012-05-01', 'item1.X-ABLabel:_$!<Verkering>!$_')).dating).toBe('2012-05-01');
+  });
+
+  it('still reads the anniversary label as anniversary', () => {
+    expect(read(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Anniversary>!$_'))).toEqual({
+      anniversary: '2012-06-21',
+    });
+  });
+
+  it('reads an unlabelled X-ABDATE as nothing', () => {
+    expect(read(card('X-ABDATE:2012-05-01'))).toEqual({});
+    expect(read(card('item1.X-ABDATE:2012-05-01'))).toEqual({});
+  });
+
+  it('numbers several groups with one label', () => {
+    expect(
+      read(
+        card(
+          'item1.X-ABDATE:2012-05-01',
+          'item1.X-ABLabel:Verkering',
+          'item2.X-ABDATE:2013-06-02',
+          'item2.X-ABLabel:Verkering',
+        ),
+      ),
+    ).toEqual({ dating: '2012-05-01', 'dating-2': '2013-06-02' });
   });
 });

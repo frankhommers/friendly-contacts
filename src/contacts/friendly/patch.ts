@@ -157,8 +157,9 @@ function patchDate(s: State, row: FieldRow, prov: Provenance | undefined, before
   }
   const written = writeDate(after, line, cardVersion(s));
   if (!line) {
-    // vCard 3.0 has no ANNIVERSARY: Apple and DAVx5 write a labelled X-ABDATE. Existing lines keep their form.
-    if (row.appleDateLabel !== undefined && !isV4(s)) {
+    // vCard 3.0 has no ANNIVERSARY: Apple and DAVx5 write a labelled X-ABDATE. A row that writes X-ABDATE (a date
+    // with its own label) does so on 4.0 too, or the label is lost. Existing lines keep their form.
+    if (row.appleDateLabel !== undefined && (!isV4(s) || parseWriteKey(row.write).name === 'X-ABDATE')) {
       s.added.push(...labelled(s, 'X-ABDATE', written.params, written.value, row.appleDateLabel));
       s.changed = true;
     } else addLine(s, row.write, written.value, written.params);

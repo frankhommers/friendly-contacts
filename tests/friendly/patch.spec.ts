@@ -1,3 +1,4 @@
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard, serializeCard, serializeLine, VCardLine } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { needsLegacyRewrite } from 'src/contacts/friendly/patch';
@@ -776,5 +777,70 @@ describe('relationships and anniversaries in the card\'s own form', () => {
       const lines = card('FN:X', 'RELATED;TYPE=child:urn:uuid:nobody', 'RELATED;TYPE=agent;VALUE=text:Bond');
       expect(go(lines, read(lines).props, true).lines).toEqual(lines);
     });
+  });
+});
+
+describe('patch labelled dates', () => {
+  const rows = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating'));
+  const go = (lines: VCardLine[], after: Record<string, FriendlyValue>) =>
+    patch(lines, toFriendly(lines, rows, ctx), after, rows, ctx);
+  const read = (lines: VCardLine[]) => toFriendly(lines, rows, ctx).props;
+  const existing = ['FN:X', 'item1.X-ABDATE:2000-01-01', 'item1.X-ABLabel:Other', 'item7.EMAIL:a@b.nl', 'item7.X-ABLabel:Home'];
+
+  it('3.0: a new date is a labelled X-ABDATE group above every item number', () => {
+    const lines = card(...existing);
+    const result = go(lines, { ...read(lines), dating: '2012-05-01' });
+    expect(texts(result.lines).slice(lines.length)).toEqual(['item8.X-ABDATE:2012-05-01', 'item8.X-ABLabel:Verkering']);
+    result.lines.slice(0, lines.length).forEach((line, i) => expect(line).toBe(lines[i]));
+    expect(result.lines[0].value).toBe('3.0');
+    expect(read(result.lines).dating).toBe('2012-05-01');
+  });
+
+  it('4.0: a new date is a labelled X-ABDATE group in the 4.0 form', () => {
+    const lines = card4(...existing);
+    const result = go(lines, { ...read(lines), dating: '2012-05-01' });
+    expect(texts(result.lines).slice(lines.length)).toEqual(['item8.X-ABDATE:20120501', 'item8.X-ABLabel:Verkering']);
+    result.lines.slice(0, lines.length).forEach((line, i) => expect(line).toBe(lines[i]));
+    expect(result.lines[0].value).toBe('4.0');
+    expect(read(result.lines).dating).toBe('2012-05-01');
+  });
+
+  it('writes a year-less date in the form of the version', () => {
+    expect(texts(go(card('FN:X'), { dating: '--05-01' }).lines).slice(2)).toEqual([
+      'item1.X-ABDATE;X-APPLE-OMIT-YEAR=1604:1604-05-01',
+      'item1.X-ABLabel:Verkering',
+    ]);
+    expect(texts(go(card4('FN:X'), { dating: '--05-01' }).lines).slice(2)).toEqual([
+      'item1.X-ABDATE:--0501',
+      'item1.X-ABLabel:Verkering',
+    ]);
+  });
+
+  it('4.0: a new anniversary is still ANNIVERSARY', () => {
+    expect(texts(go(card4('FN:X'), { anniversary: '2012-06-21' }).lines).slice(2)).toEqual(['ANNIVERSARY:20120621']);
+  });
+
+  it('changes a date in place and removes it with its label', () => {
+    const lines = card('FN:X', 'item3.X-ABDATE:2012-05-01', 'item3.X-ABLabel:Verkering');
+    const changed = go(lines, { dating: '2013-01-02' });
+    expect(texts(changed.lines).slice(2)).toEqual(['item3.X-ABDATE:2013-01-02', 'item3.X-ABLabel:Verkering']);
+    expect(changed.lines[3]).toBe(lines[3]);
+    expect(texts(go(lines, { dating: '' }).lines).filter((l) => l.startsWith('item3.'))).toEqual([]);
+  });
+
+  it('removing dating-2 leaves the first group intact', () => {
+    const lines = card(
+      'FN:X',
+      'item1.X-ABDATE:2012-05-01',
+      'item1.X-ABLabel:Verkering',
+      'item2.X-ABDATE:2013-06-02',
+      'item2.X-ABLabel:Verkering',
+    );
+    const props = read(lines);
+    expect(props['dating-2']).toBe('2013-06-02');
+    const result = go(lines, { ...props, 'dating-2': '' });
+    expect(texts(result.lines).slice(2)).toEqual(['item1.X-ABDATE:2012-05-01', 'item1.X-ABLabel:Verkering']);
+    expect(result.lines[2]).toBe(lines[2]);
+    expect(result.lines[3]).toBe(lines[3]);
   });
 });
