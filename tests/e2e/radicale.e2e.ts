@@ -1016,23 +1016,26 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   it.each([
     ['3.0', '2012-05-01', '2020-02-02', '2020-02-02'],
     ['4.0', '20120501', '2020-02-02', '20200202'],
-  ])('18. %s: a date with a label: adding its row never removes it, and a new one lands with its label', async (version, onCard, newValue, written) => {
+  ])('20. %s: a date with a label: adding its row never removes it, and a new one lands with its label', async (version, onCard, newValue, written) => {
     const uid = `C0FFEE00-0000-4000-8000-00000000020${version === '3.0' ? '3' : '4'}`;
     const href = `${BOOK}labelled-date-${version}.vcf`;
-    await putCard(
-      href,
+    const dated = (id: string, first: string, last: string) =>
       [
         'BEGIN:VCARD',
         `VERSION:${version}`,
-        `UID:${uid}`,
-        'FN:Dora Vast',
-        'N:Vast;Dora;;;',
+        `UID:${id}`,
+        `FN:${first} ${last}`,
+        `N:${last};${first};;;`,
         `item1.X-ABDATE:${onCard}`,
         'item1.X-ABLabel:Verkering',
         'END:VCARD',
         '',
-      ].join('\r\n'),
-    );
+      ].join('\r\n');
+    await putCard(href, dated(uid, 'Dora', 'Vast'));
+    // A second contact whose note is not filled: its base is another device's, older than the row.
+    const evaUid = `C0FFEE00-0000-4000-8000-0000000002${version === '3.0' ? '13' : '14'}`;
+    const evaHref = `${BOOK}labelled-date-unfilled-${version}.vcf`;
+    await putCard(evaHref, dated(evaUid, 'Eva', 'Vast'));
     try {
       // Without a row for the label the date is not read, and Sync leaves it alone.
       const dora = await importCard(href);
@@ -1040,9 +1043,15 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       expect(await sync(dora)).toBe('unchanged');
       expect(pushes).toEqual([]);
       const start = unfolded(await serverCard(href));
+      const eva = await importCard(evaHref);
+      expect(eva.frontmatter.dating).toBeUndefined();
+      const evaBase = await bookList[0].state.get(cleanUid(evaUid));
+      expect(evaBase?.storedAt).toEqual(expect.any(Number));
+      const evaStart = unfolded(await serverCard(evaHref));
 
-      // Add the row, then fill the note from its base the way the settings screen does.
-      const row = labelledDateRow('Verkering', 'dating');
+      // Add the row (later than both bases), then fill the note from its base the way the settings screen does.
+      const since = (evaBase?.storedAt ?? 0) + 1;
+      const row = labelledDateRow('Verkering', 'dating', since);
       mapping = insertLabelledDateRow(DEFAULT_MAPPING, row);
       const stored = await bookList[0].state.get(cleanUid(uid));
       if (!stored) throw new Error('no base stored');
@@ -1055,10 +1064,18 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       Object.assign(dora.frontmatter, plan[0].set);
       expect(dora.frontmatter.dating).toBe('2012-05-01');
 
-      // The anti-goal: the card keeps both lines, byte for byte.
+      // The anti-goal: the card keeps both lines, byte for byte. The base, older than the row, is stored again.
       expect(await sync(dora)).toBe('unchanged');
       expect(pushes).toEqual([]);
       expect(unfolded(await serverCard(href))).toEqual(start);
+      expect((await bookList[0].state.get(cleanUid(uid)))?.storedAt).toBeGreaterThanOrEqual(since);
+
+      // The anti-goal on a device whose note was not filled: the date is the card's, pulled into the note, no PUT.
+      expect(await sync(eva)).toBe('pulled');
+      expect(pushes).toEqual([]);
+      expect(unfolded(await serverCard(evaHref))).toEqual(evaStart);
+      expect(eva.frontmatter.dating).toBe('2012-05-01');
+      expect(await sync(eva)).toBe('unchanged');
 
       // A second date with the label lands as a new labelled pair; nothing else changes.
       dora.frontmatter['dating-2'] = newValue;
