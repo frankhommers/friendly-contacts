@@ -2,6 +2,7 @@ import { parseCard, serializeCard, serializeLine } from 'src/contacts/friendly/l
 import { convertFrontmatter } from 'src/contacts/convertNotes';
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
+import { cardNoteLinks, NoteLinkOptions } from 'src/contacts/friendly/noteLinks';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -184,6 +185,8 @@ function setup(
     /** The mapping Sync reads with; the default mapping when absent. */
     rows?: MappingRow[];
     ctx?: RelationContext;
+    /** Links to Obsidian notes on cards; absent: off, as before the setting existed. */
+    noteLinks?: NoteLinkOptions;
   } = {},
 ) {
   const fake = fakeAdapter();
@@ -203,6 +206,7 @@ function setup(
     readOnlyCtx: opts.ctx ?? ctx,
     notify: (msg) => notices.push(msg),
   };
+  if (opts.noteLinks) deps.noteLinks = opts.noteLinks;
   const prepare = () => prepareSync(io, deps, { sourceId: 'radicale' });
   /** Prepare, then (when there is a review) apply with the preselections plus the given choices. */
   async function sync(choices: Record<string, Choice> = {}, applyOpts: { rename?: string; sourceName: string } = OPTS) {
@@ -1318,5 +1322,208 @@ describe('locateCard', () => {
       { sourceId: 'c', message: 'HTTP 500' },
       { sourceId: 'd', message: 'offline' },
     ]);
+  });
+});
+
+describe('links to Obsidian notes on cards', () => {
+  const SEM = 'sem-uid';
+  const ANNA = 'anna-uid';
+  const LINKS: NoteLinkOptions = { enabled: true, vault: 'Notes', ownVaults: ['Notes'] };
+  const SEM_URL = 'obsidian://open?vault=Notes&file=Contacts%2FSem';
+  const ANNA_URL = 'obsidian://open?vault=Notes&file=Contacts%2FAnna';
+  const MAC_URL = 'obsidian://open?vault=Mac%20Notes&file=Contacts%2FSem';
+
+  /** Sem, Anna and Jan (this contact) with their notes; a test may move a note. */
+  function people() {
+    const notes = new Map<string, { path: string; name: string }>([
+      ['Sem', { path: 'Contacts/Sem.md', name: 'Sem de Vries' }],
+      ['Anna', { path: 'Contacts/Anna.md', name: 'Anna Smit' }],
+      ['Jan', { path: 'Contacts/Jan.md', name: 'Jan de Vries' }],
+    ]);
+    const uids: Record<string, string> = { Sem: SEM, Anna: ANNA, Jan: UID };
+    const byUid = (uid: string) => Object.keys(uids).find((key) => cleanUid(uids[key]) === cleanUid(uid));
+    const ctx: RelationContext = {
+      uidToName: byUid,
+      displayName: (uid) => {
+        const key = byUid(uid);
+        return key === undefined ? undefined : notes.get(key)?.name;
+      },
+      resolveLink: (name) => {
+        const key = Object.keys(uids).find((k) => k === name || notes.get(k)?.name === name);
+        return key === undefined ? { text: name } : { uid: uids[key] };
+      },
+      contactNote: (target) => notes.get(target),
+    };
+    return { ctx, notes };
+  }
+
+  const withLines = (raw: string, ...lines: string[]) => edit(raw, 'TITLE:Baker\r\n', `TITLE:Baker\r\n${lines.map((l) => `${l}\r\n`).join('')}`);
+  const SPOUSE = [`item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem de Vries`, 'item9.X-ABLabel:_$!<Spouse>!$_'];
+  const link = (url: string, label = 'Sem de Vries', n = 10) => [`item${n}.URL:${url}`, `item${n}.X-ABLabel:${label}`];
+  /** The card with the spouse line and no links. */
+  const CARD = withLines(V1, ...SPOUSE);
+  /** The card with the spouse line and Sem's link. */
+  const LINKED = withLines(V1, ...SPOUSE, ...link(SEM_URL));
+  const local = (raw = CARD) => ({ ...toFriendly(parseCard(raw), DEFAULT_MAPPING, people().ctx).props, spouse: '[[Sem]]' });
+  const links = (raw: string) => cardNoteLinks(parseCard(raw), ['Notes', 'Mac Notes']).map(({ url, label }) => [url, label]);
+  const withoutRev = (raw: string) => lineTexts(raw).filter((l) => !l.startsWith('REV:'));
+  const noLinkInNote = (t: ReturnType<typeof setup>) => {
+    expect(t.note.frontmatter.website).toBe('https://jan.example.nl');
+    expect(JSON.stringify(t.note.frontmatter)).not.toContain('obsidian://');
+  };
+
+  it('a card without links: a review with no changed row, Apply adds only the link lines, then up to date', async () => {
+    const t = setup({ server: CARD, base: CARD, reader: 2, local: local(), ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(prepared.rewriteRelations).toBe(false);
+    expect(changedRows(prepared)).toEqual([]);
+
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(withoutRev(raw).filter((l) => !withoutRev(CARD).includes(l))).toEqual([`item10.URL:${SEM_URL}`, 'item10.X-ABLabel:Sem de Vries']);
+    expect(withoutRev(CARD).filter((l) => !withoutRev(raw).includes(l))).toEqual([]);
+    expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
+    noLinkInNote(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('the card holds the link and the base (stored by another device) does not: up to date', async () => {
+    const t = setup({ server: LINKED, base: CARD, reader: 2, local: local(), ctx: people().ctx, noteLinks: LINKS });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('the base holds a link with a former vault name and the card the current one: up to date', async () => {
+    const base = withLines(V1, ...SPOUSE, ...link(MAC_URL));
+    const t = setup({ server: LINKED, base, reader: 2, local: local(), ctx: people().ctx, noteLinks: { ...LINKS, ownVaults: ['Notes', 'Mac Notes'] } });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('the card holds a link with a former vault name: replaced, never read as website', async () => {
+    const server = withLines(V1, ...SPOUSE, ...link(MAC_URL));
+    const t = setup({ server, base: server, reader: 2, local: local(), ctx: people().ctx, noteLinks: { ...LINKS, ownVaults: ['Notes', 'Mac Notes'] } });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(links(raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+    expect(raw).not.toContain('Mac%20Notes');
+    noLinkInNote(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('the linked note moved into a folder: one review, Apply changes the URL, then up to date', async () => {
+    const { ctx, notes } = people();
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: local(), ctx, noteLinks: LINKS });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    notes.set('Sem', { path: 'Contacts/Sem/index.md', name: 'Sem de Vries' });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([['obsidian://open?vault=Notes&file=Contacts%2FSem%2Findex', 'Sem de Vries']]);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('the setting turned off: the own link is removed at the next Sync, then up to date', async () => {
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: local(), ctx: people().ctx, noteLinks: { ...LINKS, enabled: false } });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(links(raw)).toEqual([]);
+    expect(withoutRev(raw)).toEqual(withoutRev(CARD));
+    noLinkInNote(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  const NO_OWN_VAULTS: NoteLinkOptions = { enabled: false, vault: '', ownVaults: [] };
+  for (const [what, noteLinks] of [
+    ['no link options', undefined],
+    ['no own vaults', NO_OWN_VAULTS],
+  ] as const) {
+    it(`${what}: the link reads as a website, exactly as before, and nothing is removed`, async () => {
+      const { ctx } = people();
+      const t = setup({ server: LINKED, base: CARD, reader: 2, local: local(), ctx, noteLinks });
+      // As read before the links existed: the link is one of the card's websites.
+      const today = toFriendly(parseCard(LINKED), DEFAULT_MAPPING, ctx).props;
+      const websites = Object.fromEntries(Object.entries(today).filter(([k]) => k.startsWith('website')));
+      expect(Object.values(websites)).toContain(SEM_URL);
+      const prepared = await reviewOf(t);
+      expect(prepared.rewriteLinks).toBe(false);
+      expect(prepared.server!.friendly.props).toMatchObject(websites);
+      expect(changedRows(prepared).map(([property]) => property)).toEqual(Object.keys(websites));
+      expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(LINKED);
+      expect(t.note.frontmatter).toMatchObject(websites);
+    });
+  }
+
+  it('the owner\'s own obsidian:// website is a plain URL line, kept once, and the next Sync is up to date', async () => {
+    const OWN = 'obsidian://open?vault=Notes&file=Projects%2FFoo';
+    const server = edit(LINKED, 'item2.URL;type=pref:https://jan.example.nl\r\nitem2.X-ABLabel:_$!<HomePage>!$_\r\n', '');
+    const t = setup({ server, base: server, reader: 2, local: { ...local(server), website: OWN }, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(changedRows(prepared)).toEqual([['website', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const own = (raw: string) => lineTexts(raw).filter((l) => l.includes('Projects%2FFoo'));
+    expect(own(t.cards.get(HREF)!.raw)).toEqual([`URL:${OWN}`]);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(own(t.cards.get(HREF)!.raw)).toEqual([`URL:${OWN}`]);
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+    expect(t.note.frontmatter.website).toBe(OWN);
+  });
+
+  it('a relationship added on the phone: Apply pulls it and the card gets its link in the same Apply', async () => {
+    const server = withLines(V1, ...SPOUSE, ...link(SEM_URL), 'item11.X-ABRELATEDNAMES:Anna Smit', 'item11.X-ABLabel:_$!<Partner>!$_');
+    const t = setup({ server, base: LINKED, reader: 2, local: local(), ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(changedRows(prepared)).toEqual([['partner', 'server']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'both' });
+    expect(t.note.frontmatter.partner).toBe('[[Anna]]');
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([
+      [SEM_URL, 'Sem de Vries'],
+      [ANNA_URL, 'Anna Smit'],
+    ]);
+    noLinkInNote(t);
+  });
+
+  it('a relationship removed from the note: Apply removes its line and its link, then up to date', async () => {
+    const { spouse: _spouse, ...noSpouse } = local();
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: noSpouse, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['spouse', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(raw).not.toContain('X-ABRELATEDNAMES');
+    expect(raw).not.toContain('obsidian://');
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('a new card is created with the link lines', async () => {
+    const t = setup({ local: { name: 'Jan de Vries', uid: UID, spouse: '[[Sem]]' }, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'created' });
+    const raw = [...t.cards.values()][0].raw;
+    expect(links(raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+    expect(JSON.stringify(t.note.frontmatter)).not.toContain('obsidian://');
+  });
+
+  it('no link to the contact\'s own note', async () => {
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: { ...local(), friends: ['[[Jan]]'] }, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
   });
 });

@@ -6,6 +6,7 @@
 
 import { MappingRow } from '../contacts/friendly/mapping';
 import { coerceNoteProps } from '../contacts/friendly/merge';
+import type { NoteLinkOptions } from '../contacts/friendly/noteLinks';
 import { RelationContext } from '../contacts/friendly/relations';
 import type { Source } from '../settings/settings.d';
 import type { AdapterInterface } from './adapters/adapterInterface';
@@ -18,6 +19,9 @@ import type { SyncState } from './syncState';
 /** The info line of a review that rewrites the card's old relationship lines (exact text from the spec). */
 export const REWRITE_LINE = 'Relationships on this card are rewritten in the form phones understand.';
 
+/** The info line of a review that puts the card's links to Obsidian notes right (exact text from the spec). */
+export const LINKS_LINE = 'Links to Obsidian notes on this card are updated.';
+
 /** How often the review reopens after the note or the card changed underneath, before Sync gives up. */
 export const MAX_REOPENS = 3;
 
@@ -28,6 +32,8 @@ export interface ReviewRequest {
   moveLine?: string;
   /** Shown when Apply rewrites relationship lines of a 3.0 card; the screen may have no rows besides it. */
   rewriteLine?: string;
+  /** Shown when Apply updates the card's links to Obsidian notes; the screen may have no rows besides it. */
+  linksLine?: string;
   /** The address book whose card the server column shows: the target, or for a move the book it comes from. */
   serverName: string;
   /** Lines shown above the table (an address book whose contact list could not be read). */
@@ -91,6 +97,8 @@ export interface SyncFlowDeps {
   renamesFolder?: boolean;
   /** The vCard version a card created in this book gets; asked only when creating (absent: 4.0). */
   newCardVersion?(source: Source): Promise<'3.0' | '4.0'>;
+  /** Links to Obsidian notes on cards (see `SyncDeps.noteLinks`); absent: links are neither read nor written. */
+  noteLinks?: NoteLinkOptions;
 }
 
 export type FlowResult =
@@ -226,8 +234,9 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       readOnlyCtx: contexts.readOnlyCtx,
       notify: deps.notify,
     };
-    const { newCardVersion } = deps;
+    const { newCardVersion, noteLinks } = deps;
     if (newCardVersion) syncDeps.newCardVersion = () => newCardVersion(target);
+    if (noteLinks) syncDeps.noteLinks = noteLinks;
     const moveFrom = move && { from: move.location, adapter: deps.adapterFor(move.from), state: deps.stateFor(move.from.id) };
     const prepared = await prepareSync(deps.note, syncDeps, { sourceId: target.id, move: moveFrom, frontmatter });
     if (prepared.kind === 'failed') {
@@ -260,6 +269,7 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       title: review.server ? deps.name : `New card in ${target.name}`,
       moveLine: move ? `Address book: ${move.from.name} -> ${target.name}` : undefined,
       rewriteLine: review.rewriteRelations ? REWRITE_LINE : undefined,
+      linksLine: review.rewriteLinks ? LINKS_LINE : undefined,
       serverName: (move?.from ?? target).name,
       warnings: (contexts.unreadable ?? []).map(
         (id) => `Could not read ${sourceName(id)}; relationships to people only in that address book may show as changed.`,

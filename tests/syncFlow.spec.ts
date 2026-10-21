@@ -6,7 +6,7 @@ import type { Source } from 'src/settings/settings.d';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { Choice } from 'src/sync/review';
-import { MAX_REOPENS, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
+import { LINKS_LINE, MAX_REOPENS, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -656,6 +656,57 @@ describe('syncFlow: old relationship lines on a 3.0 card', () => {
     expect(await t.run()).toMatchObject({ kind: 'done', plan: { kind: 'move' } });
     expect(t.requests[0].rewriteLine).toBe(REWRITE_LINE);
     expect([...t.family.cards.values()][0].raw).not.toContain('urn:uuid:sem-uid');
+  });
+});
+
+describe('syncFlow: links to Obsidian notes on cards', () => {
+  const people: RelationContext = {
+    uidToName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
+    displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+    resolveLink: (name) => (name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
+    contactNote: (target) => (target === 'Sem' ? { path: 'Contacts/Sem.md', name: 'Sem de Vries' } : undefined),
+  };
+  const SPOUSE = 'RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries';
+  const LINK = ['item1.URL:obsidian://open?vault=Notes&file=Contacts%2FSem', 'item1.X-ABLabel:Sem de Vries'];
+  const local = { ...JAN, spouse: '[[Sem]]', source: 'Radicale' };
+  const withLinks = (t: ReturnType<typeof setup>) => {
+    t.deps.noteLinks = { enabled: true, vault: 'Notes', ownVaults: ['Notes'] };
+  };
+
+  it('the spec text', () => {
+    expect(LINKS_LINE).toBe('Links to Obsidian notes on this card are updated.');
+  });
+
+  it('the only difference: the review has the links line and no changed row; Apply adds the link; then up to date', async () => {
+    const t = setup({ local, ctx: people });
+    withLinks(t);
+    const href = t.radicale.seed(card('06-1', [SPOUSE]));
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pushed' });
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].linksLine).toBe(LINKS_LINE);
+    expect(t.requests[0].rewriteLine).toBeUndefined();
+    expect(t.requests[0].prepared.rows.filter((r) => r.changed)).toEqual([]);
+    const raw = t.radicale.cards.get(href)!.raw;
+    expect(raw).toContain('URL:obsidian://open?vault=Notes&file=Contacts%2FSem');
+    expect(raw).toContain('X-ABLabel:Sem de Vries');
+    t.requests.length = 0;
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
+    expect(t.requests).toEqual([]);
+  });
+
+  it('without a difference in the links there is no links line', async () => {
+    const t = setup({ local: { ...local, mobile: '06-2' }, ctx: people });
+    withLinks(t);
+    t.radicale.seed(card('06-1', [SPOUSE, ...LINK]));
+    await t.run();
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].linksLine).toBeUndefined();
+  });
+
+  it('without link options the card\'s links are not looked at', async () => {
+    const t = setup({ local, ctx: people });
+    t.radicale.seed(card('06-1', [SPOUSE]));
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
   });
 });
 
