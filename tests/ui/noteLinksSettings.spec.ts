@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react-dom/test-utils';
 import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getSettings, initSettings } from 'src/context/sharedSettingsContext';
+import { getSettings, initSettings, reloadSettings } from 'src/context/sharedSettingsContext';
 import { NoteLinksSettings } from 'src/ui/settings/components/noteLinksSettings';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -75,5 +75,17 @@ describe('NoteLinksSettings', () => {
     expect(getSettings().noteLinks).toEqual({ enabled: false, vaultName: 'Mac Notes', formerVaultNames: [] });
     expect(toggle().getAttribute('aria-checked')).toBe('false');
     expect(field()).toBeNull();
+  });
+
+  it('shows settings reloaded from disk, and the switch turns off what is stored', async () => {
+    await act(async () => {
+      await reloadSettings(async () => ({ noteLinks: { enabled: true, vaultName: 'Phone', formerVaultNames: [] } }));
+    });
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    expect(field()!.value).toBe('Phone');
+
+    await act(async () => toggle().click());
+    expect(getSettings().noteLinks).toEqual({ enabled: false, vaultName: 'Phone', formerVaultNames: [] });
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
   });
 });

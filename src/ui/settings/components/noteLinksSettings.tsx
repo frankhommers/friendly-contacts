@@ -2,6 +2,7 @@ import { App } from "obsidian";
 import * as React from "react";
 import { NoteLinksSettings as NoteLinksValue, setLinkVault, turnNoteLinks } from "src/contacts/friendly/noteLinks";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
+import { useSettings } from "src/ui/hooks/settingsHook";
 import { CommitInput } from "src/ui/settings/components/commitInput";
 
 const NAME = "Links to Obsidian notes on cards";
@@ -9,14 +10,13 @@ const VAULT_NAME = "Vault name on your phone";
 
 /** "Links to Obsidian notes on cards": the switch, and while it is on the name of this vault on the phone. */
 export function NoteLinksSettings({ app }: { app: App }) {
-  const [links, setLinks] = React.useState<NoteLinksValue>(() => getSettings().noteLinks);
+  // Shows what is stored: a save here, and a reload after data.json changed on disk, both show up.
+  const links = useSettings()?.noteLinks ?? getSettings().noteLinks;
 
-  /** Saves what `change` makes of the stored settings, and shows it. */
+  /** Saves what `change` makes of the stored settings. */
   const save = async (change: (stored: NoteLinksValue) => NoteLinksValue) => {
     const current = getSettings();
-    const noteLinks = change(current.noteLinks);
-    setLinks(noteLinks);
-    await setSettings({ ...current, noteLinks });
+    await setSettings({ ...current, noteLinks: change(current.noteLinks) });
   };
 
   return (
@@ -37,7 +37,7 @@ export function NoteLinksSettings({ app }: { app: App }) {
             aria-label={NAME}
             aria-checked={links.enabled}
             tabIndex={0}
-            onClick={() => { void save((stored) => turnNoteLinks(stored, !links.enabled, app.vault.getName())); }}
+            onClick={() => { void save((stored) => turnNoteLinks(stored, !stored.enabled, app.vault.getName())); }}
           >
             <input type="checkbox" tabIndex={0} checked={links.enabled} readOnly />
           </div>
