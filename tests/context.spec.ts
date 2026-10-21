@@ -3,7 +3,7 @@ import { App } from "obsidian";
 import { clearApp,getApp, setApp } from 'src/context/sharedAppContext'
 import {
   clearSettings,
-  getSettings, initSettings,
+  getSettings, initSettings, reloadSettings,
   setSettings,
   settings, updateSetting,
 } from 'src/context/sharedSettingsContext';
@@ -139,6 +139,19 @@ describe('sharedSettingsContext', () => {
     const stored = { enabled: true, vaultName: 'Notes', formerVaultNames: ['Old'] };
     await initSettings(async () => ({ ...mockSettings, noteLinks: stored }), saveData);
     expect(getSettings().noteLinks).toEqual(stored);
+  });
+
+  it('reloadSettings picks up settings changed on disk, normalised, without saving', async () => {
+    await initSettings(async () => mockSettings, saveData);
+    saveData.mockClear();
+    const seen: ContactsPluginSettings[] = [];
+    const dispose = effect(() => { if (settings.value) seen.push(settings.value); });
+    const onDisk = { ...mockSettings, noteLinks: { enabled: true, vaultName: ' Notes ', formerVaultNames: ['Old', 'Old'] } };
+    await reloadSettings(async () => onDisk);
+    dispose();
+    expect(getSettings().noteLinks).toEqual({ enabled: true, vaultName: 'Notes', formerVaultNames: ['Old'] });
+    expect(seen.at(-1)!.noteLinks.vaultName).toBe('Notes');
+    expect(saveData).not.toHaveBeenCalled();
   });
 
   it('layout defaults to one note per contact', async () => {

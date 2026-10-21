@@ -4,7 +4,7 @@ import {Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
 import { getPluginDir, setPluginDir } from "src/context/sharedAppContext";
 import { defaultSourceOf } from "src/sync/sources";
 import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
-import { getSettings, initSettings, settings } from "src/context/sharedSettingsContext";
+import { getSettings, initSettings, reloadSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
 import { CONTACTS_VIEW_CONFIG, PEOPLE_GRAPH_VIEW } from "src/util/constants";
@@ -291,6 +291,11 @@ export default class ContactsPlugin extends Plugin {
 	}
 
 	onunload() {}
+
+	/** data.json changed on disk (Obsidian Sync or another file sync): use the settings of the other device. */
+	async onExternalSettingsChange() {
+		await reloadSettings(this.loadData.bind(this));
+	}
 
 
 	async activateSidebarView() {
