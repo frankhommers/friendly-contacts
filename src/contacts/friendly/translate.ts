@@ -6,6 +6,7 @@
 import { readDate } from './dates';
 import { getParam, splitStructured, unescapeText, VCardLine } from './lines';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine } from './mapping';
+import { isOwnNoteLink } from './noteLinks';
 import { HINT_PARAM, RelationContext, relationValue, toLink } from './relations';
 
 export type FriendlyValue = string | string[];
@@ -103,13 +104,18 @@ function groupLabels(lines: VCardLine[]): Map<string, string> {
   return labels;
 }
 
+/**
+ * `ownVaults`: the vaults whose note links the plugin writes on cards (see `isOwnNoteLink`); those lines feed no
+ * property. Provenance indexes stay those of the full `lines`.
+ */
 export function toFriendly(
   lines: VCardLine[],
   rows: MappingRow[],
   ctx: RelationContext,
-  opts: { reader?: Reader } = {},
+  opts: { reader?: Reader; ownVaults?: readonly string[] } = {},
 ): Friendly {
   const reader = opts.reader ?? CURRENT_READER;
+  const ownVaults = opts.ownVaults ?? [];
   const props: Record<string, FriendlyValue> = {};
   const source: Record<string, Provenance | Provenance[]> = {};
   const counts = new Map<MappingRow, number>();
@@ -138,6 +144,7 @@ export function toFriendly(
   const labels = reader === 1 ? new Map<string, string>() : groupLabels(lines);
 
   lines.forEach((line, index) => {
+    if (ownVaults.length > 0 && isOwnNoteLink(line, ownVaults)) return;
     const label = line.group === undefined ? undefined : labels.get(line.group.toLowerCase());
     for (const row of rowForLine(line, rows, label)) {
       if (row.kind === 'relation') {

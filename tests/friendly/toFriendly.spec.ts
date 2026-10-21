@@ -1,6 +1,7 @@
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { noteLinkUrl } from 'src/contacts/friendly/noteLinks';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
 import { patch, toFriendly } from 'src/contacts/friendly/translate';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -375,5 +376,41 @@ describe('labelled date rows', () => {
         ),
       ),
     ).toEqual({ dating: '2012-05-01', 'dating-2': '2013-06-02' });
+  });
+});
+
+describe('own note links', () => {
+  const own = ['Notes'];
+  const url = noteLinkUrl('Notes', 'Contacts/Ger Verhallen.md');
+  const body = ['URL:https://a.example', `item4.URL:${url}`, 'item4.X-ABLabel:Ger Verhallen', 'URL:https://b.example'];
+  const versioned = (version: string, ...lines: string[]) =>
+    parseCard(['BEGIN:VCARD', `VERSION:${version}`, ...lines, 'END:VCARD'].join('\r\n'));
+
+  for (const version of ['3.0', '4.0']) {
+    it(`${version}: an own link feeds no row; provenance indexes are those of the full card`, () => {
+      const lines = versioned(version, ...body);
+      const read = toFriendly(lines, DEFAULT_MAPPING, ctx, { ownVaults: own });
+      expect(read.props).toEqual({ website: 'https://a.example', 'website-2': 'https://b.example' });
+      expect(read.source.website).toEqual({ line: 1 });
+      expect(read.source['website-2']).toEqual({ line: 4 });
+      expect(serializeCard([lines[4]])).toContain('URL:https://b.example');
+    });
+
+    it(`${version}: without own vaults the link is read as a website (as before)`, () => {
+      const read = toFriendly(versioned(version, ...body), DEFAULT_MAPPING, ctx);
+      expect(read.props).toEqual({ website: 'https://a.example', 'website-2': url, 'website-3': 'https://b.example' });
+    });
+  }
+
+  it('a plain URL line to this vault stays a website', () => {
+    const value = 'obsidian://open?vault=Notes&file=Projects%2FFoo';
+    const read = toFriendly(versioned('3.0', `URL:${value}`), DEFAULT_MAPPING, ctx, { ownVaults: own });
+    expect(read.props).toEqual({ website: value });
+  });
+
+  it('a link to another vault stays a website', () => {
+    const value = 'obsidian://open?vault=Other&file=x';
+    const read = toFriendly(versioned('3.0', `item1.URL:${value}`), DEFAULT_MAPPING, ctx, { ownVaults: own });
+    expect(read.props).toEqual({ website: value });
   });
 });

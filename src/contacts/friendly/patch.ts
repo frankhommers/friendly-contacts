@@ -9,6 +9,7 @@ import { normalizeNoteDate, noteDateFor, writeDate } from './dates';
 import { escapeText, getParam, joinStructured, serializeLine, splitStructured, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeLabel } from './mapping';
+import { cardNoteLinks, NoteLink } from './noteLinks';
 import { HINT_PARAM, linkTarget, RelationContext, relationValue, uuidTarget } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
 
@@ -20,6 +21,11 @@ export interface PatchResult {
 export interface PatchOptions {
   /** Put right the relationship lines the plugin wrote that phones show wrongly (see `needsLegacyRewrite`). */
   rewriteLegacyRelations?: boolean;
+  /**
+   * Make the card's own links to Obsidian notes (see `isOwnNoteLink`) equal to `wanted`; absent: own links are left
+   * alone. Labels are unescaped text.
+   */
+  noteLinks?: { wanted: NoteLink[]; ownVaults: string[] };
 }
 
 /** Component count of structured values we may have to create from scratch. */
@@ -455,6 +461,47 @@ function rewriteLegacy(s: State, rows: MappingRow[], ctx: RelationContext): void
   });
 }
 
+/**
+ * The card's own note links made equal to `wanted`, in card order: the first own line with a wanted URL is kept as
+ * it is (a changed label is put back in place, a missing one placed right after it), every other own link goes with
+ * its label, and the wanted links not on the card are appended as new `itemN` groups. The label is plain escaped text,
+ * never an Apple label (`labelled` would wrap built-in words such as `Manager`).
+ */
+function reconcileNoteLinks(s: State, wanted: NoteLink[], ownVaults: string[]): void {
+  const labels = new Map<string, string>();
+  for (const link of wanted) if (!labels.has(link.url)) labels.set(link.url, link.label);
+  const kept = new Set<string>();
+  for (const link of cardNoteLinks(s.base, ownVaults)) {
+    if (s.removed.has(link.line)) continue;
+    const label = labels.get(link.url);
+    if (label === undefined || kept.has(link.url)) {
+      removeLine(s, link.line);
+      continue;
+    }
+    kept.add(link.url);
+    const labelLine = link.labelLine !== undefined && !s.removed.has(link.labelLine) ? link.labelLine : undefined;
+    if (labelLine !== undefined && link.label === label) continue;
+    const value = escapeText(label);
+    if (labelLine !== undefined) {
+      setLine(s, labelLine, { ...withValue(s.base[labelLine], value), name: 'X-ABLabel' });
+    } else {
+      const group = s.base[link.line].group;
+      s.after.set(link.line, [...(s.after.get(link.line) ?? []), { group, name: 'X-ABLabel', params: [], value }]);
+      s.changed = true;
+    }
+  }
+  for (const { url, label } of wanted) {
+    if (kept.has(url)) continue;
+    kept.add(url);
+    const group = newGroup(s);
+    s.added.push(
+      { group, name: 'URL', params: [], value: url },
+      { group, name: 'X-ABLabel', params: [], value: escapeText(label) },
+    );
+    s.changed = true;
+  }
+}
+
 /** Current UTC time as `YYYYMMDDTHHMMSSZ`. */
 function revStamp(): string {
   return new Date().toISOString().replace(/\.\d{3}/, '').replace(/[-:]/g, '');
@@ -507,6 +554,7 @@ export function patch(
   }
   finishComponents(s);
   if (opts.rewriteLegacyRelations) rewriteLegacy(s, rows, ctx);
+  if (opts.noteLinks) reconcileNoteLinks(s, opts.noteLinks.wanted, opts.noteLinks.ownVaults);
 
   if (s.changed) {
     const rev = base.findIndex((line, i) => line.name === 'REV' && !s.removed.has(i));
@@ -526,6 +574,7 @@ export function newCard(
   rows: MappingRow[],
   ctx: RelationContext,
   version: '3.0' | '4.0' = '4.0',
+  opts: Pick<PatchOptions, 'noteLinks'> = {},
 ): PatchResult {
   const base: VCardLine[] = [{ name: 'VERSION', params: [], value: version }];
   if (text(props.uid) === '') base.push({ name: 'UID', params: [], value: `urn:uuid:${generateUUID()}` });
@@ -533,7 +582,7 @@ export function newCard(
     const fn = derivedName(props);
     if (fn !== '') base.push({ name: 'FN', params: [], value: escapeText(fn) });
   }
-  const card = patch(base, { props: {}, source: {} }, props, rows, ctx);
+  const card = patch(base, { props: {}, source: {} }, props, rows, ctx, { noteLinks: opts.noteLinks });
   // vCard 3.0 requires N (RFC 2426; DAVx5 enforces it): without name parts, empty components, right after FN.
   if (version === '3.0' && !card.lines.some((line) => !line.group && line.name === 'N')) {
     const fn = card.lines.findIndex((line) => !line.group && line.name === 'FN');
