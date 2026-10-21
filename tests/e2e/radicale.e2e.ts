@@ -17,6 +17,7 @@ import { parseCard } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
 import { insertLabelledDateRow, labelledDateRow, planDateFill } from 'src/contacts/friendly/dateLabels';
 import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
+import { NoteLinkOptions, noteLinkUrl } from 'src/contacts/friendly/noteLinks';
 import { RelationContext, resolveRemoteName } from 'src/contacts/friendly/relations';
 import { CURRENT_READER, FriendlyValue, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import { contactFileName, renderFriendlyNote } from 'src/contacts/friendlyNotes';
@@ -30,7 +31,7 @@ import { moveCard } from 'src/sync/moveCard';
 import { canApply, Choice } from 'src/sync/review';
 import { importCandidates, newCardVersion, SyncPlan } from 'src/sync/sources';
 import { NoteIO, SyncOutcome } from 'src/sync/syncContact';
-import { FlowResult, syncFlow } from 'src/sync/syncFlow';
+import { FlowResult, LINKS_LINE, syncFlow } from 'src/sync/syncFlow';
 import { createSyncState, FileStore, SyncState } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -230,7 +231,11 @@ interface Book {
 }
 
 /** Notes in the "vault" (link name + uid); unknown names and UIDs fall back to the server's contact list. */
-async function relationContext(adapter: AdapterInterface, notes: { name: string; uid: string }[]): Promise<RelationContext> {
+async function relationContext(
+  adapter: AdapterInterface,
+  notes: { name: string; uid: string }[],
+  paths: Map<string, string>,
+): Promise<RelationContext> {
   const metas = await adapter.getMetaList();
   const remote = (Array.isArray(metas) ? metas : []).flatMap((meta: VCardMeta) => {
     const fileName = contactFileName(meta.n, meta.fn);
@@ -247,6 +252,12 @@ async function relationContext(adapter: AdapterInterface, notes: { name: string;
     resolveLink(name) {
       const note = notes.find((n) => n.name === name);
       return note ? { uid: cleanUid(note.uid) } : resolveRemoteName(name, remote);
+    },
+    // The note named `target` (or at the path `target`), at its path in `paths` or `Contacts/<name>.md`.
+    contactNote(target) {
+      const bare = target.replace(/\.md$/i, '');
+      const name = notes.find((n) => n.name === target)?.name ?? [...paths].find(([, path]) => path.replace(/\.md$/i, '') === bare)?.[0];
+      return name === undefined ? undefined : { path: paths.get(name) ?? `Contacts/${name}.md`, name };
     },
   };
 }
@@ -276,6 +287,12 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   const notices: string[] = [];
   /** The info line the last review showed, if any (the rewrite of old relationship lines). */
   let rewriteLine: string | undefined;
+  /** The info line the last review showed about links to Obsidian notes, if any. */
+  let linksLine: string | undefined;
+  /** The links setting Sync reads with; a test that turns it on puts it back. */
+  let noteLinks: NoteLinkOptions | undefined;
+  /** The vault path of a contact's note by its name; a name not in here is at `Contacts/<name>.md`. */
+  const paths = new Map<string, string>();
   let jan: Note;
   let notes: { name: string; uid: string }[] = [];
   /** The rows Sync and import read with; a test that changes the settings puts them back. */
@@ -307,7 +324,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     pushes.length = 0;
     notices.length = 0;
     rewriteLine = undefined;
-    const lookups = await relationContext(adapter, notes);
+    linksLine = undefined;
+    const lookups = await relationContext(adapter, notes, paths);
     const sources = bookList.map((b) => b.source);
     return syncFlow({
       note: note.io,
@@ -323,6 +341,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       review: async (request) => {
         const { rows } = request.prepared;
         rewriteLine = request.rewriteLine;
+        linksLine = request.linksLine;
         // The server column is labelled with an address book's name, never a fixed server name.
         expect(sources.map((s) => s.name)).toContain(request.serverName);
         const picked =
@@ -332,6 +351,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
         expect(canApply(rows, picked), `undecided: ${rows.filter((r) => r.changed && r.preselect === undefined).map((r) => r.property)}`).toBe(true);
         return { kind: 'apply', choices: picked, rename: false };
       },
+      ...(noteLinks ? { noteLinks } : {}),
       notify: (msg) => void notices.push(msg),
       renameBlocked: () => undefined,
       // As src/sync/sync.ts: the setting, else what most cards in the book's listing are.
@@ -370,7 +390,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   async function importFrom(book: Book, href: string): Promise<Note> {
     const pulled = await book.adapter.pull(href);
     if (!pulled || !('raw' in pulled)) throw new Error(`pull ${href} failed`);
-    const props = toFriendly(parseCard(pulled.raw), mapping, await relationContext(adapter, notes)).props;
+    const props = toFriendly(parseCard(pulled.raw), mapping, await relationContext(adapter, notes, paths)).props;
     const uid = cleanUid(String(props.uid));
     await book.state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href, reader: CURRENT_READER });
     return memoryNote({ ...props, source: book.source.name });
@@ -618,7 +638,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await serverCard(href)).toBe(before);
     expect(await serverEtag(href)).toBe(etag);
 
-    const server = toFriendly(parseCard(before), DEFAULT_MAPPING, await relationContext(adapter, notes)).props;
+    const server = toFriendly(parseCard(before), DEFAULT_MAPPING, await relationContext(adapter, notes, paths)).props;
     const mapped = Object.fromEntries(Object.entries(note.frontmatter).filter(([k]) => isMappedProperty(k, DEFAULT_MAPPING)));
     expect(mapped).toEqual(server);
 
@@ -1094,6 +1114,87 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       expect(dora.frontmatter).toMatchObject({ dating: '2012-05-01', 'dating-2': newValue });
     } finally {
       mapping = DEFAULT_MAPPING;
+    }
+  });
+
+  it.each([
+    ['3.0', 'item1.X-ABRELATEDNAMES;X-FRIENDLY-UID=%UID:Ger Verhallen', 'item1.X-ABLabel:_$!<Spouse>!$_', 'item2'],
+    ['4.0', 'RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=%UID:Ger Verhallen', undefined, 'item1'],
+  ])('21. %s: links to Obsidian notes: written, followed after a rename, removed when off', async (version, spouseLine, spouseLabel, group) => {
+    const suffix = version === '3.0' ? '3' : '4';
+    const gerUid = `C0FFEE00-0000-4000-8000-00000000023${suffix}`;
+    const joseUid = `C0FFEE00-0000-4000-8000-00000000024${suffix}`;
+    const gerHref = `${BOOK}links-ger-${version}.vcf`;
+    const joseHref = `${BOOK}links-jose-${version}.vcf`;
+    await putCard(gerHref, ['BEGIN:VCARD', `VERSION:${version}`, `UID:${gerUid}`, 'FN:Ger Verhallen', 'N:Verhallen;Ger;;;', 'END:VCARD', ''].join('\r\n'));
+    await putCard(
+      joseHref,
+      [
+        'BEGIN:VCARD',
+        `VERSION:${version}`,
+        `UID:${joseUid}`,
+        'FN:Jose Verhallen',
+        'N:Verhallen;Jose;;;',
+        spouseLine.replace('%UID', gerUid),
+        ...(spouseLabel ? [spouseLabel] : []),
+        'URL:https://jose.example',
+        'END:VCARD',
+        '',
+      ].join('\r\n'),
+    );
+    const savedNotes = notes;
+    notes = [...notes, { name: 'Ger Verhallen', uid: gerUid }, { name: 'Jose Verhallen', uid: joseUid }];
+    const gerUrl = noteLinkUrl('Notes', 'Contacts/Ger Verhallen.md');
+    expect(gerUrl).toBe('obsidian://open?vault=Notes&file=Contacts%2FGer%20Verhallen');
+    try {
+      const jose = await importCard(joseHref);
+      expect(jose.frontmatter).toMatchObject({ spouse: '[[Ger Verhallen]]', website: 'https://jose.example' });
+      const props = JSON.stringify(jose.frontmatter);
+      expect(await sync(jose)).toBe('unchanged');
+      expect(pushes).toEqual([]);
+      const start = unfolded(await serverCard(joseHref));
+
+      // On: the card gets the link and its label, nothing else; the note gets nothing.
+      noteLinks = { enabled: true, vault: 'Notes', ownVaults: ['Notes'] };
+      expect(await sync(jose)).toBe('pushed');
+      expect(linksLine).toBe(LINKS_LINE);
+      const withLink = unfolded(await serverCard(joseHref));
+      expect(upper(changed(minus(withLink, start)))).toEqual(upper([`${group}.URL:${gerUrl}`, `${group}.X-ABLabel:Ger Verhallen`]));
+      expect(changed(minus(start, withLink))).toEqual([]);
+      expect(withLink).toContain(`VERSION:${version}`);
+      expect(JSON.stringify(jose.frontmatter)).toBe(props);
+      expect(await sync(jose)).toBe('unchanged');
+      expect(linksLine).toBeUndefined();
+      expect(JSON.stringify(jose.frontmatter)).toBe(props);
+
+      // The note moves: the link follows it. The URL is the link's identity, so the old pair goes and the new one
+      // lands as the next free group, with the same label; nothing else on the card changes.
+      paths.set('Ger Verhallen', 'Contacts/Ger Verhallen/index.md');
+      expect(await sync(jose)).toBe('pushed');
+      expect(linksLine).toBe(LINKS_LINE);
+      const moved = unfolded(await serverCard(joseHref));
+      const movedGroup = `item${Number(group.slice('item'.length)) + 1}`;
+      const movedUrl = noteLinkUrl('Notes', 'Contacts/Ger Verhallen/index.md');
+      expect(movedUrl).toBe('obsidian://open?vault=Notes&file=Contacts%2FGer%20Verhallen%2Findex');
+      expect(upper(changed(minus(moved, withLink)))).toEqual(upper([`${movedGroup}.URL:${movedUrl}`, `${movedGroup}.X-ABLabel:Ger Verhallen`]));
+      expect(upper(changed(minus(withLink, moved)))).toEqual(upper([`${group}.URL:${gerUrl}`, `${group}.X-ABLabel:Ger Verhallen`]));
+      expect(moved).toContain('URL:https://jose.example');
+      expect(await sync(jose)).toBe('unchanged');
+
+      // Off: both link lines go, the website stays as it was, and the note is not touched.
+      noteLinks = { enabled: false, vault: 'Notes', ownVaults: ['Notes'] };
+      expect(await sync(jose)).toBe('pushed');
+      const off = unfolded(await serverCard(joseHref));
+      expect(upper(changed(minus(moved, off)))).toEqual(upper([`${movedGroup}.URL:${movedUrl}`, `${movedGroup}.X-ABLabel:Ger Verhallen`]));
+      expect(changed(minus(off, moved))).toEqual([]);
+      expect(off).toContain('URL:https://jose.example');
+      expect(upper(changed(off))).toEqual(upper(changed(start)));
+      expect(JSON.stringify(jose.frontmatter)).toBe(props);
+      expect(await sync(jose)).toBe('unchanged');
+    } finally {
+      noteLinks = undefined;
+      paths.clear();
+      notes = savedNotes;
     }
   });
 });
