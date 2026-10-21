@@ -1,10 +1,11 @@
-## Friendly Contacts 3.0.0-alpha.9
+## Friendly Contacts 3.0.0-alpha.10
 
-**Dates with a label.** A date your phone keeps under a label of its own, such as "Verkering", now shows in the note under an English property you choose, for example `dating: 2012-05-01`. A date you fill in in Obsidian goes to the card with that label, so the phone shows it under "Verkering".
+**Links to Obsidian notes on cards.** A new setting, off by default. When it is on, every relationship with a contact note also becomes a website on the card: an `obsidian://` link to that person's note, labelled with their name. On Android (DAVx5) you tap it to open the note in Obsidian on your phone.
 
-- Settings → Property names → **Dates with a label**: add a label with its property, rename it, or remove it. **Find labels on cards** lists the labels already on your contacts' cards (as at their last Sync).
-- Adding a label fills the dates into your notes from the last Sync, after you confirm. Sync never removes such a date from a card because the note did not have it yet, also on your other devices.
-- Removing a label removes the property from your notes after you confirm. The dates stay on the cards.
-- Works on vCard 3.0 and 4.0 cards. Dates without a label (Android "Other" without text) are not shown.
+- Settings → Contacts server synchronization settings → **Links to Obsidian notes on cards**. The first time you turn it on, **Vault name on your phone** is filled with this vault's name; change it if the vault on your phone has another name.
+- Links follow relationships, renamed or moved notes, the vault name and the setting itself at each contact's next Sync. The review shows "Links to Obsidian notes on this card are updated."
+- The links never appear in your notes. Websites in your notes and links to other vaults are never touched.
+- Whether your contacts app opens `obsidian://` links depends on the app: try one contact on your phone first.
+- Update the plugin on every desktop that syncs before you turn it on. Settings changed on another device are now picked up as soon as the settings file syncs.
 
 Back up your vault before installing.
