@@ -37,6 +37,9 @@ export type RelationRow = {
 };
 export type MappingRow = FieldRow | ComponentRow | RelationRow;
 
+/** A date the owner named in the settings: written `itemN.X-ABDATE` + `itemN.X-ABLabel`, read by its label alone. */
+export type LabelledDateRow = FieldRow & { format: 'date'; write: 'X-ABDATE'; appleDateLabel: string };
+
 const field = (
   property: string,
   read: Pattern[],
@@ -139,6 +142,23 @@ export function labelText(raw: string): string[] {
 /** The `X-ABLabel` value to write: Apple's form for a built-in label, else the label as is. */
 export function writeLabel(label: string): string {
   return APPLE_BUILTIN_LABELS.has(label.trim().toLowerCase()) ? `_$!<${label}>!$_` : label;
+}
+
+/** A label as shown to people: Apple's `_$!<Other>!$_` unwrapped, trimmed, case kept. */
+export function readableLabel(raw: string): string {
+  const text = raw.trim();
+  const apple = APPLE_LABEL.exec(text);
+  return (apple ? apple[1] : text).trim();
+}
+
+/** True for a date row of the "Dates with a label" table; the anniversary row (which writes `ANNIVERSARY`) is not one. */
+export function isLabelledDateRow(row: MappingRow): row is LabelledDateRow {
+  return (
+    row.kind === 'field' &&
+    row.format === 'date' &&
+    row.write.trim().toUpperCase() === 'X-ABDATE' &&
+    row.appleDateLabel !== undefined
+  );
 }
 
 type ParsedPattern = { name: string; types: string[] | '*' };
@@ -320,6 +340,8 @@ export function isFixedProperty(property: string): boolean {
 function rowIdentity(row: MappingRow): string {
   if (row.kind === 'relation') return `relation|${row.types.join(',')}`;
   if (row.kind === 'component') return `component|${row.write}|${row.index}`;
+  // They all write `X-ABDATE`; the label tells them apart.
+  if (isLabelledDateRow(row)) return `date-label|${readableLabel(row.appleDateLabel).toLowerCase()}`;
   return `field|${row.write}`;
 }
 
@@ -359,6 +381,8 @@ export function validateMapping(rows: MappingRow[]): string[] {
     }
   }
   const seen = new Set<string>();
+  const labels = new Set<string>();
+  const doubled = new Set<string>();
   for (const row of rows) {
     const key = row.property.trim();
     if (key === '') errors.push('A property name is empty.');
@@ -369,8 +393,22 @@ export function validateMapping(rows: MappingRow[]): string[] {
     if (VCARD_NAMES.has(key) || key.startsWith('X-')) {
       errors.push(`Property name "${key}" is a vCard name.`);
     }
+    if (isLabelledDateRow(row)) {
+      const label = readableLabel(row.appleDateLabel);
+      if (label === '') errors.push('A date has no label.');
+      else if (label.includes(',')) errors.push(`The label "${label}" cannot hold a comma.`);
+    }
+    if (row.kind === 'field' && row.appleDateLabel !== undefined) {
+      const label = readableLabel(row.appleDateLabel);
+      const lower = label.toLowerCase();
+      if (label !== '' && labels.has(lower) && !doubled.has(lower)) {
+        doubled.add(lower);
+        errors.push(`Two dates have the label "${label}".`);
+      }
+      labels.add(lower);
+    }
     if (row.kind !== 'relation') {
-      if (row.read.length === 0) errors.push(`Property "${key}" has no read pattern.`);
+      if (row.read.length === 0 && !isLabelledDateRow(row)) errors.push(`Property "${key}" has no read pattern.`);
       for (const pattern of row.read) {
         if (!parsePattern(pattern)) errors.push(`Unparsable pattern for "${key}": ${pattern}`);
       }

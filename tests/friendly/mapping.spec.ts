@@ -1,3 +1,4 @@
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard } from 'src/contacts/friendly/lines';
 import {
   APPLE_BUILTIN_LABELS,
@@ -405,5 +406,49 @@ describe('migration order and scope', () => {
   it('a custom relation row gets its type as label', () => {
     const custom = { kind: 'relation', property: 'mentors', types: ['mentor'], write: 'RELATED;TYPE=mentor' } as MappingRow;
     expect(labelsOf(migrateMapping([...legacyMapping(), custom]), 'mentors')).toEqual(['Mentor']);
+  });
+});
+
+describe('labelled date rows in a mapping', () => {
+  const dating = labelledDateRow('Verkering', 'dating');
+  const withDating = insertLabelledDateRow(DEFAULT_MAPPING, dating);
+  const renamed = (rows: MappingRow[], from: string, to: string) => renameRow(rows, from, to);
+
+  it('is valid', () => {
+    expect(validateMapping(withDating)).toEqual([]);
+  });
+
+  it('refuses a label that anniversary has', () => {
+    expect(validateMapping(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('anniversary', 'dating')))).toContain(
+      'Two dates have the label "anniversary".',
+    );
+  });
+
+  it('refuses two rows with one label, ignoring case', () => {
+    const rows = insertLabelledDateRow(withDating, labelledDateRow('VERKERING', 'dating-b'));
+    expect(validateMapping(rows)).toContain('Two dates have the label "VERKERING".');
+  });
+
+  it('refuses a comma and an empty label', () => {
+    expect(validateMapping(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('A, B', 'dating')))).toContain(
+      'The label "A, B" cannot hold a comma.',
+    );
+    expect(validateMapping(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('', 'dating')))).toContain(
+      'A date has no label.',
+    );
+  });
+
+  it('still wants a read pattern on other rows', () => {
+    const rows = DEFAULT_MAPPING.map((r) => (r.property === 'title' ? { ...r, read: [] } : r));
+    expect(validateMapping(rows)).toContain('Property "title" has no read pattern.');
+  });
+
+  it('renames a labelled row by its label, not its position', () => {
+    const two = insertLabelledDateRow(withDating, labelledDateRow('Eerste kus', 'first-kiss'));
+    expect(mappingRenames(two, renamed(two, 'dating', 'started-dating'))).toEqual([
+      { from: 'dating', to: 'started-dating' },
+    ]);
+    expect(mappingRenames(DEFAULT_MAPPING, withDating)).toEqual([]);
+    expect(mappingRenames(withDating, DEFAULT_MAPPING)).toEqual([]);
   });
 });
