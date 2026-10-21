@@ -1,8 +1,10 @@
-## Friendly Contacts 3.0.0-alpha.8
+## Friendly Contacts 3.0.0-alpha.9
 
-**Relationship links show the name, not a path.** With Obsidian's link format set to "Relative path to file" or "Absolute path in vault", a relationship showed as `../Ger Verhallen/Ger Verhallen`. Such links now get the contact's name as label: `[[../Ger Verhallen/Ger Verhallen|Ger Verhallen]]`, so the property shows "Ger Verhallen".
+**Dates with a label.** A date your phone keeps under a label of its own, such as "Verkering", now shows in the note under an English property you choose, for example `dating: 2012-05-01`. A date you fill in in Obsidian goes to the card with that label, so the phone shows it under "Verkering".
 
-- New links get this form everywhere: Sync, "+ Relationship", the other side of a relationship, and putting contacts in their own folders.
-- **Tidy relationship links** (command palette) does it once for the links already in your notes. A label you wrote yourself is kept, and only relationship properties of contact notes change.
+- Settings → Property names → **Dates with a label**: add a label with its property, rename it, or remove it. **Find labels on cards** lists the labels already on your contacts' cards (as at their last Sync).
+- Adding a label fills the dates into your notes from the last Sync, after you confirm. Sync never removes such a date from a card because the note did not have it yet, also on your other devices.
+- Removing a label removes the property from your notes after you confirm. The dates stay on the cards.
+- Works on vCard 3.0 and 4.0 cards. Dates without a label (Android "Other" without text) are not shown.
 
 Back up your vault before installing.
