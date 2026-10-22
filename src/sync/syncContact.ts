@@ -168,12 +168,14 @@ export async function prepareSync(
 
     const state = where.move ? where.move.state : deps.state;
     const baseEntry = lookup ? await state.get(uid) : undefined;
-    // A photo the server damaged is put back once, here, from the base and else the note: the review, the result,
-    // the note and the stored base all see the repaired card (see repairDamagedPhotos). A base stored before this
-    // existed may hold one too.
-    const storedBase = baseEntry ? parseCard(baseEntry.raw) : undefined;
-    const baseLines = storedBase && repairDamagedPhotos(storedBase, notePhotoLines(local, storedBase)).lines;
-    const repair = (lines: VCardLine[]) => repairDamagedPhotos(lines, [...(baseLines ?? []), ...notePhotoLines(local, lines)]);
+    // A damaged photo (`isDamagedPhoto`) holds no image and says nothing about the photo. It is put right once, here,
+    // so the review, the result, the note and the stored base all see the same photos (see repairDamagedPhotos):
+    // - in a base an earlier version stored: left out. The note's photo never stands in for it, or a photo put back
+    //   in the note would look as if the server already had it.
+    // - on the server card: the base's photo, or none; without a base (never synced) the note's photo. With a base,
+    //   the note's photo never stands in for it: a photo new in the note must still be pushed.
+    const baseLines = baseEntry ? repairDamagedPhotos(parseCard(baseEntry.raw), []).lines : undefined;
+    const repair = (lines: VCardLine[]) => repairDamagedPhotos(lines, baseLines ?? notePhotoLines(local, lines));
 
     let server: PreparedSync['server'];
     if (where.move) {

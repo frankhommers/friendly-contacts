@@ -1411,11 +1411,44 @@ describe('a server that damages data URI photos (Radicale with vCard 4.0)', () =
     expect(t.note.writes).toEqual([]);
   });
 
-  it('a damaged base stored by an earlier version is repaired from the note', async () => {
+  it('an old base with a damaged photo is dropped, not filled from the note: the photo is pushed once, then up to date', async () => {
+    // Changed on purpose: the note's photo used to fill the old base, so the server never got it back.
     const damaged = damage(withPhoto(V4));
     const t = setup({ server: damaged, base: damaged, local: note() });
+    expect(changedRows(await reviewOf(t))).toEqual([['photo', 'local']]);
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(base(t)).toContain(`PHOTO:${PHOTO}`);
+    damaging(t);
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-    expect(t.pushes).toEqual([]);
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter.photo).toBe(PHOTO);
+  });
+
+  it('an old base with a damaged photo and a phone edit: the photo is pushed and the edit pulled in one Sync', async () => {
+    const damaged = damage(withPhoto(V4));
+    const t = setup({ server: edit(damaged, 'END:VCARD', 'TITLE:Baker\r\nEND:VCARD'), base: damaged, local: note() });
+    expect(changedRows(await reviewOf(t))).toEqual([
+      ['title', 'server'],
+      ['photo', 'local'],
+    ]);
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'both' });
+    damaging(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter).toMatchObject({ photo: PHOTO, title: 'Baker' });
+  });
+
+  it('a new photo in the note while a phone adds one (damaged by the server): the note photo is pushed, not lost', async () => {
+    const t = setup({ server: V4, base: V4, local: note() });
+    phoneEdit(t, 'END:VCARD', `PHOTO:${OTHER}\r\nEND:VCARD`);
+    expect(t.cards.get(HREF)!.raw).toContain(String.raw`PHOTO:data:image/jpeg\;base64` + '\r\n');
+    expect(changedRows(await reviewOf(t))).toEqual([['photo', 'local']]);
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(t.pushes[0].vcard.raw.replace(/\r\n[ \t]/g, '').match(/^PHOTO.*$/gm)).toEqual([`PHOTO:${PHOTO}`]);
+    damaging(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toHaveLength(1);
+    expect(t.note.frontmatter.photo).toBe(PHOTO);
   });
 
   it('no photo anywhere but a damaged line: the note gets no photo and nothing loops', async () => {
