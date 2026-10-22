@@ -152,8 +152,8 @@ get a small record of which set of default rows the stored mapping has seen (e.g
 absent = 0). Rows new in set 1 (this step) are added only when the record is below 1; then it becomes 1. The existing
 `ROWS_NEW_IN_PART_6` and label logic stays as it is.
 
-*(My call, after the builder check:)* a new row copies "Read from", both write keys and the reader mark from its
-stored sibling: the stored row that matches the default sibling's identity (e.g. for `po-box` the stored row with
+*(My call, after the builder check:)* a new row copies "Read from" and both write keys from its stored sibling (it keeps its own
+reader mark): the stored row that matches the default sibling's identity (e.g. for `po-box` the stored row with
 identity `component|ADR;TYPE=HOME|2`, the default `street`), else the stored row with the sibling's default name. So
 an owner who edited `street` to write `ADR;TYPE=home` gets `po-box` on the same line. Without a sibling (or for
 `gender`/`gender-identity`, which have none in stored mappings) the defaults are used; `gender-identity` follows the
