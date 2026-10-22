@@ -537,14 +537,14 @@ describe('parts and the vCard 3.0 write key', () => {
       validateMapping(
         DEFAULT_MAPPING.map((r) => (r.property === 'gender-identity' ? { ...r, writeV3 } : r)) as MappingRow[],
       );
-    const message = 'Property "gender-identity" writes GENDER like "gender" but has a different vCard 3.0 write key.';
+    const message = 'Properties "gender" and "gender-identity" both write GENDER; give them the same vCard 3.0 write key.';
     expect(identity('X-SEX')).toEqual([message]);
     expect(identity(undefined)).toEqual([message]);
     expect(identity(' X-GENDER ')).toEqual([]);
     const department = validateMapping(
       DEFAULT_MAPPING.map((r) => (r.property === 'department' ? { ...r, writeV3: 'X-ORG' } : r)) as MappingRow[],
     );
-    expect(department).toEqual(['Property "department" writes ORG like "company" but has a different vCard 3.0 write key.']);
+    expect(department).toEqual(['Properties "company" and "department" both write ORG; give them the same vCard 3.0 write key.']);
   });
 
   it('default rows on the same field read and write alike', () => {

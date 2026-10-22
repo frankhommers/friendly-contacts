@@ -544,7 +544,7 @@ export function validateMapping(rows: MappingRow[]): string[] {
       if (!first) firstPart.set(row.write, row);
       else if ((first.writeV3?.trim() ?? '') !== (row.writeV3?.trim() ?? '')) {
         const other = first.property.trim();
-        errors.push(`Property "${key}" writes ${row.write} like "${other}" but has a different vCard 3.0 write key.`);
+        errors.push(`Properties "${other}" and "${key}" both write ${row.write}; give them the same vCard 3.0 write key.`);
       }
     }
   }

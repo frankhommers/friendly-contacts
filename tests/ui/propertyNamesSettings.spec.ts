@@ -310,7 +310,7 @@ describe('the table', () => {
     await render(DEFAULT_MAPPING);
     await act(async () => commitText(input('department', 'vCard 3.0 write key for department'), 'X-ORG'));
     expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain(
-      'Property "department" writes ORG like "company" but has a different vCard 3.0 write key.',
+      'Properties "company" and "department" both write ORG; give them the same vCard 3.0 write key.',
     );
     expect(saves).toEqual([]);
     await act(async () => commitText(input('company', 'vCard 3.0 write key for company'), 'X-ORG'));
