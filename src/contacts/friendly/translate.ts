@@ -4,7 +4,7 @@
  */
 
 import { readDate } from './dates';
-import { getParam, splitStructured, unescapeText, VCardLine } from './lines';
+import { getParam, splitParts, unescapeText, VCardLine } from './lines';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine } from './mapping';
 import { isOwnNoteLink } from './noteLinks';
 import { HINT_PARAM, RelationContext, relationValue, toLink } from './relations';
@@ -63,7 +63,7 @@ function fieldValue(row: FieldRow, line: VCardLine): FriendlyValue | undefined {
 }
 
 function componentValue(row: ComponentRow, line: VCardLine): string | undefined {
-  const part = splitStructured(line.value)[row.index];
+  const part = splitParts(line.value)[row.index];
   const text = part === undefined ? '' : unescapeText(part);
   return text === '' ? undefined : text;
 }

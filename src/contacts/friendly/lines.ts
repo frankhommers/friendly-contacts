@@ -161,6 +161,32 @@ export function splitStructured(v: string): string[] {
   return parts;
 }
 
+/**
+ * The parts of a field made of parts; parts stay escaped. A server that does not know the field (Radicale with
+ * `GENDER`) stores `O;non-binary` as `O\;non-binary`; a value with no unescaped `;` but an escaped one is read as
+ * such a flattened value, its escaped `;` separating the parts.
+ */
+export function splitParts(v: string): string[] {
+  const parts = splitStructured(v);
+  if (parts.length > 1 || !v.includes('\\;')) return parts;
+  const flattened: string[] = [];
+  let current = '';
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (c === '\\' && v[i + 1] === ';') {
+      flattened.push(current);
+      current = '';
+      i++;
+    } else if (c === '\\' && i + 1 < v.length) {
+      current += c + v[++i];
+    } else {
+      current += c;
+    }
+  }
+  flattened.push(current);
+  return flattened;
+}
+
 export function joinStructured(parts: string[]): string {
   return parts.join(';');
 }

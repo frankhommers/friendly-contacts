@@ -1048,6 +1048,11 @@ describe('write key per vCard version', () => {
     expect(edit(lines, { name: 'A' }).some((l) => l.includes('GENDER'))).toBe(false);
   });
 
+  it('editing the identity on a GENDER line a server stored with an escaped ; keeps the sex', () => {
+    const lines = card4('FN:A', String.raw`GENDER:O\;non-binair`, 'REV:x');
+    expect(edit(lines, { name: 'A', gender: 'O', 'gender-identity': 'queer' })).toContain('GENDER:O;queer');
+  });
+
   it('patches the department of an ORG line and keeps the escaped company', () => {
     const lines = card4('FN:A', 'ORG:A\\;B;Sales', 'REV:x');
     expect(toFriendly(lines, DEFAULT_MAPPING, ctx).props).toMatchObject({ company: 'A;B', department: 'Sales' });

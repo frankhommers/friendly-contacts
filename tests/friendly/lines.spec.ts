@@ -5,6 +5,7 @@ import {
   parseCard,
   serializeCard,
   serializeLine,
+  splitParts,
   splitStructured,
   joinStructured,
   typesOf,
@@ -82,6 +83,16 @@ describe('friendly lines', () => {
     expect(escapeText('a,b;c\nd\\')).toBe('a\\,b\\;c\\nd\\\\');
     expect(splitStructured(';;Industrieweg 9\\;unit 3;Utrecht;;3542 AA;')[2]).toBe('Industrieweg 9\\;unit 3');
     expect(joinStructured(['a', 'b\\;c', ''])).toBe('a;b\\;c;');
+  });
+
+  it('splitParts reads a value a server flattened: escaped ; separate the parts when there is no unescaped ;', () => {
+    const raw = String.raw;
+    expect(splitParts(raw`O\;non-binair`)).toEqual(['O', 'non-binair']);
+    expect(splitParts('O;non-binair')).toEqual(['O', 'non-binair']);
+    expect(splitParts(raw`A\;B;Sales`)).toEqual([raw`A\;B`, 'Sales']);
+    expect(splitParts('M')).toEqual(['M']);
+    expect(splitParts(raw`a\,b\\c\;d`)).toEqual([raw`a\,b\\c`, 'd']);
+    expect(splitParts(raw`a\\`)).toEqual([raw`a\\`]);
   });
 
   it('bare 2.1 params become TYPE', () => {

@@ -433,6 +433,10 @@ describe('every part of a structured value', () => {
     expect(translate(card('GENDER:O;non-binair')).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
     expect(translate(card('X-GENDER:M')).props).toMatchObject({ gender: 'M' });
   });
+
+  it('reads a GENDER line a server stored with an escaped ; as sex and identity', () => {
+    expect(translate(card(String.raw`GENDER:O\;non-binair`)).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
+  });
 });
 
 describe('readerOf', () => {
