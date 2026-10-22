@@ -68,8 +68,8 @@ gender must be data in the mapping row, and the table must show per version what
 `GENDER` is structured (`sex;identity`). As a plain field the note would get `O;non-binary` and an edit would write it
 back escaped (`O\;non-binary`), which is wrong. So `gender` is a **component row, index 0** (`ComponentRow`, like
 `company` on `ORG`): the note holds the letter (`M`), and an identity text on the card stays untouched when the letter
-is edited. No `gender-identity` property for now *(my call; the owner can add a component row for index 1 in the
-table if wanted, once component rows can be added — not part of this work)*.
+is edited. No `gender-identity` property: offered (component index 1), the owner declined ("Laat die gender-identity
+maar"). The identity text stays on the card, untouched.
 
 The note holds the letter as on the card: `M`, `F` (the owner's choice). Values from other apps on `X-GENDER` (e.g.
 `Male`) are read as they are; nothing is translated, like every other field.
