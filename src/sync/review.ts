@@ -2,6 +2,7 @@
 
 import { MappingRow, rowForProperty } from '../contacts/friendly/mapping';
 import { sameValue } from '../contacts/friendly/merge';
+import { isPhotoProperty } from '../contacts/friendly/photo';
 import { FriendlyValue } from '../contacts/friendly/translate';
 
 type Props = Record<string, FriendlyValue>;
@@ -19,8 +20,6 @@ export interface ReviewRow {
   /** false only for "Show all" rows. */
   changed: boolean;
 }
-
-const isPhotoProperty = (property: string): boolean => /^photo(-\d+)?$/.test(property);
 
 function kindOf(property: string, rows: MappingRow[]): ReviewRow['kind'] {
   const row = rowForProperty(property, rows)?.row;

@@ -59,4 +59,25 @@ describe("friendlyNoteCard (export)", () => {
     expect(card).toContain("ORG:Acme;\r\n");
     expect(card).not.toContain("Sales");
   });
+
+  describe("a damaged photo in the note (written by an earlier version) is never exported", () => {
+    const PHOTO = "data:image/png;base64,AAAA";
+    const DAMAGED = String.raw`data:image/png\;base64`;
+    const V4 = BASE.replace("VERSION:3.0", "VERSION:4.0");
+    const withPhoto = (raw: string, photo: string) => raw.replace("END:VCARD", `PHOTO:${photo}\r\nEND:VCARD`);
+
+    it("over a base with the photo intact: the base's photo, as Sync puts it back", async () => {
+      const app = fakeApp();
+      await contactSyncState("s1", app).set("jan-1", { raw: withPhoto(V4, PHOTO), etag: "e1", href: "/jan-1.vcf", reader: 3 });
+      const card = await friendlyNoteCard(app, file, { ...note, photo: DAMAGED }, DEFAULT_MAPPING, lookups);
+      expect(card.match(/^PHOTO.*$/gm)).toEqual([`PHOTO:${PHOTO}`]);
+    });
+
+    it("over a base with a damaged photo, or without a base: no photo", async () => {
+      const app = fakeApp();
+      await contactSyncState("s1", app).set("jan-1", { raw: withPhoto(V4, DAMAGED), etag: "e1", href: "/jan-1.vcf", reader: 3 });
+      expect(await friendlyNoteCard(app, file, { ...note, photo: DAMAGED }, DEFAULT_MAPPING, lookups)).not.toMatch(/PHOTO/);
+      expect(await friendlyNoteCard(fakeApp(), file, { ...note, uid: "new-1", photo: DAMAGED }, DEFAULT_MAPPING, lookups)).not.toMatch(/PHOTO/);
+    });
+  });
 });

@@ -22,6 +22,9 @@ export const REWRITE_LINE = 'Relationships on this card are rewritten in the for
 /** The info line of a review that puts the card's links to Obsidian notes right (exact text from the spec). */
 export const LINKS_LINE = 'Links to Obsidian notes on this card are updated.';
 
+/** The info line of a review that puts right a damaged photo (one without an image) in the note. */
+export const PHOTO_LINE = 'A damaged photo in this note (one without an image) is put right.';
+
 /** How often the review reopens after the note or the card changed underneath, before Sync gives up. */
 export const MAX_REOPENS = 3;
 
@@ -34,6 +37,8 @@ export interface ReviewRequest {
   rewriteLine?: string;
   /** Shown when Apply updates the card's links to Obsidian notes; the screen may have no rows besides it. */
   linksLine?: string;
+  /** Shown when Apply puts right a damaged photo in the note; the screen may have no rows besides it. */
+  photoLine?: string;
   /** The address book whose card the server column shows: the target, or for a move the book it comes from. */
   serverName: string;
   /** Lines shown above the table (an address book whose contact list could not be read). */
@@ -271,6 +276,7 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
       moveLine: move ? `Address book: ${move.from.name} -> ${target.name}` : undefined,
       rewriteLine: review.rewriteRelations ? REWRITE_LINE : undefined,
       linksLine: review.rewriteLinks ? LINKS_LINE : undefined,
+      photoLine: review.damagedNotePhoto ? PHOTO_LINE : undefined,
       serverName: (move?.from ?? target).name,
       warnings: (contexts.unreadable ?? []).map(
         (id) => `Could not read ${sourceName(id)}; relationships to people only in that address book may show as changed.`,

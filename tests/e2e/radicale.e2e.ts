@@ -1252,4 +1252,94 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(await sync(mia)).toBe('unchanged');
     expect(pushes).toEqual([]);
   });
+
+  it.each([['3.0'], ['4.0']])('24. %s: a note photo survives Radicale, other edits, a phone edit and its removal', async (version) => {
+    // Radicale (vobject) damages a vCard 4.0 data URI photo to `data:image/png\\;base64`; 3.0 ENCODING=b is intact.
+    const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const photo = `data:image/png;base64,${PNG}`;
+    const uid = `C0FFEE00-0000-4000-8000-00000000026${version === '3.0' ? '3' : '4'}`;
+    const href = `${BOOK}photo-${version}.vcf`;
+    await putCard(href, ['BEGIN:VCARD', `VERSION:${version}`, `UID:${uid}`, 'FN:Foto Test', 'N:Test;Foto;;;', 'END:VCARD', ''].join('\r\n'));
+    const note = await importCard(href);
+    const photoOnServer = async () => unfolded(await serverCard(href)).filter((l) => /^PHOTO/i.test(l));
+
+    // Added in the note: pushed once, then up to date.
+    note.frontmatter.photo = photo;
+    expect(await sync(note)).toBe('pushed');
+    if (version === '4.0') expect(await photoOnServer()).toEqual([expect.stringMatching(/^PHOTO:data:image\/png\\;base64$/i)]);
+    expect(await sync(note)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+
+    // Another note edit: one push, without the photo coming back as a difference.
+    note.frontmatter.title = 'Fotograaf';
+    expect(await sync(note)).toBe('pushed');
+    expect(await sync(note)).toBe('unchanged');
+
+    // A phone edits the card: pulled, no photo row and no push.
+    const card = await serverCard(href);
+    await putCard(href, card.replace('END:VCARD', 'NICKNAME:Flits\r\nEND:VCARD'));
+    expect(await sync(note)).toBe('pulled');
+    expect(pushes).toEqual([]);
+    expect(note.frontmatter).toMatchObject({ photo, nickname: 'Flits' });
+    expect(await sync(note)).toBe('unchanged');
+
+    if (version === '4.0') {
+      // A phone that could not read the damaged photo (DAVx5) sends the card back without any PHOTO line: no removal.
+      const dropped = unfolded(await serverCard(href))
+        .filter((l) => !/^(\w+\.)?PHOTO[;:]/i.test(l))
+        .map((l) => (/^NICKNAME:/i.test(l) ? 'NICKNAME:Bliksem' : l));
+      await putCard(href, [...dropped, ''].join('\r\n'));
+      expect(await photoOnServer()).toEqual([]);
+      expect(await sync(note)).toBe('pulled');
+      expect(pushes).toEqual([]);
+      expect(note.frontmatter).toMatchObject({ photo, nickname: 'Bliksem' });
+      expect(await sync(note)).toBe('unchanged');
+    }
+
+    // Removed in the note: removed on the server.
+    delete note.frontmatter.photo;
+    expect(await sync(note)).toBe('pushed');
+    expect(await photoOnServer()).toEqual([]);
+    expect(await sync(note)).toBe('unchanged');
+    expect(unfolded(await serverCard(href))).toContain(`VERSION:${version}`);
+  });
+
+  it('25. 4.0: a contact an earlier version damaged: the note is put right without a push; a photo put back, or new while a phone adds one, is pushed once', async () => {
+    const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const photo = `data:image/png;base64,${PNG}`;
+    const uid = 'C0FFEE00-0000-4000-8000-000000000270';
+    const href = `${BOOK}photo-damaged.vcf`;
+    await putCard(href, ['BEGIN:VCARD', 'VERSION:4.0', `UID:${uid}`, 'FN:Foto Schade', 'N:Schade;Foto;;;', `PHOTO:${photo}`, 'END:VCARD', ''].join('\r\n'));
+    const photoOnServer = async () => unfolded(await serverCard(href)).filter((l) => /^PHOTO/i.test(l));
+    expect(await photoOnServer()).toEqual([String.raw`PHOTO:data:image/png\;base64`]);
+    // What an earlier version left: the damaged value in the note, the damaged card as the base.
+    const note = await importCard(href);
+    expect(note.frontmatter.photo).toBe(String.raw`data:image/png\;base64`);
+
+    // Put right in the note, nothing pushed; then up to date.
+    expect(await sync(note)).toBe('pulled');
+    expect(pushes).toEqual([]);
+    expect(note.frontmatter.photo).toBeUndefined();
+    expect(await sync(note)).toBe('unchanged');
+
+    // The owner puts the photo back: pushed once, then up to date.
+    note.frontmatter.photo = photo;
+    expect(await sync(note)).toBe('pushed');
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0].replace(/\r\n[ \t]/g, '')).toContain(`PHOTO:${photo}`);
+    expect(await sync(note)).toBe('unchanged');
+    expect(note.frontmatter.photo).toBe(photo);
+
+    // A new photo in the note while a phone adds another: the note's is pushed, not lost.
+    const other = `data:image/png;base64,${PNG.replace('iVBOR', 'iVBOQ')}`;
+    delete note.frontmatter.photo;
+    expect(await sync(note)).toBe('pushed');
+    expect(await photoOnServer()).toEqual([]);
+    note.frontmatter.photo = other;
+    await putCard(href, (await serverCard(href)).replace('END:VCARD', `PHOTO:${photo}\r\nEND:VCARD`));
+    expect(await sync(note)).toBe('pushed');
+    expect(pushes[0].replace(/\r\n[ \t]/g, '').match(/^PHOTO.*$/gm)).toEqual([`PHOTO:${other}`]);
+    expect(await sync(note)).toBe('unchanged');
+    expect(note.frontmatter.photo).toBe(other);
+  });
 });

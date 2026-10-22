@@ -10,6 +10,7 @@ import { withUnfilledDates } from "src/contacts/friendly/dateLabels";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { MappingRow } from "src/contacts/friendly/mapping";
+import { photoDamagedOn, repairDamagedPhotos, repairNotePhotos } from "src/contacts/friendly/photo";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
@@ -450,16 +451,19 @@ export async function friendlyNoteCard(
   );
   const base = uid !== "" && source ? await contactSyncState(source.id, app).get(uid) : undefined;
   let lines;
+  // A damaged photo (one an earlier version wrote into the note, or in an old base) is put right as Sync does: the
+  // base's photo, or none (see repairNotePhotos).
+  const baseLines = base ? repairDamagedPhotos(parseCard(base.raw), []).lines : [];
+  const noteProps = repairNotePhotos(props, baseLines).props;
   if (base) {
-    const baseLines = parseCard(base.raw);
     // Read the way it was stored, so lines an older reader ignored are not taken for relationships removed in the note.
     const reader = readerOf(base.reader);
     const before = toFriendly(baseLines, rows, ctx, { reader, ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults });
     // A date with a label added after the base was stored, or a part an older reader did not read, may never have
     // been filled into the note: not a removal.
-    lines = patch(baseLines, before, withUnfilledDates(props, before.props, rows, base.storedAt, reader), rows, ctx).lines;
+    lines = patch(baseLines, before, withUnfilledDates(noteProps, before.props, rows, base.storedAt, reader), rows, ctx).lines;
   } else {
-    lines = newCard(props, rows, ctx).lines;
+    lines = newCard(noteProps, rows, ctx).lines;
   }
   return serializeCard(lines);
 }
@@ -503,15 +507,20 @@ export async function importRemoteCard(
   source: Source,
   options: { relinkLater?: { uid: string; path: string }[] } = {},
 ): Promise<ImportOutcome> {
-  const imported = await importCard(app, pulled.raw, { source: source.name });
+  // A photo the server damaged holds no image: neither the note nor the base gets it (see repairDamagedPhotos).
+  const sent = parseCard(pulled.raw);
+  const { lines, repaired } = repairDamagedPhotos(sent, []);
+  const raw = repaired ? serializeCard(lines) : pulled.raw;
+  const imported = await importCard(app, raw, { source: source.name });
   if (!imported) return "unnamed";
   // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
   if (imported.uid !== "" && imported.written) {
     await contactSyncState(source.id, app).set(imported.uid, {
-      raw: pulled.raw,
+      raw,
       etag: pulled.etag || meta.etag || "",
       href: pulled.href || meta.href,
       reader: CURRENT_READER,
+      ...(photoDamagedOn(sent, false) ? { photoDamaged: true } : {}),
     });
   }
   if (imported.written && imported.path !== undefined && hasFixedNoteName(effectiveLayout())) {

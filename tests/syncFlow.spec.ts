@@ -6,7 +6,7 @@ import type { Source } from 'src/settings/settings.d';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { Choice } from 'src/sync/review';
-import { LINKS_LINE, MAX_REOPENS, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
+import { LINKS_LINE, MAX_REOPENS, PHOTO_LINE, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -927,5 +927,29 @@ describe('syncFlow: also changes and rename', () => {
     ]);
     await t.run();
     expect(also).toEqual([]);
+  });
+});
+
+describe('syncFlow: a damaged photo in the note', () => {
+  it('the only difference: the review has the photo line and no changed row; Apply removes it from the note', async () => {
+    const t = setup({ local: { ...JAN, photo: String.raw`data:image/png\;base64`, source: 'Radicale' } });
+    const href = t.radicale.seed(card('06-1'));
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pulled' });
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].photoLine).toBe(PHOTO_LINE);
+    expect(t.requests[0].prepared.rows.filter((r) => r.changed)).toEqual([]);
+    expect(t.note.frontmatter).not.toHaveProperty('photo');
+    expect(t.radicale.cards.get(href)!.raw).not.toMatch(/PHOTO/);
+    t.requests.length = 0;
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
+    expect(t.requests).toEqual([]);
+  });
+
+  it('a note without a damaged photo has no photo line', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card('06-1'));
+    await t.run();
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].photoLine).toBeUndefined();
   });
 });
