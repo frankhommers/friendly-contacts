@@ -1053,6 +1053,20 @@ describe('write key per vCard version', () => {
     expect(edit(lines, { name: 'A', gender: 'O', 'gender-identity': 'queer' })).toContain('GENDER:O;queer');
   });
 
+  it('changing the sex on a GENDER line a server stored with an escaped ; keeps the identity', () => {
+    const lines = card4('FN:A', String.raw`GENDER:O\;non-binair`, 'REV:x');
+    const props = toFriendly(lines, DEFAULT_MAPPING, ctx).props;
+    expect(edit(lines, { ...props, gender: 'F' })).toContain('GENDER:F;non-binair');
+  });
+
+  it('editing another field leaves a GENDER line a server stored with an escaped ; as it was', () => {
+    const lines = card4('FN:A', 'TEL;TYPE=CELL:06 1', String.raw`GENDER:O\;non-binair`, 'REV:x');
+    const props = toFriendly(lines, DEFAULT_MAPPING, ctx).props;
+    const after = patch(lines, toFriendly(lines, DEFAULT_MAPPING, ctx), { ...props, mobile: '06 2' }, DEFAULT_MAPPING, ctx).lines;
+    expect(texts(after)).toContain('TEL;TYPE=CELL:06 2');
+    expect(after.find((l) => l.name === 'GENDER')).toBe(lines.find((l) => l.name === 'GENDER'));
+  });
+
   it('patches the department of an ORG line and keeps the escaped company', () => {
     const lines = card4('FN:A', 'ORG:A\\;B;Sales', 'REV:x');
     expect(toFriendly(lines, DEFAULT_MAPPING, ctx).props).toMatchObject({ company: 'A;B', department: 'Sales' });
