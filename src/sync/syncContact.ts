@@ -15,7 +15,7 @@ import { rowsForBase, withFilledLeftOut, withUnfilledDates } from 'src/contacts/
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { NoteLink, NoteLinkOptions, noteLinksDiffer, noteLinkUrl, wantedNoteLinks } from 'src/contacts/friendly/noteLinks';
-import { notePhotoLines, repairDamagedPhotos, repairNotePhotos } from 'src/contacts/friendly/photo';
+import { notePhotoLines, photoDamagedOn, repairDamagedPhotos, repairNotePhotos, restoreDroppedPhotos } from 'src/contacts/friendly/photo';
 import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
 import {
   CURRENT_READER,
@@ -86,8 +86,9 @@ export interface PreparedSync {
   /**
    * `raw` is the card as the server sent it (for staleness checks); `lines`, `friendly` and `baseRaw` (what is stored
    * as the base when the card is not written) are the card with damaged photos put back (`repairDamagedPhotos`).
+   * `photoDamaged`: the server's copy of the photo is damaged (`photoDamagedOn`), stored with a base of this card.
    */
-  server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string; baseRaw: string };
+  server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string; baseRaw: string; photoDamaged: boolean };
   base?: Props;
   /**
    * The base for the rename check, when the base was read without some of the rows: `base` plus the base's values
@@ -181,21 +182,29 @@ export async function prepareSync(
     //   pushed; Apply writes the note with the result, which removes it.
     // - on the server card: the base's photo, or none; without a base (never synced) the note's photo. With a base,
     //   the note's photo never stands in for it: a photo new in the note must still be pushed.
+    // - gone from the server card while the base remembers that the server damaged it (`photoDamaged`): a phone that
+    //   could not read it sends the card back without any PHOTO line, which is no removal. The base's photo.
     const baseLines = baseEntry ? repairDamagedPhotos(parseCard(baseEntry.raw), []).lines : undefined;
     const notePhotos = repairNotePhotos(local, baseLines ?? []);
     local = notePhotos.props;
-    const repair = (lines: VCardLine[]) => repairDamagedPhotos(lines, baseLines ?? notePhotoLines(local, lines));
+    const wasDamaged = baseEntry?.photoDamaged === true;
+    const repair = (lines: VCardLine[]) => {
+      const repaired = repairDamagedPhotos(lines, baseLines ?? notePhotoLines(local, lines));
+      if (!wasDamaged || !baseLines) return repaired;
+      const restored = restoreDroppedPhotos(repaired.lines, baseLines);
+      return { lines: restored.lines, repaired: repaired.repaired || restored.repaired };
+    };
 
     let server: PreparedSync['server'];
     if (where.move) {
       const { from, adapter } = where.move;
       const pulled = await pullCard(adapter, from.href, uid);
-      server = serverCard(pulled, from.href, pulled.etag || from.etag, deps, repair);
+      server = serverCard(pulled, from.href, pulled.etag || from.etag, deps, repair, wasDamaged);
     } else {
       const meta = lookup ? await findCard(deps.adapter, uid) : undefined;
       if (meta) {
         const pulled = await pullCard(deps.adapter, meta.href, uid);
-        server = serverCard(pulled, meta.href, pulled.etag || meta.etag, deps, repair);
+        server = serverCard(pulled, meta.href, pulled.etag || meta.etag, deps, repair, wasDamaged);
       } else if (baseEntry) {
         // A synced card that is gone (deleted, or not found by the lookup) is never silently recreated as a duplicate.
         throw new SyncError(`${typeof local.name === 'string' ? local.name : uid} was not found on the server.`);
@@ -246,8 +255,9 @@ export async function prepareSync(
       // The only writes before Apply (spec): when both sides agree, the card is stored as the base on a first Sync,
       // and over a base read without some of the rows (a date with a label added after it was stored, a part of an
       // older reader), so those rows count for this contact from now on.
-      if (!baseEntry || baseRows.length < deps.rows.length) {
-        await deps.state.set(uid, { raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER });
+      // And when what the base remembers about the server's photo changed (`photoDamaged`).
+      if (!baseEntry || baseRows.length < deps.rows.length || wasDamaged !== server.photoDamaged) {
+        await deps.state.set(uid, withPhotoDamaged({ raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER }, server.photoDamaged));
       }
       return { kind: 'upToDate' };
     }
@@ -278,10 +288,33 @@ function serverCard(
   etag: string | undefined,
   deps: SyncDeps,
   repair: (lines: VCardLine[]) => { lines: VCardLine[]; repaired: boolean },
+  wasDamaged: boolean,
 ): NonNullable<PreparedSync['server']> {
-  const { lines, repaired } = repair(parseCard(pulled.raw));
+  const sent = parseCard(pulled.raw);
+  const { lines, repaired } = repair(sent);
   const friendly = canonicalFriendly(readCard(lines, deps.rows, deps.readOnlyCtx, deps), deps);
-  return { lines, friendly, href, etag: etag ?? '', raw: pulled.raw, baseRaw: repaired ? serializeCard(lines) : pulled.raw };
+  const baseRaw = repaired ? serializeCard(lines) : pulled.raw;
+  return { lines, friendly, href, etag: etag ?? '', raw: pulled.raw, baseRaw, photoDamaged: photoDamagedOn(sent, wasDamaged) };
+}
+
+/** `entry` with `photoDamaged` set when true, and without it otherwise. */
+function withPhotoDamaged(entry: SyncStateEntry, photoDamaged: boolean): SyncStateEntry {
+  const { photoDamaged: _, ...rest } = entry;
+  return photoDamaged ? { ...rest, photoDamaged: true } : rest;
+}
+
+/**
+ * Whether the server's copy of the photo is damaged after `raw` was written to `href`: read back when `raw` holds a
+ * photo (the server may damage it on the way in), else, or when it cannot be read, `previous`.
+ */
+async function photoDamagedAfterWrite(adapter: AdapterInterface, href: string, raw: string, previous: boolean): Promise<boolean> {
+  if (!parseCard(raw).some((l) => l.name === 'PHOTO')) return previous;
+  try {
+    const stored = await adapter.pull(href);
+    return isResponse(stored) || !stored ? previous : photoDamagedOn(parseCard(stored.raw), previous);
+  } catch {
+    return previous;
+  }
 }
 
 /** Every card read in Sync: the card's own links to Obsidian notes are never read (no `website`, no row). */
@@ -381,9 +414,12 @@ export async function applySync(
         if (res.status === 412) return { kind: 'stale', reason: 'server' };
         if (!succeeded(res)) return { kind: 'failed', message: describeResponse(res) };
         // Without an ETag in the response the base keeps etag ''; the base etag is never used for If-Match.
-        stored = { raw, etag: responseEtag(res), href: server.href, reader: CURRENT_READER };
+        stored = withPhotoDamaged(
+          { raw, etag: responseEtag(res), href: server.href, reader: CURRENT_READER },
+          await photoDamagedAfterWrite(deps.adapter, server.href, raw, server.photoDamaged),
+        );
       } else {
-        stored = { raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER };
+        stored = withPhotoDamaged({ raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER }, server.photoDamaged);
       }
     }
 
@@ -433,7 +469,7 @@ async function applyMove(
     prepared.uid,
     { adapter: move.adapter, state: move.state, location: { ...move.from, etag: server.etag } },
     { adapter: deps.adapter, state: deps.state },
-    { deferBase: true }, // applySync stores the base after the note (card, note, base).
+    { deferBase: true, photoDamaged: server.photoDamaged }, // applySync stores the base after the note (card, note, base).
   );
   if (!result.ok) return { kind: 'failed', message: result.message };
   if (!result.base) throw new SyncError('the move returned no base.');
@@ -476,7 +512,13 @@ function isUnrepresentable(property: string, rows: MappingRow[]): boolean {
  * The base for a card just created with If-None-Match (`res` is the PUT's response). The server picks the href;
  * ask for it. The base must still be stored when that lookup fails.
  */
-export async function createdBase(adapter: AdapterInterface, id: string, raw: string, res: AppHttpResponse): Promise<SyncStateEntry> {
+export async function createdBase(
+  adapter: AdapterInterface,
+  id: string,
+  raw: string,
+  res: AppHttpResponse,
+  previousPhotoDamaged = false,
+): Promise<SyncStateEntry> {
   let meta: VCardMeta | undefined;
   try {
     const found = await adapter.getMetaByUid(id);
@@ -484,12 +526,9 @@ export async function createdBase(adapter: AdapterInterface, id: string, raw: st
   } catch {
     meta = undefined;
   }
-  return {
-    raw,
-    etag: responseEtag(res) || meta?.etag || '',
-    href: meta?.href ?? `${encodeURIComponent(id)}.vcf`,
-    reader: CURRENT_READER,
-  };
+  const href = meta?.href ?? `${encodeURIComponent(id)}.vcf`;
+  const base = { raw, etag: responseEtag(res) || meta?.etag || '', href, reader: CURRENT_READER };
+  return withPhotoDamaged(base, await photoDamagedAfterWrite(adapter, href, raw, previousPhotoDamaged));
 }
 
 /** getMetaByUid matches UIDs that merely contain ours; only an exact match is this contact's card. */

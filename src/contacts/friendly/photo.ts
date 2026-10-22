@@ -66,6 +66,29 @@ export function repairDamagedPhotos(lines: VCardLine[], fallback: VCardLine[]): 
 }
 
 /**
+ * Whether the server's copy of the photo is damaged, from a card as the server sent it: true when it holds a damaged
+ * photo, false when it holds only intact ones, and `previous` when it holds none (a phone that could not read the
+ * damaged photo sends the card back without it).
+ */
+export function photoDamagedOn(lines: VCardLine[], previous: boolean): boolean {
+  if (lines.some(isDamagedLine)) return true;
+  return lines.some(isPhotoLine) ? false : previous;
+}
+
+/**
+ * The card's lines with the intact photos of `fallback` (the card as last synced) added when the card holds no PHOTO
+ * line at all. Sync does this while the server's copy of the photo is damaged (`photoDamagedOn`): a phone that could
+ * not read it sends the card back without it, which is no removal. `repaired` is false, and `lines` the same array,
+ * when the card holds a PHOTO line or `fallback` has no intact photo.
+ */
+export function restoreDroppedPhotos(lines: VCardLine[], fallback: VCardLine[]): { lines: VCardLine[]; repaired: boolean } {
+  const photos = fallback.filter((l) => isPhotoLine(l) && !isDamagedLine(l));
+  if (lines.some(isPhotoLine) || photos.length === 0) return { lines, repaired: false };
+  // Without their group: the card's groups may mean something else by now.
+  return { lines: [...lines, ...photos.map((l) => (l.group ? { name: l.name, params: l.params, value: l.value } : l))], repaired: true };
+}
+
+/**
  * The note's photos with every damaged one (`isDamagedPhoto`) put back, as `repairDamagedPhotos` does for a card. An
  * earlier version wrote a damaged photo from the server into the note; such a value says nothing about the photo
  * either. Each one, in order, becomes the next photo of `fallback` (the card as last synced) that the note does not

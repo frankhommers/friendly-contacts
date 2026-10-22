@@ -10,7 +10,7 @@ import { withUnfilledDates } from "src/contacts/friendly/dateLabels";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { MappingRow } from "src/contacts/friendly/mapping";
-import { repairDamagedPhotos } from "src/contacts/friendly/photo";
+import { photoDamagedOn, repairDamagedPhotos } from "src/contacts/friendly/photo";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
@@ -505,7 +505,8 @@ export async function importRemoteCard(
   options: { relinkLater?: { uid: string; path: string }[] } = {},
 ): Promise<ImportOutcome> {
   // A photo the server damaged holds no image: neither the note nor the base gets it (see repairDamagedPhotos).
-  const { lines, repaired } = repairDamagedPhotos(parseCard(pulled.raw), []);
+  const sent = parseCard(pulled.raw);
+  const { lines, repaired } = repairDamagedPhotos(sent, []);
   const raw = repaired ? serializeCard(lines) : pulled.raw;
   const imported = await importCard(app, raw, { source: source.name });
   if (!imported) return "unnamed";
@@ -516,6 +517,7 @@ export async function importRemoteCard(
       etag: pulled.etag || meta.etag || "",
       href: pulled.href || meta.href,
       reader: CURRENT_READER,
+      ...(photoDamagedOn(sent, false) ? { photoDamaged: true } : {}),
     });
   }
   if (imported.written && imported.path !== undefined && hasFixedNoteName(effectiveLayout())) {

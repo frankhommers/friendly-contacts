@@ -20,7 +20,8 @@ export async function moveCard(
   uid: string,
   from: { adapter: AdapterInterface; state: SyncState; location: CardLocation },
   to: { adapter: AdapterInterface; state: SyncState },
-  opts: { deferBase?: boolean } = {},
+  /** `photoDamaged`: what the old base remembers about the server's photo (see SyncStateEntry.photoDamaged). */
+  opts: { deferBase?: boolean; photoDamaged?: boolean } = {},
 ): Promise<MoveResult> {
   if (!from.location.etag) {
     // Without an ETag the old card cannot be deleted safely; refuse before anything is written.
@@ -49,7 +50,7 @@ export async function moveCard(
     oldKept = true;
   }
 
-  const base = await createdBase(to.adapter, id, raw, created);
+  const base = await createdBase(to.adapter, id, raw, created, opts.photoDamaged ?? false);
   if (opts.deferBase) return { ok: true, oldKept, base };
   await to.state.set(uid, base);
   await from.state.remove(uid);

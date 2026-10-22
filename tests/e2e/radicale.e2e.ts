@@ -1283,6 +1283,19 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(note.frontmatter).toMatchObject({ photo, nickname: 'Flits' });
     expect(await sync(note)).toBe('unchanged');
 
+    if (version === '4.0') {
+      // A phone that could not read the damaged photo (DAVx5) sends the card back without any PHOTO line: no removal.
+      const dropped = unfolded(await serverCard(href))
+        .filter((l) => !/^(\w+\.)?PHOTO[;:]/i.test(l))
+        .map((l) => (/^NICKNAME:/i.test(l) ? 'NICKNAME:Bliksem' : l));
+      await putCard(href, [...dropped, ''].join('\r\n'));
+      expect(await photoOnServer()).toEqual([]);
+      expect(await sync(note)).toBe('pulled');
+      expect(pushes).toEqual([]);
+      expect(note.frontmatter).toMatchObject({ photo, nickname: 'Bliksem' });
+      expect(await sync(note)).toBe('unchanged');
+    }
+
     // Removed in the note: removed on the server.
     delete note.frontmatter.photo;
     expect(await sync(note)).toBe('pushed');

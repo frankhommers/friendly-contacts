@@ -18,6 +18,11 @@ export interface SyncStateEntry {
   reader?: number;
   /** When the base was stored (ms since epoch); `set` records the time when absent. Absent: stored before it was recorded. */
   storedAt?: number;
+  /**
+   * The server's copy of the photo was damaged when the base was stored (`isDamagedPhoto`), or the server has had no
+   * photo since: a phone could not read it, so a card without any PHOTO line is no removal. Absent: not damaged.
+   */
+  photoDamaged?: boolean;
 }
 
 export interface SyncState {
@@ -31,7 +36,7 @@ export interface SyncState {
   remove(uid: string): Promise<void>;
 }
 
-type SyncIndex = Record<string, { etag: string; href: string; reader?: number; storedAt?: number }>;
+type SyncIndex = Record<string, { etag: string; href: string; reader?: number; storedAt?: number; photoDamaged?: boolean }>;
 
 /** A safe file name per UID, one-to-one: other characters (and `_` itself) become `_<hex>_`. */
 const fileNameOf = (uid: string) =>
@@ -77,6 +82,7 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
       const entry: SyncStateEntry = { raw, etag: meta.etag, href: meta.href };
       if (typeof meta.reader === 'number') entry.reader = meta.reader;
       if (typeof meta.storedAt === 'number') entry.storedAt = meta.storedAt;
+      if (meta.photoDamaged === true) entry.photoDamaged = true;
       return entry;
     },
     set(uid, entry) {
@@ -88,6 +94,7 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
           href: entry.href,
           ...(entry.reader === undefined ? {} : { reader: entry.reader }),
           storedAt: entry.storedAt ?? Date.now(),
+          ...(entry.photoDamaged ? { photoDamaged: true } : {}),
         };
         await writeIndex(index);
       });

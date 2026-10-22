@@ -1,6 +1,14 @@
 import { parseCard, serializeLine } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { isDamagedPhoto, isPhotoProperty, notePhotoLines, repairDamagedPhotos, repairNotePhotos } from 'src/contacts/friendly/photo';
+import {
+  isDamagedPhoto,
+  isPhotoProperty,
+  notePhotoLines,
+  photoDamagedOn,
+  repairDamagedPhotos,
+  repairNotePhotos,
+  restoreDroppedPhotos,
+} from 'src/contacts/friendly/photo';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { toFriendly } from 'src/contacts/friendly/translate';
 import { describe, expect, it } from 'vitest';
@@ -105,5 +113,30 @@ describe('repairNotePhotos', () => {
     expect(repairNotePhotos({ photo: D, 'photo-2': A }, v4(`PHOTO:${A}`)).props).toEqual({ photo: A });
     expect(repairNotePhotos({ photo: D, 'photo-2': A }, v4(`PHOTO:${A}`, `PHOTO:${B}`)).props).toEqual({ photo: B, 'photo-2': A });
     expect(repairNotePhotos({ photo: A, 'photo-3': D, 'photo-2': D }, []).props).toEqual({ photo: A });
+  });
+});
+
+describe('photoDamagedOn', () => {
+  it('a damaged photo: true; only intact photos: false; no photo: as before', () => {
+    expect(photoDamagedOn(v4(DAMAGED), false)).toBe(true);
+    expect(photoDamagedOn(v4(`PHOTO:${A}`, DAMAGED), false)).toBe(true);
+    expect(photoDamagedOn(v4(`PHOTO:${A}`), true)).toBe(false);
+    expect(photoDamagedOn(v4('TITLE:Baker'), true)).toBe(true);
+    expect(photoDamagedOn(v4('TITLE:Baker'), false)).toBe(false);
+  });
+});
+
+describe('restoreDroppedPhotos', () => {
+  it('a card without any PHOTO line gets the intact photos of the fallback, without their group', () => {
+    const { lines, repaired } = restoreDroppedPhotos(v4('TITLE:Baker'), v4(`PHOTO:${A}`, DAMAGED, `item3.PHOTO:${B}`));
+    expect(repaired).toBe(true);
+    expect(photos(lines)).toEqual([`PHOTO:${A}`, `PHOTO:${B}`]);
+  });
+
+  it('a card with a PHOTO line, or a fallback without an intact photo, is returned as it is', () => {
+    const withPhoto = v4(`PHOTO:${B}`);
+    expect(restoreDroppedPhotos(withPhoto, v4(`PHOTO:${A}`))).toEqual({ lines: withPhoto, repaired: false });
+    const without = v4('TITLE:Baker');
+    expect(restoreDroppedPhotos(without, v4(DAMAGED))).toEqual({ lines: without, repaired: false });
   });
 });

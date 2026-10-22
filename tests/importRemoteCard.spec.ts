@@ -98,6 +98,7 @@ describe("importRemoteCard", () => {
     const base = await contactSyncState("s4", app).get("abc-1");
     expect(base?.raw).toContain("FN:Anna Jansen");
     expect(base?.raw).not.toMatch(/PHOTO/);
+    expect(base?.photoDamaged).toBe(true);
   });
 
   it("does not import a link to an Obsidian note this plugin wrote on the card as a website", async () => {

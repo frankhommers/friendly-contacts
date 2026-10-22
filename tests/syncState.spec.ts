@@ -78,6 +78,18 @@ describe('SyncState', () => {
     expect(await state.get('old')).not.toHaveProperty('reader');
   });
 
+  it('keeps that the server damaged the photo; touch keeps it too', async () => {
+    const { files, store } = memoryStore();
+    const state = createSyncState(store, 'sync');
+    await state.set('abc', { ...entry, photoDamaged: true });
+    expect(await state.get('abc')).toEqual({ ...kept, photoDamaged: true });
+    expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, storedAt: NOW, photoDamaged: true });
+    await state.touch('abc', NOW + 1);
+    expect((await state.get('abc'))?.photoDamaged).toBe(true);
+    await state.set('abc', entry);
+    expect(await state.get('abc')).not.toHaveProperty('photoDamaged');
+  });
+
   it('uid with urn:uuid prefix uses clean file name', async () => {
     const { store, files } = memoryStore();
     const state = createSyncState(store, 'sync');
