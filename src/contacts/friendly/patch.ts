@@ -8,7 +8,7 @@ import { cleanUid, generateUUID } from '../../util/vcard';
 import { normalizeNoteDate, noteDateFor, writeDate } from './dates';
 import { escapeText, getParam, joinStructured, serializeLine, splitStructured, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
-import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeLabel } from './mapping';
+import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeKeyFor, writeLabel } from './mapping';
 import { cardNoteLinks, NoteLink } from './noteLinks';
 import { HINT_PARAM, linkTarget, RelationContext, relationValue, uuidTarget } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
@@ -165,10 +165,10 @@ function patchDate(s: State, row: FieldRow, prov: Provenance | undefined, before
   if (!line) {
     // vCard 3.0 has no ANNIVERSARY: Apple and DAVx5 write a labelled X-ABDATE. A row that writes X-ABDATE (a date
     // with its own label) does so on 4.0 too, or the label is lost. Existing lines keep their form.
-    if (row.appleDateLabel !== undefined && (!isV4(s) || parseWriteKey(row.write).name === 'X-ABDATE')) {
+    if (row.appleDateLabel !== undefined && (!isV4(s) || parseWriteKey(writeKey(s, row)).name === 'X-ABDATE')) {
       s.added.push(...labelled(s, 'X-ABDATE', written.params, written.value, row.appleDateLabel));
       s.changed = true;
-    } else addLine(s, row.write, written.value, written.params);
+    } else addLine(s, writeKey(s, row), written.value, written.params);
     return;
   }
   const next = withValue(line, written.value, written.params);
@@ -221,7 +221,7 @@ function patchField(
     if (value === '') removeLine(s, prov.line);
     else if (value !== s.base[prov.line].value) setLine(s, prov.line, withValue(s.base[prov.line], value));
   } else if (value !== '') {
-    addLine(s, row.write, value);
+    addLine(s, writeKey(s, row), value);
   }
 }
 
@@ -237,6 +237,9 @@ function cardVersion(s: State): string {
 
 const isV4 = (s: State): boolean => cardVersion(s).trim() === '4.0';
 
+/** The key a new line for `row` is written under on this card: the row's 3.0 key on a card that is not 4.0. */
+const writeKey = (s: State, row: FieldRow | ComponentRow): string => writeKeyFor(row, cardVersion(s));
+
 /** PHOTO in the form the card's version expects; an edit keeps the group and drops the other params. */
 function patchPhoto(s: State, row: FieldRow, prov: Provenance | undefined, before: string, after: string): void {
   if (after !== '' && photoKey(before) === photoKey(after)) return;
@@ -249,7 +252,7 @@ function patchPhoto(s: State, row: FieldRow, prov: Provenance | undefined, befor
     if (photo) {
       s.added.push({ name: 'PHOTO', params: photo.params, value: photo.value });
       s.changed = true;
-    } else addLine(s, row.write, after);
+    } else addLine(s, writeKey(s, row), after);
     return;
   }
   const line = s.base[prov.line];
@@ -276,11 +279,12 @@ function patchComponent(
     return;
   }
   if (value === '') return;
-  let pending = s.newParts.get(row.write);
+  const write = writeKey(s, row);
+  let pending = s.newParts.get(write);
   if (!pending) {
-    const parts: string[] = Array(COMPONENT_COUNT[parseWriteKey(row.write).name] ?? 0).fill('');
-    pending = { line: addLine(s, row.write, ''), parts };
-    s.newParts.set(row.write, pending);
+    const parts: string[] = Array(COMPONENT_COUNT[parseWriteKey(write).name] ?? 0).fill('');
+    pending = { line: addLine(s, write, ''), parts };
+    s.newParts.set(write, pending);
   }
   setPart(pending.parts, row.index, value);
 }

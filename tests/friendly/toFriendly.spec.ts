@@ -414,3 +414,23 @@ describe('own note links', () => {
     expect(read.props).toEqual({ website: value });
   });
 });
+
+describe('every part of a structured value', () => {
+  it('reads the prefix and suffix of N', () => {
+    expect(translate(card('N:Jansen;Jan;;Dr;Jr')).props).toMatchObject({
+      lastname: 'Jansen',
+      firstname: 'Jan',
+      'name-prefix': 'Dr',
+      'name-suffix': 'Jr',
+    });
+  });
+
+  it('reads the department of ORG and unescapes the company', () => {
+    expect(translate(card('ORG:A\\;B;Sales')).props).toMatchObject({ company: 'A;B', department: 'Sales' });
+  });
+
+  it('reads GENDER and X-GENDER as sex and identity', () => {
+    expect(translate(card('GENDER:O;non-binair')).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
+    expect(translate(card('X-GENDER:M')).props).toMatchObject({ gender: 'M' });
+  });
+});

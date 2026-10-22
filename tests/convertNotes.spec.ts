@@ -105,6 +105,12 @@ describe('convertFrontmatter technical keys', () => {
     expect(result.remove).toEqual(['FN', 'N.PREFIX', 'N.SUFFIX']);
   });
 
+  it('converts an old-style GENDER and N.PREFIX to their friendly properties', () => {
+    const result = convertFrontmatter({ FN: 'Jan', GENDER: 'M', 'N.PREFIX': 'Dr' }, DEFAULT_MAPPING);
+    expect(result.set).toMatchObject({ gender: 'M', 'name-prefix': 'Dr' });
+    expect(result.remove).toEqual(expect.arrayContaining(['GENDER', 'N.PREFIX']));
+  });
+
   it('cleans technical keys from an otherwise friendly note', () => {
     expect(convertFrontmatter({ name: 'Jan', 'X-CREATED': '2019', VERSION: '3.0' }, DEFAULT_MAPPING)).toEqual({
       set: {},

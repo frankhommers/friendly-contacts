@@ -1012,3 +1012,74 @@ describe('links to Obsidian notes on cards', () => {
     });
   }
 });
+
+describe('write key per vCard version', () => {
+  const fresh = (props: Record<string, FriendlyValue>, version: '3.0' | '4.0', rows = DEFAULT_MAPPING) =>
+    texts(newCard(props, rows, ctx, version).lines);
+  const edit = (lines: VCardLine[], after: Record<string, FriendlyValue>, rows = DEFAULT_MAPPING) =>
+    texts(patch(lines, toFriendly(lines, rows, ctx), after, rows, ctx).lines);
+
+  it('a new gender line is GENDER on 4.0 and X-GENDER on 3.0', () => {
+    const v4 = fresh({ name: 'A', gender: 'M' }, '4.0');
+    expect(v4).toContain('GENDER:M');
+    expect(v4.some((l) => l.startsWith('X-GENDER'))).toBe(false);
+    const v3 = fresh({ name: 'A', gender: 'M' }, '3.0');
+    expect(v3).toContain('X-GENDER:M');
+    expect(v3.some((l) => l.startsWith('GENDER'))).toBe(false);
+  });
+
+  it('gender and identity share one line', () => {
+    const lines = fresh({ name: 'A', gender: 'O', 'gender-identity': 'non-binair' }, '3.0');
+    expect(lines.filter((l) => /GENDER/.test(l))).toEqual(['X-GENDER:O;non-binair']);
+  });
+
+  it('existing lines keep their field name on edit', () => {
+    const v3 = edit(card('FN:A', 'GENDER:M', 'REV:x'), { name: 'A', gender: 'F' });
+    expect(v3).toContain('GENDER:F');
+    expect(v3.some((l) => l.startsWith('X-GENDER'))).toBe(false);
+    const v4 = edit(card4('FN:A', 'X-GENDER:Male', 'REV:x'), { name: 'A', gender: 'F' });
+    expect(v4).toContain('X-GENDER:F');
+    expect(v4.some((l) => l.startsWith('GENDER'))).toBe(false);
+  });
+
+  it('clearing the sex keeps the identity; clearing both removes the line', () => {
+    const lines = card4('FN:A', 'GENDER:O;non-binair', 'REV:x');
+    expect(edit(lines, { name: 'A', 'gender-identity': 'non-binair' })).toContain('GENDER:;non-binair');
+    expect(edit(lines, { name: 'A' }).some((l) => l.includes('GENDER'))).toBe(false);
+  });
+
+  it('patches the department of an ORG line and keeps the escaped company', () => {
+    const lines = card4('FN:A', 'ORG:A\\;B;Sales', 'REV:x');
+    expect(toFriendly(lines, DEFAULT_MAPPING, ctx).props).toMatchObject({ company: 'A;B', department: 'Sales' });
+    expect(edit(lines, { name: 'A', company: 'A;B', department: 'Ops' })).toContain('ORG:A\\;B;Ops');
+  });
+
+  it('a new 3.0 card with only a name prefix has N:;;;Dr;', () => {
+    expect(fresh({ name: 'A', 'name-prefix': 'Dr' }, '3.0')).toContain('N:;;;Dr;');
+  });
+
+  it('a new home address with only a PO box has seven components', () => {
+    expect(fresh({ name: 'A', 'po-box': '12' }, '4.0')).toContain('ADR;TYPE=HOME:12;;;;;;');
+  });
+
+  it('any row with a writeV3 key follows the card version', () => {
+    const rows: typeof DEFAULT_MAPPING = [
+      ...DEFAULT_MAPPING,
+      { kind: 'field', property: 'x', read: ['X-FOO'], write: 'X-FOO', writeV3: 'X-BAR' },
+    ];
+    expect(fresh({ name: 'A', x: '1' }, '3.0', rows)).toContain('X-BAR:1');
+    const v4 = fresh({ name: 'A', x: '1' }, '4.0', rows);
+    expect(v4).toContain('X-FOO:1');
+    expect(v4.some((l) => l.startsWith('X-BAR'))).toBe(false);
+    const existing = edit(card('FN:A', 'X-FOO:1', 'REV:x'), { name: 'A', x: '2' }, rows);
+    expect(existing).toContain('X-FOO:2');
+    expect(existing.some((l) => l.startsWith('X-BAR'))).toBe(false);
+  });
+
+  it('untouched lines keep their raw text', () => {
+    const lines = card('FN:A', 'tel;type=cell:06 1', 'GENDER:M', 'ORG:Co;Sales', 'REV:x');
+    const after = patch(lines, toFriendly(lines, DEFAULT_MAPPING, ctx), { name: 'A', mobile: '06 1', gender: 'F', company: 'Co', department: 'Sales' }, DEFAULT_MAPPING, ctx).lines;
+    const rest = (ls: VCardLine[]) => ls.filter((l) => l.name !== 'REV' && l.name !== 'GENDER').map((l) => l.raw ?? serializeLine(l));
+    expect(rest(after)).toEqual(rest(lines));
+  });
+});
