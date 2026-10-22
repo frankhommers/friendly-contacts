@@ -6,7 +6,7 @@
 
 import { cleanUid, generateUUID } from '../../util/vcard';
 import { normalizeNoteDate, noteDateFor, writeDate } from './dates';
-import { escapeText, getParam, joinStructured, serializeLine, splitParts, typesOf, VCardLine } from './lines';
+import { COMPONENT_COUNT, escapeText, getParam, joinStructured, serializeLine, splitParts, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeKeyFor, writeLabel } from './mapping';
 import { cardNoteLinks, NoteLink } from './noteLinks';
@@ -27,9 +27,6 @@ export interface PatchOptions {
    */
   noteLinks?: { wanted: NoteLink[]; ownVaults: string[] };
 }
-
-/** Component count of structured values we may have to create from scratch. */
-const COMPONENT_COUNT: Record<string, number> = { ADR: 7, N: 5, ORG: 2 };
 
 /** Shared bookkeeping; line indexes refer to `base`, deletions apply at the end. */
 interface State {
@@ -273,7 +270,7 @@ function patchComponent(
   // An empty component has no provenance; its line is the first one feeding this row (as in toFriendly).
   const index = prov?.line ?? s.base.findIndex((line) => rowForLine(line, rows).includes(row));
   if (index >= 0) {
-    const parts = s.parts.get(index) ?? splitParts(s.base[index].value);
+    const parts = s.parts.get(index) ?? splitParts(s.base[index].name, s.base[index].value);
     setPart(parts, row.index, value);
     s.parts.set(index, parts);
     return;

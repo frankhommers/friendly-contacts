@@ -1059,6 +1059,12 @@ describe('write key per vCard version', () => {
     expect(edit(lines, { name: 'A', company: 'A;B', department: 'Ops' })).toContain('ORG:A\\;B;Ops');
   });
 
+  it('adding a department to an ORG with an escaped ; keeps the company whole', () => {
+    const lines = card4('FN:A', String.raw`ORG:A\;B`, 'REV:x');
+    const props = toFriendly(lines, DEFAULT_MAPPING, ctx).props;
+    expect(edit(lines, { ...props, department: 'Ops' })).toContain(String.raw`ORG:A\;B;Ops`);
+  });
+
   it('a new 3.0 card with only a name prefix has N:;;;Dr;', () => {
     expect(fresh({ name: 'A', 'name-prefix': 'Dr' }, '3.0')).toContain('N:;;;Dr;');
   });

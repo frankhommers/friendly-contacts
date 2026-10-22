@@ -63,7 +63,7 @@ function fieldValue(row: FieldRow, line: VCardLine): FriendlyValue | undefined {
 }
 
 function componentValue(row: ComponentRow, line: VCardLine): string | undefined {
-  const part = splitParts(line.value)[row.index];
+  const part = splitParts(line.name, line.value)[row.index];
   const text = part === undefined ? '' : unescapeText(part);
   return text === '' ? undefined : text;
 }

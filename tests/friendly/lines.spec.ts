@@ -87,12 +87,22 @@ describe('friendly lines', () => {
 
   it('splitParts reads a value a server flattened: escaped ; separate the parts when there is no unescaped ;', () => {
     const raw = String.raw;
-    expect(splitParts(raw`O\;non-binair`)).toEqual(['O', 'non-binair']);
-    expect(splitParts('O;non-binair')).toEqual(['O', 'non-binair']);
-    expect(splitParts(raw`A\;B;Sales`)).toEqual([raw`A\;B`, 'Sales']);
-    expect(splitParts('M')).toEqual(['M']);
-    expect(splitParts(raw`a\,b\\c\;d`)).toEqual([raw`a\,b\\c`, 'd']);
-    expect(splitParts(raw`a\\`)).toEqual([raw`a\\`]);
+    expect(splitParts('GENDER', raw`O\;non-binair`)).toEqual(['O', 'non-binair']);
+    expect(splitParts('X-GENDER', raw`O\;x`)).toEqual(['O', 'x']);
+    expect(splitParts('GENDER', 'O;non-binair')).toEqual(['O', 'non-binair']);
+    expect(splitParts('GENDER', 'M')).toEqual(['M']);
+    expect(splitParts('X-FOO', raw`a\,b\\c\;d`)).toEqual([raw`a\,b\\c`, 'd']);
+    expect(splitParts('X-FOO', raw`a\\`)).toEqual([raw`a\\`]);
+  });
+
+  it('splitParts never flattens a field the vCard format defines as made of parts', () => {
+    const raw = String.raw;
+    expect(splitParts('ORG', raw`A\;B`)).toEqual([raw`A\;B`]);
+    expect(splitParts('org', raw`A\;B`)).toEqual([raw`A\;B`]);
+    expect(splitParts('item1.ORG', raw`A\;B`)).toEqual([raw`A\;B`]);
+    expect(splitParts('ORG', raw`A\;B;Sales`)).toEqual([raw`A\;B`, 'Sales']);
+    expect(splitParts('N', raw`Smith\;Jones;Ann;;;`)).toEqual([raw`Smith\;Jones`, 'Ann', '', '', '']);
+    expect(splitParts('ADR', raw`;;Main St 1\;unit 3;;;;`)[2]).toBe(raw`Main St 1\;unit 3`);
   });
 
   it('bare 2.1 params become TYPE', () => {

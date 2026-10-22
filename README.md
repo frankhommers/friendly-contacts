@@ -507,7 +507,7 @@ Here’s a breakdown of supported vCard fields and their **human-readable meanin
 | `TITLE`             | Job Title                      | `Senior Developer`          |
 | `ROLE`              | Job Role                       | `Software Engineer`         |
 
-`GENDER` holds one letter, `M`, `F`, `O`, `N` or `U`, and may be followed by `;` and a free text identity (`O;non-binary`). In the note these are the `gender` and `gender-identity` properties. A vCard 3.0 card has no `GENDER`; there a new line is written as `X-GENDER`, and a line that is already on the card keeps its own name. Some servers, such as Radicale, store `O;non-binary` as `O\;non-binary`; the plugin reads both the same way. Phones do not show the gender.
+`GENDER` holds one letter, `M`, `F`, `O`, `N` or `U`, and may be followed by `;` and a free text identity (`O;non-binary`). In the note these are the `gender` and `gender-identity` properties. A vCard 3.0 card has no `GENDER`; there a new line is written as `X-GENDER`, and a line that is already on the card keeps its own name. Some servers, such as Radicale, store `O;non-binary` as `O\;non-binary`; the plugin reads both the same way. An identity that itself contains `;` does not survive such a server: `a;b` comes back as `a`. Phones do not show the gender.
 
 Dates without a year, such as a birthday or anniversary where the year is unknown, are written `--MM-DD` (for example `--03-15`). Keep the `birthday` and `anniversary` properties as Text properties in Obsidian; the Date type rejects that form.
 

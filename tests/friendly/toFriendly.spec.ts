@@ -429,6 +429,12 @@ describe('every part of a structured value', () => {
     expect(translate(card('ORG:A\\;B;Sales')).props).toMatchObject({ company: 'A;B', department: 'Sales' });
   });
 
+  it('reads an ORG with an escaped ; and no department as one company', () => {
+    const props = translate(card(String.raw`ORG:A\;B`)).props;
+    expect(props).toMatchObject({ company: 'A;B' });
+    expect(props.department).toBeUndefined();
+  });
+
   it('reads GENDER and X-GENDER as sex and identity', () => {
     expect(translate(card('GENDER:O;non-binair')).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
     expect(translate(card('X-GENDER:M')).props).toMatchObject({ gender: 'M' });
