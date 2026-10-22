@@ -4,23 +4,26 @@
  */
 
 import { readDate } from './dates';
-import { getParam, splitStructured, unescapeText, VCardLine } from './lines';
+import { getParam, splitParts, unescapeText, VCardLine } from './lines';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine } from './mapping';
+import { isOwnNoteLink } from './noteLinks';
 import { HINT_PARAM, RelationContext, relationValue, toLink } from './relations';
 
 export type FriendlyValue = string | string[];
 
 /**
  * How cards are read. 1: before Part 6 (no group labels, so `X-ABRELATEDNAMES` and `X-ABDATE` were not mapped, and
- * no `X-FRIENDLY-UID` hint); 2: every form. A sync base is read the way it was stored, so lines the old reader
- * ignored show as the server's additions instead of as removals made in the note.
+ * no `X-FRIENDLY-UID` hint); 2: every form; 3: as 2, with the rows marked `sinceReader: 3` (every part of N, ORG, ADR
+ * and GENDER). A sync base is read the way it was stored, so lines and parts the old reader ignored show as the
+ * server's additions instead of as removals made in the note (the rows: see `rowsForBase`).
  */
-export type Reader = 1 | 2;
-export const CURRENT_READER: Reader = 2;
+export type Reader = 1 | 2 | 3;
+export const CURRENT_READER: Reader = 3;
 
 /** The reader a stored sync base was read with: one stored before readers were recorded is 1. */
 export function readerOf(stored: number | undefined): Reader {
-  return stored !== undefined && stored >= 2 ? 2 : 1;
+  if (stored === undefined || stored < 2) return 1;
+  return stored >= 3 ? 3 : 2;
 }
 
 export type Provenance = { line: number; component?: number };
@@ -60,7 +63,7 @@ function fieldValue(row: FieldRow, line: VCardLine): FriendlyValue | undefined {
 }
 
 function componentValue(row: ComponentRow, line: VCardLine): string | undefined {
-  const part = splitStructured(line.value)[row.index];
+  const part = splitParts(line.name, line.value)[row.index];
   const text = part === undefined ? '' : unescapeText(part);
   return text === '' ? undefined : text;
 }
@@ -103,13 +106,18 @@ function groupLabels(lines: VCardLine[]): Map<string, string> {
   return labels;
 }
 
+/**
+ * `ownVaults`: the vaults whose note links the plugin writes on cards (see `isOwnNoteLink`); those lines feed no
+ * property. Provenance indexes stay those of the full `lines`.
+ */
 export function toFriendly(
   lines: VCardLine[],
   rows: MappingRow[],
   ctx: RelationContext,
-  opts: { reader?: Reader } = {},
+  opts: { reader?: Reader; ownVaults?: readonly string[] } = {},
 ): Friendly {
   const reader = opts.reader ?? CURRENT_READER;
+  const ownVaults = opts.ownVaults ?? [];
   const props: Record<string, FriendlyValue> = {};
   const source: Record<string, Provenance | Provenance[]> = {};
   const counts = new Map<MappingRow, number>();
@@ -138,6 +146,7 @@ export function toFriendly(
   const labels = reader === 1 ? new Map<string, string>() : groupLabels(lines);
 
   lines.forEach((line, index) => {
+    if (ownVaults.length > 0 && isOwnNoteLink(line, ownVaults)) return;
     const label = line.group === undefined ? undefined : labels.get(line.group.toLowerCase());
     for (const row of rowForLine(line, rows, label)) {
       if (row.kind === 'relation') {

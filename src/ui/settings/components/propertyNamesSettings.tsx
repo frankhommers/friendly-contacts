@@ -1,28 +1,54 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
-import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import {
+  isLabelledDateRow,
+  labelledDateRow,
+  mappingWithLabelledDate,
+  planDateFill,
+  readableLabel,
+  withLabelledDateRows,
+} from "src/contacts/friendly/dateLabels";
+import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
+import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
-
-/** A text input that keeps what is typed locally and hands it over when it loses focus. */
-function CommitInput({ value, onCommit, label }: { value: string; onCommit: (text: string) => void; label: string }) {
-  const [text, setText] = React.useState(value);
-  React.useEffect(() => setText(value), [value]);
-  return (
-    <input
-      type="text"
-      aria-label={label}
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => text !== value && onCommit(text)}
-    />
-  );
-}
+import { CommitInput } from "src/ui/settings/components/commitInput";
+import { DateLabelsSettings } from "src/ui/settings/components/dateLabelsSettings";
 
 const splitPatterns = (text: string): string[] =>
   text.split(",").map((p) => p.trim()).filter((p) => p !== "");
+
+/** A failed add or remove of a date with a label: a notice, and the error in the console. */
+const reportFailure = (action: "add" | "remove", property: string, error: unknown) => {
+  console.error(`Friendly Contacts: could not ${action} ${property}`, error);
+  new Notice(`Could not ${action} ${property}: ${error instanceof Error ? error.message : String(error)}`);
+};
+
+const SAME_AS_4 = "same as 4.0";
+
+/** The 0-based index for the Part a person typed (1, 2, ...); NaN for anything else, which `validateMapping` reports. */
+const partIndex = (text: string): number => {
+  const t = text.trim();
+  return /^\d+$/.test(t) && Number(t) >= 1 ? Number(t) - 1 : NaN;
+};
+
+/** The row with its vCard 3.0 write key set; an empty key removes it (the 3.0 card gets the 4.0 key). */
+const withWriteV3 = (row: MappingRow, key: string): MappingRow => {
+  if (row.kind === "relation") return row;
+  const { writeV3: _removed, ...rest } = row;
+  return (key === "" ? rest : { ...rest, writeV3: key }) as MappingRow;
+};
+
+/** What a relation is written as on a vCard 3.0 card: the label on `X-ABRELATEDNAMES`, or the 4.0 form without one. */
+const relationWriteV3 = (row: RelationRow): string => {
+  const label = (row.labels ?? [])[0]?.trim() ?? "";
+  return label === "" ? SAME_AS_4 : `X-ABRELATEDNAMES · label ${label}`;
+};
+
+const BASES_NOT_UPDATED = "Some sync bases could not be updated; see console.";
 
 export function PropertyNamesSettings({ app }: { app: App }) {
   const [rows, setRows] = React.useState<MappingRow[]>(() => getSettings().friendly.mapping);
@@ -31,6 +57,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   /** Bumped by `revert`: the inputs are remounted so they show the saved values even when `rows` did not change. */
   const [revision, setRevision] = React.useState(0);
   const [mirror, setMirror] = React.useState(() => mirrorRelationsOnThisDevice(app));
+  /** The Part text typed per row; shown while the row's part is invalid (NaN), so the input never reads "NaN". */
+  const [partText, setPartText] = React.useState<Record<number, string>>({});
 
   const save = async (mapping: MappingRow[]) => {
     const current = getSettings();
@@ -103,10 +131,137 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     return commit(renameRow(rows, from, to));
   };
 
+  /**
+   * Restores the default property names; the dates with a label are the owner's own and stay. When one of them has
+   * a name a default row takes back, nothing is saved and the errors show, as for an edit.
+   */
   const reset = async () => {
-    setRows(DEFAULT_MAPPING);
+    const defaults = withLabelledDateRows(DEFAULT_MAPPING, saved.current);
+    setRows(defaults);
+    const problems = validateMapping(defaults);
+    setErrors(problems);
+    if (problems.length > 0) return;
+    await saveWithRenames(defaults);
+  };
+
+  /** Saves `next` as it is (no renames) and shows it; a draft that was not saved is dropped. */
+  const saveRows = async (next: MappingRow[]) => {
+    await save(next);
+    setRows(next);
     setErrors([]);
-    await saveWithRenames(DEFAULT_MAPPING);
+    setRevision((r) => r + 1);
+  };
+
+  /**
+   * Adds a date with a label. The notes of contacts whose last-synced card holds such a date get the property first
+   * (after a confirmation), so Sync never reads the date as removed in Obsidian; the row is only saved when every
+   * note was filled. What is saved is built again from the mapping saved by then: a rename saved while the notes
+   * were read or the confirmation was open is kept, not undone. The row is saved with the time it is added
+   * (`since`): a sync base stored before then, on any device, is read without it (see `rowsForBase`).
+   * A failure (reading the notes, filling, saving) is a notice, never an unhandled rejection.
+   * Once the row is saved, every base this add considered (filled or not) is marked as stored at `since` or later: on
+   * this device they agree with the row, so a note filled from a base is not read against the base without the row.
+   * That is best effort: a failure is logged and a notice, and the add stays.
+   */
+  const addLabelledDate = async (label: string, property: string) => {
+    const row = labelledDateRow(readableLabel(label), property);
+    const first = mappingWithLabelledDate(saved.current, row);
+    if ("errors" in first) {
+      setErrors(first.errors);
+      return;
+    }
+    setErrors([]);
+    /** Saves the row on the mapping as saved now, then touches the bases; false (errors shown, nothing saved) when it no longer fits. */
+    const saveAdded = async (notes: NoteWithBase[]): Promise<boolean> => {
+      const since = Date.now();
+      const now = mappingWithLabelledDate(saved.current, { ...row, since });
+      if ("errors" in now) {
+        setErrors(now.errors);
+        new Notice(`Not added: the property names changed in the meantime, see the errors in the settings.`);
+        return false;
+      }
+      await saveRows(now.rows);
+      try {
+        const { failed } = await touchBases(app, notes, since);
+        if (failed.length > 0) new Notice(BASES_NOT_UPDATED);
+      } catch (error) {
+        console.error(`Friendly Contacts: could not update the sync bases after adding ${row.property}`, error);
+        new Notice(BASES_NOT_UPDATED);
+      }
+      return true;
+    };
+    try {
+      const notes = await notesWithBases(app);
+      const fills = planDateFill(notes, first.rows, row, noteLinkOptions(getSettings().noteLinks).ownVaults);
+      if (fills.length === 0) {
+        await saveAdded(notes);
+        return;
+      }
+      const n = fills.length;
+      new ConfirmModal(
+        app,
+        `Add ${row.property} to ${n} contact notes, from their last Sync?`,
+        "Add",
+        () => {
+          void (async () => {
+            try {
+              const { failed } = await fillNotes(app, fills);
+              if (failed.length > 0) {
+                console.log(`Friendly Contacts: ${row.property} not added, could not fill:\n${failed.join("\n")}`);
+                new Notice(`Not added: ${failed.length} contact notes could not be filled, see console.`);
+                return;
+              }
+              if (await saveAdded(notes)) new Notice(`Added ${row.property} to ${n} contact notes.`);
+            } catch (error) {
+              reportFailure("add", row.property, error);
+            }
+          })();
+        },
+        "Cancel",
+      ).open();
+    } catch (error) {
+      reportFailure("add", row.property, error);
+    }
+  };
+
+  /**
+   * Removes the date with a label at `index` (in `rows`). The dates stay on the cards; the property goes from the
+   * notes (after a confirmation), so a row added again later never pushes leftover values as new dates.
+   */
+  const removeLabelledDate = async (index: number) => {
+    const draft = rows[index];
+    if (!isLabelledDateRow(draft)) return;
+    const label = readableLabel(draft.appleDateLabel).toLowerCase();
+    const row = saved.current.find((r) => isLabelledDateRow(r) && readableLabel(r.appleDateLabel).toLowerCase() === label);
+    if (!row) return;
+    const next = saved.current.filter((r) => r !== row);
+    try {
+      const n = notesWithRowProperties(app, row).length;
+      if (n === 0) {
+        await saveRows(next);
+        return;
+      }
+      new ConfirmModal(
+        app,
+        `Remove ${row.property} from ${n} contact notes? The dates stay on the cards.`,
+        "Remove",
+        () => {
+          void (async () => {
+            try {
+              await saveRows(next);
+              const { removed, failed } = await removeRowProperties(app, row);
+              if (failed.length > 0) console.log(`Friendly Contacts: could not remove ${row.property} from:\n${failed.join("\n")}`);
+              new Notice(`Removed ${row.property} from ${removed} contact notes` + (failed.length > 0 ? `; ${failed.length} failed, see console` : ""));
+            } catch (error) {
+              reportFailure("remove", row.property, error);
+            }
+          })();
+        },
+        "Cancel",
+      ).open();
+    } catch (error) {
+      reportFailure("remove", row.property, error);
+    }
   };
 
   return (
@@ -117,6 +272,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           <div className="setting-item-description">
             The names of the properties in your contact notes, and the vCard fields they are read from and written to.
             Read patterns are comma separated, e.g. <code>TEL[CELL], TEL[IPHONE,CELL]</code>.
+            Part picks one part of a field made of parts (<code>ORG</code> part 2 is the department).
+            The vCard 3.0 column is used for new fields on vCard 3.0 cards; empty means the same as 4.0.
+            Changing Read from or Part does not refill your notes.
           </div>
         </div>
         <div className="setting-item-control">
@@ -159,11 +317,13 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           <tr>
             <th>Name</th>
             <th>Read from</th>
-            <th>Write as</th>
+            <th>Part</th>
+            <th>Write as (vCard 4.0)</th>
+            <th>Write as (vCard 3.0)</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {rows.map((row, i) => isLabelledDateRow(row) ? null : (
             <tr key={`${revision}-${i}`}>
               <td>
                 {isFixedProperty(row.property) ? (
@@ -191,16 +351,57 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                 )}
               </td>
               <td>
-                <CommitInput
-                  label={`Write key for ${row.property}`}
-                  value={row.write}
-                  onCommit={(text) => edit(i, (r) => ({ ...r, write: text.trim() }))}
-                />
+                {row.kind === "component" && (
+                  <CommitInput
+                    label={`Part for ${row.property}`}
+                    value={Number.isNaN(row.index) ? (partText[i] ?? "") : String(row.index + 1)}
+                    onCommit={(text) => {
+                      setPartText((typed) => ({ ...typed, [i]: text }));
+                      return edit(i, (r) => ({ ...r, index: partIndex(text) }) as MappingRow);
+                    }}
+                  />
+                )}
+              </td>
+              <td>
+                {row.kind === "relation" ? (
+                  <span className="vcf-mapping-readonly">{`RELATED;TYPE=${row.types[0] ?? ""}`}</span>
+                ) : (
+                  <CommitInput
+                    label={`Write key for ${row.property}`}
+                    value={row.write}
+                    onCommit={(text) => edit(i, (r) => ({ ...r, write: text.trim() }))}
+                  />
+                )}
+              </td>
+              <td>
+                {row.kind === "relation" ? (
+                  <span className="vcf-mapping-readonly">{relationWriteV3(row)}</span>
+                ) : row.kind === "field" && row.appleDateLabel !== undefined ? (
+                  <span className="vcf-mapping-readonly">{`X-ABDATE · label ${row.appleDateLabel}`}</span>
+                ) : isFixedProperty(row.property) ? (
+                  <span className="vcf-mapping-readonly">{row.writeV3?.trim() || SAME_AS_4}</span>
+                ) : (
+                  <CommitInput
+                    label={`vCard 3.0 write key for ${row.property}`}
+                    placeholder={SAME_AS_4}
+                    value={row.writeV3 ?? ""}
+                    onCommit={(text) => edit(i, (r) => withWriteV3(r, text.trim()))}
+                  />
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      <DateLabelsSettings
+        app={app}
+        rows={rows}
+        revision={revision}
+        onRename={(index, to) => { void rename(index, to); }}
+        onAdd={addLabelledDate}
+        onRemove={(index) => { void removeLabelledDate(index); }}
+      />
     </>
   );
 }

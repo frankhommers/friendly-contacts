@@ -30,7 +30,7 @@ vi.mock("src/sync/adapters", () => ({ activeSources: () => [], adapterFor: () =>
 vi.mock("src/context/sharedAppContext", () => ({ getApp: () => ({}), getPluginDir: () => "plugin" }));
 vi.mock("src/context/sharedSettingsContext", async () => {
   const { DEFAULT_SETTINGS } = await import("src/settings/setting");
-  const settings = { ...DEFAULT_SETTINGS, contactsFolder: "Contacts", sources: [], defaultSource: "" };
+  const settings = { ...DEFAULT_SETTINGS, contactsFolder: "Contacts", sources: [], defaultSource: "", noteLinks: { enabled: true, vaultName: "Notes", formerVaultNames: [] } };
   return { getSettings: () => settings, updateSetting: async () => {}, settings: { value: settings } };
 });
 
@@ -69,7 +69,7 @@ describe("importRemoteCard", () => {
     expect(await importRemoteCard(app, pulled, { href: "/abc-1.vcf" }, source)).toBe("imported");
     const note = state.files.get("Contacts/Anna Jansen.md");
     expect(note).toMatch(/^source: Work$/m);
-    expect(await contactSyncState("s1", app).get("abc-1")).toEqual({ raw: card, etag: "e1", href: "/abc-1.vcf", reader: 2 });
+    expect(await contactSyncState("s1", app).get("abc-1")).toEqual({ raw: card, etag: "e1", href: "/abc-1.vcf", reader: 3, storedAt: expect.any(Number) });
     expect(await contactSyncState("other", app).get("abc-1")).toBeUndefined();
   });
 
@@ -98,6 +98,18 @@ describe("importRemoteCard", () => {
     const base = await contactSyncState("s4", app).get("abc-1");
     expect(base?.raw).toContain("FN:Anna Jansen");
     expect(base?.raw).not.toMatch(/PHOTO/);
+  });
+
+  it("does not import a link to an Obsidian note this plugin wrote on the card as a website", async () => {
+    const withLink = [
+      "BEGIN:VCARD", "VERSION:3.0", "UID:abc-2", "FN:Anna Jansen", "N:Jansen;Anna;;;", "URL:https://a.example",
+      "item1.URL:obsidian://open?vault=Notes&file=Contacts%2FJan%2Findex", "item1.X-ABLabel:Jan", "END:VCARD", "",
+    ].join("\r\n");
+    expect(await importRemoteCard(fakeApp(), { uid: "abc-2", raw: withLink }, { href: "/abc-2.vcf" }, source)).toBe("imported");
+    const note = state.files.get("Contacts/Anna Jansen.md") ?? "";
+    expect(note).toMatch(/^website: "https:\/\/a\.example"$/m);
+    expect(note).not.toMatch(/website-2/);
+    expect(note).not.toMatch(/obsidian:/);
   });
 
   it("reports a card without a name as unnamed", async () => {

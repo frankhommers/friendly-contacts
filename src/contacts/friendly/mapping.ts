@@ -14,6 +14,10 @@ export type FieldRow = {
   property: string;
   read: Pattern[];
   write: string;
+  /** Written instead of `write` on a vCard 3.0 card (see `writeKeyFor`); blank or absent: same as `write`. */
+  writeV3?: string;
+  /** The reader version that added this row (see `sinceReader` in the migration and sync bases); absent: always there. */
+  sinceReader?: number;
   format?: 'date' | 'list';
   /** vCard 3.0 date written as `itemN.X-ABDATE` with this label (`Anniversary`); read with it too. */
   appleDateLabel?: string;
@@ -23,6 +27,11 @@ export type ComponentRow = {
   property: string;
   read: Pattern[];
   write: string;
+  /** Written instead of `write` on a vCard 3.0 card (see `writeKeyFor`); blank or absent: same as `write`. */
+  writeV3?: string;
+  /** The reader version that added this row (see `sinceReader` in the migration and sync bases); absent: always there. */
+  sinceReader?: number;
+  /** 0-based position of the part in the structured value. */
   index: number;
 };
 export type RelationRow = {
@@ -37,6 +46,18 @@ export type RelationRow = {
 };
 export type MappingRow = FieldRow | ComponentRow | RelationRow;
 
+/** A date the owner named in the settings: written `itemN.X-ABDATE` + `itemN.X-ABLabel`, read by its label alone. */
+export type LabelledDateRow = FieldRow & {
+  format: 'date';
+  write: 'X-ABDATE';
+  appleDateLabel: string;
+  /**
+   * When the row was added (ms since epoch); absent: always there. A sync base stored before then was read without
+   * the row, so the note may never have been filled from it (see `rowsForBase`).
+   */
+  since?: number;
+};
+
 const field = (
   property: string,
   read: Pattern[],
@@ -44,13 +65,30 @@ const field = (
   format?: 'date' | 'list',
 ): FieldRow => (format ? { kind: 'field', property, read, write, format } : { kind: 'field', property, read, write });
 
-const component = (property: string, read: Pattern[], write: string, index: number): ComponentRow => ({
+const component = (
+  property: string,
+  read: Pattern[],
+  write: string,
+  index: number,
+  extra: Partial<ComponentRow> = {},
+): ComponentRow => ({
   kind: 'component',
   property,
   read,
   write,
   index,
+  ...extra,
 });
+
+/** The reader version that added the part rows (prefix, suffix, department, gender, PO box, extra address line). */
+const PARTS_READER = 3;
+const GENDER_READ: Pattern[] = ['GENDER', 'X-GENDER'];
+
+/** The key to write a row's line under: `writeV3` on a card that is not vCard 4.0, else `write`. */
+export function writeKeyFor(row: FieldRow | ComponentRow, version: string): string {
+  const v3 = row.writeV3?.trim();
+  return version.trim() !== '4.0' && v3 ? v3 : row.write;
+}
 
 const relation = (
   property: string,
@@ -70,9 +108,11 @@ const WORK_ADR: Pattern[] = ['ADR[WORK]'];
 
 export const DEFAULT_MAPPING: MappingRow[] = [
   field('name', ['FN'], 'FN'),
+  component('name-prefix', ['N'], 'N', 3, { sinceReader: PARTS_READER }),
   component('firstname', ['N'], 'N', 1),
   component('middlename', ['N'], 'N', 2),
   component('lastname', ['N'], 'N', 0),
+  component('name-suffix', ['N'], 'N', 4, { sinceReader: PARTS_READER }),
   field('nickname', ['NICKNAME'], 'NICKNAME'),
   field('mobile', ['TEL[CELL]'], 'TEL;TYPE=CELL'),
   field('phone', ['TEL', 'TEL[HOME]', 'TEL[MAIN]'], 'TEL;TYPE=HOME'),
@@ -82,15 +122,22 @@ export const DEFAULT_MAPPING: MappingRow[] = [
   field('website', ['URL', 'URL[HOME]'], 'URL'),
   field('work-website', ['URL[WORK]'], 'URL;TYPE=WORK'),
   component('company', ['ORG'], 'ORG', 0),
+  component('department', ['ORG'], 'ORG', 1, { sinceReader: PARTS_READER }),
   field('title', ['TITLE'], 'TITLE'),
   field('role', ['ROLE'], 'ROLE'),
+  component('gender', GENDER_READ, 'GENDER', 0, { writeV3: 'X-GENDER', sinceReader: PARTS_READER }),
+  component('gender-identity', GENDER_READ, 'GENDER', 1, { writeV3: 'X-GENDER', sinceReader: PARTS_READER }),
   field('birthday', ['BDAY'], 'BDAY', 'date'),
   { ...field('anniversary', ['ANNIVERSARY'], 'ANNIVERSARY', 'date'), appleDateLabel: 'Anniversary' },
+  component('po-box', HOME_ADR, 'ADR;TYPE=HOME', 0, { sinceReader: PARTS_READER }),
+  component('address-extra', HOME_ADR, 'ADR;TYPE=HOME', 1, { sinceReader: PARTS_READER }),
   component('street', HOME_ADR, 'ADR;TYPE=HOME', 2),
   component('postcode', HOME_ADR, 'ADR;TYPE=HOME', 5),
   component('city', HOME_ADR, 'ADR;TYPE=HOME', 3),
   component('region', HOME_ADR, 'ADR;TYPE=HOME', 4),
   component('country', HOME_ADR, 'ADR;TYPE=HOME', 6),
+  component('work-po-box', WORK_ADR, 'ADR;TYPE=WORK', 0, { sinceReader: PARTS_READER }),
+  component('work-address-extra', WORK_ADR, 'ADR;TYPE=WORK', 1, { sinceReader: PARTS_READER }),
   component('work-street', WORK_ADR, 'ADR;TYPE=WORK', 2),
   component('work-postcode', WORK_ADR, 'ADR;TYPE=WORK', 5),
   component('work-city', WORK_ADR, 'ADR;TYPE=WORK', 3),
@@ -139,6 +186,23 @@ export function labelText(raw: string): string[] {
 /** The `X-ABLabel` value to write: Apple's form for a built-in label, else the label as is. */
 export function writeLabel(label: string): string {
   return APPLE_BUILTIN_LABELS.has(label.trim().toLowerCase()) ? `_$!<${label}>!$_` : label;
+}
+
+/** A label as shown to people: Apple's `_$!<Other>!$_` unwrapped, trimmed, case kept. */
+export function readableLabel(raw: string): string {
+  const text = raw.trim();
+  const apple = APPLE_LABEL.exec(text);
+  return (apple ? apple[1] : text).trim();
+}
+
+/** True for a date row of the "Dates with a label" table; the anniversary row (which writes `ANNIVERSARY`) is not one. */
+export function isLabelledDateRow(row: MappingRow): row is LabelledDateRow {
+  return (
+    row.kind === 'field' &&
+    row.format === 'date' &&
+    row.write.trim().toUpperCase() === 'X-ABDATE' &&
+    row.appleDateLabel !== undefined
+  );
 }
 
 type ParsedPattern = { name: string; types: string[] | '*' };
@@ -303,6 +367,71 @@ export function migrateMapping(stored: MappingRow[]): MappingRow[] {
   return rows;
 }
 
+/** The set of default rows a stored mapping has had added (`friendly.defaultRowsSeen`); set 1: the part rows. */
+export const DEFAULT_ROWS_SET = 1;
+
+type KeyedRow = FieldRow | ComponentRow;
+
+/** A default row of set 1 (it is added once by `addDefaultRows`). */
+const isNewInSet = (row: MappingRow): row is KeyedRow => row.kind !== 'relation' && row.sinceReader === PARTS_READER;
+
+/** The same row by `rowIdentity`, write keys compared ignoring case. */
+const sameIdentity = (a: MappingRow, b: MappingRow): boolean =>
+  rowIdentity(a).toUpperCase() === rowIdentity(b).toUpperCase();
+
+/** Two default rows on the same vCard field: same write key and read patterns. */
+const sameField = (a: KeyedRow, b: KeyedRow): boolean =>
+  a.write === b.write && a.read.length === b.read.length && a.read.every((p, i) => p === b.read[i]);
+
+/**
+ * Adds the default rows of set `DEFAULT_ROWS_SET` (marked `sinceReader`) to a stored mapping, once: with `seen` at or
+ * above the set nothing changes, so a row the owner removed does not come back. A new row
+ * - is skipped when a row has its name, or (after copying, below) its identity; and when no older default row reads
+ *   its field (it maps a field new to the mapping, e.g. gender) while a stored row reads one of its field names;
+ * - copies read patterns and both write keys from its sibling, the first older default row on the same field (else
+ *   the nearest new one before it, e.g. `gender` for `gender-identity`), as stored: the row with the sibling's
+ *   identity, else with its name, when it is of the same kind (else the row keeps its own keys). So a part follows
+ *   an edited write key and the field stays one line;
+ * - goes right after the stored counterpart of the nearest default row before it, else at the end.
+ */
+export function addDefaultRows(stored: MappingRow[], seen: number): { rows: MappingRow[]; seen: number } {
+  if (seen >= DEFAULT_ROWS_SET) return { rows: stored, seen };
+  const rows = [...stored];
+  const storedReads = (pattern: Pattern): boolean => {
+    const name = parsePattern(pattern)?.name;
+    return (
+      name !== undefined && stored.some((r) => r.kind !== 'relation' && r.read.some((p) => parsePattern(p)?.name === name))
+    );
+  };
+  const added = new Map<MappingRow, MappingRow>(); // default row -> the row added for it
+  const counterpart = (row: MappingRow): MappingRow | undefined =>
+    added.get(row) ?? rows.find((r) => sameIdentity(r, row)) ?? rows.find((r) => r.property === row.property);
+  DEFAULT_MAPPING.forEach((row, d) => {
+    if (!isNewInSet(row) || rows.some((r) => r.property === row.property)) return;
+    const onField = DEFAULT_MAPPING.filter((r, i): r is KeyedRow => i !== d && r.kind !== 'relation' && sameField(r, row));
+    const older = onField.find((r) => !isNewInSet(r));
+    if (!older && row.read.some(storedReads)) return;
+    const sibling = older ?? onField.filter((r) => DEFAULT_MAPPING.indexOf(r) < d).pop();
+    const found = sibling && counterpart(sibling);
+    const keys = found && found.kind === row.kind ? found : row;
+    const next: KeyedRow = { ...row, read: [...keys.read], write: keys.write };
+    if (keys.writeV3 !== undefined) next.writeV3 = keys.writeV3;
+    else delete next.writeV3;
+    if (rows.some((r) => sameIdentity(r, next))) return;
+    let insertAt = rows.length;
+    for (let i = d - 1; i >= 0; i--) {
+      const before = counterpart(DEFAULT_MAPPING[i]);
+      if (before) {
+        insertAt = rows.indexOf(before) + 1;
+        break;
+      }
+    }
+    rows.splice(insertAt, 0, next);
+    added.set(row, next);
+  });
+  return { rows, seen: DEFAULT_ROWS_SET };
+}
+
 /**
  * Rows whose names the code relies on (sync identity, card name, avatar): they cannot be renamed or removed.
  * Renaming `uid` would make Sync assign a new UID and create a duplicate card.
@@ -320,6 +449,8 @@ export function isFixedProperty(property: string): boolean {
 function rowIdentity(row: MappingRow): string {
   if (row.kind === 'relation') return `relation|${row.types.join(',')}`;
   if (row.kind === 'component') return `component|${row.write}|${row.index}`;
+  // They all write `X-ABDATE`; the label tells them apart.
+  if (isLabelledDateRow(row)) return `date-label|${readableLabel(row.appleDateLabel).toLowerCase()}`;
   return `field|${row.write}`;
 }
 
@@ -359,6 +490,10 @@ export function validateMapping(rows: MappingRow[]): string[] {
     }
   }
   const seen = new Set<string>();
+  const labels = new Set<string>();
+  const doubled = new Set<string>();
+  // The first part row per write key; the parts of one field are one line, so they share its 3.0 key too.
+  const firstPart = new Map<string, ComponentRow>();
   for (const row of rows) {
     const key = row.property.trim();
     if (key === '') errors.push('A property name is empty.');
@@ -369,8 +504,22 @@ export function validateMapping(rows: MappingRow[]): string[] {
     if (VCARD_NAMES.has(key) || key.startsWith('X-')) {
       errors.push(`Property name "${key}" is a vCard name.`);
     }
+    if (isLabelledDateRow(row)) {
+      const label = readableLabel(row.appleDateLabel);
+      if (label === '') errors.push('A date has no label.');
+      else if (label.includes(',')) errors.push(`The label "${label}" cannot hold a comma.`);
+    }
+    if (row.kind === 'field' && row.appleDateLabel !== undefined) {
+      const label = readableLabel(row.appleDateLabel);
+      const lower = label.toLowerCase();
+      if (label !== '' && labels.has(lower) && !doubled.has(lower)) {
+        doubled.add(lower);
+        errors.push(`Two dates have the label "${label}".`);
+      }
+      labels.add(lower);
+    }
     if (row.kind !== 'relation') {
-      if (row.read.length === 0) errors.push(`Property "${key}" has no read pattern.`);
+      if (row.read.length === 0 && !isLabelledDateRow(row)) errors.push(`Property "${key}" has no read pattern.`);
       for (const pattern of row.read) {
         if (!parsePattern(pattern)) errors.push(`Unparsable pattern for "${key}": ${pattern}`);
       }
@@ -381,6 +530,23 @@ export function validateMapping(rows: MappingRow[]): string[] {
       }
     }
     if (row.write.trim() === '') errors.push(`Property "${key}" has no write key.`);
+    if (row.kind !== 'relation') {
+      const v3 = row.writeV3?.trim() ?? '';
+      if (v3 !== '' && v3.split(';')[0].trim() === '') {
+        errors.push(`Property "${key}" has an invalid vCard 3.0 write key.`);
+      }
+    }
+    if (row.kind === 'component' && !(Number.isInteger(row.index) && row.index >= 0)) {
+      errors.push(`Property "${key}" has an invalid part.`);
+    }
+    if (row.kind === 'component') {
+      const first = firstPart.get(row.write);
+      if (!first) firstPart.set(row.write, row);
+      else if ((first.writeV3?.trim() ?? '') !== (row.writeV3?.trim() ?? '')) {
+        const other = first.property.trim();
+        errors.push(`Properties "${other}" and "${key}" both write ${row.write}; give them the same vCard 3.0 write key.`);
+      }
+    }
   }
   return errors;
 }

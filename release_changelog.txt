@@ -1,16 +1,7 @@
-## Friendly Contacts 3.0.0-alpha.7
+## Friendly Contacts 3.0.0-alpha.12
 
-**Relationships your phone understands.** Every card keeps its own vCard version, and relationships are written the way that version stores them:
+**Removals on your phone stick, also with several desktops.** After the update to alpha.11 a desktop that had not yet synced a contact could put back a part (a department, a prefix, a date with a label) that you had removed on your phone, because another desktop had already filled it into your note. Sync now sees that your note already held the card's old value and takes the removal from the phone.
 
-- **vCard 3.0** (iPhone, and Android with DAVx5): the person's name with a label such as Spouse, Partner, Child, Parent, Brother, Sister or Friend, so your phone shows "Ger Verhallen" as a parent instead of a code.
-- **vCard 4.0:** `RELATED` with the name as text.
-- **Reading:** relationships entered on your phone now appear in Obsidian after Sync, with the server side preselected.
-- **Older relationship lines** this plugin wrote (with a `urn:uuid:` code, also when your phone turned that code into a name) are rewritten once. The review screen says "Relationships on this card are rewritten in the form phones understand."
-- **New relationship type `partner`,** next to `spouse` (married or registered partnership).
-- **Anniversaries** are written as the phone expects them on vCard 3.0 cards.
-- **Create Contact** lets you choose the address book.
-- **New cards follow the version most cards in that address book use.** Each address book has a "New contacts: Automatic / vCard 3.0 / vCard 4.0" setting and a "Count card versions" button.
+Everything from 3.0.0-alpha.11 still applies: every part of a card field (name prefix and suffix, department, gender and gender identity, PO box and extra address line) is a property in your notes, and the property names table has Part and vCard 4.0 / 3.0 write columns.
 
-Also since alpha.5: the Import panel with search per address book, and a Sync button on an open contact note.
-
-Back up your vault before installing.
+Update the plugin on every desktop before you sync from it. Back up your vault before installing.

@@ -6,7 +6,7 @@ import type { Source } from 'src/settings/settings.d';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { Choice } from 'src/sync/review';
-import { MAX_REOPENS, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
+import { LINKS_LINE, MAX_REOPENS, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -89,6 +89,7 @@ function fakeBook(id: string, name: string) {
   const state: SyncState = {
     get: async (uid) => entries.get(cleanUid(uid)),
     set: async (uid, entry) => void entries.set(cleanUid(uid), entry),
+    touch: async () => {},
     remove: async (uid) => void entries.delete(cleanUid(uid)),
   };
   const source: Source = { id, name, addressBookUrl: `https://dav.example${prefix}`, authType: 'basic', authKey: 'k', enabled: true };
@@ -658,6 +659,57 @@ describe('syncFlow: old relationship lines on a 3.0 card', () => {
   });
 });
 
+describe('syncFlow: links to Obsidian notes on cards', () => {
+  const people: RelationContext = {
+    uidToName: (uid) => (uid === 'sem-uid' ? 'Sem' : undefined),
+    displayName: (uid) => (uid === 'sem-uid' ? 'Sem de Vries' : undefined),
+    resolveLink: (name) => (name === 'Sem' ? { uid: 'sem-uid' } : { text: name }),
+    contactNote: (target) => (target === 'Sem' ? { path: 'Contacts/Sem.md', name: 'Sem de Vries' } : undefined),
+  };
+  const SPOUSE = 'RELATED;TYPE=spouse;VALUE=text;X-FRIENDLY-UID=sem-uid:Sem de Vries';
+  const LINK = ['item1.URL:obsidian://open?vault=Notes&file=Contacts%2FSem', 'item1.X-ABLabel:Sem de Vries'];
+  const local = { ...JAN, spouse: '[[Sem]]', source: 'Radicale' };
+  const withLinks = (t: ReturnType<typeof setup>) => {
+    t.deps.noteLinks = { enabled: true, vault: 'Notes', ownVaults: ['Notes'] };
+  };
+
+  it('the spec text', () => {
+    expect(LINKS_LINE).toBe('Links to Obsidian notes on this card are updated.');
+  });
+
+  it('the only difference: the review has the links line and no changed row; Apply adds the link; then up to date', async () => {
+    const t = setup({ local, ctx: people });
+    withLinks(t);
+    const href = t.radicale.seed(card('06-1', [SPOUSE]));
+    expect(await t.run()).toMatchObject({ kind: 'done', outcome: 'pushed' });
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].linksLine).toBe(LINKS_LINE);
+    expect(t.requests[0].rewriteLine).toBeUndefined();
+    expect(t.requests[0].prepared.rows.filter((r) => r.changed)).toEqual([]);
+    const raw = t.radicale.cards.get(href)!.raw;
+    expect(raw).toContain('URL:obsidian://open?vault=Notes&file=Contacts%2FSem');
+    expect(raw).toContain('X-ABLabel:Sem de Vries');
+    t.requests.length = 0;
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
+    expect(t.requests).toEqual([]);
+  });
+
+  it('without a difference in the links there is no links line', async () => {
+    const t = setup({ local: { ...local, mobile: '06-2' }, ctx: people });
+    withLinks(t);
+    t.radicale.seed(card('06-1', [SPOUSE, ...LINK]));
+    await t.run();
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0].linksLine).toBeUndefined();
+  });
+
+  it('without link options the card\'s links are not looked at', async () => {
+    const t = setup({ local, ctx: people });
+    t.radicale.seed(card('06-1', [SPOUSE]));
+    expect(await t.run()).toMatchObject({ kind: 'upToDate' });
+  });
+});
+
 describe('syncFlow: also changes and rename', () => {
   /** The card was renamed on the server (another device); the note still has the old names. */
   const renamedOnServer = (t: ReturnType<typeof setup>) => {
@@ -785,6 +837,51 @@ describe('syncFlow: also changes and rename', () => {
     await t.run();
     expect(fromServer).toEqual({ to: 'Jan Bakker' });
     expect(fromNote).toBeUndefined();
+  });
+
+  describe('a prefix that became visible (a row of reader 3)', () => {
+    const DR = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;Dr;', 'END:VCARD', ''].join('\r\n');
+    const JANSEN = { name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', uid: UID, source: 'Radicale' };
+    const offeredFor = async (t: ReturnType<typeof setup>) => {
+      let offered: ReturnType<ReviewRequest['rename']> = { to: 'x' };
+      t.setScript([
+        (r) => {
+          offered = r.rename(new Map());
+          return preselected();
+        },
+      ]);
+      await t.run();
+      return offered;
+    };
+
+    it('a reader-2 base: the prefix comes into the note, no rename offer', async () => {
+      const t = setup({ local: JANSEN });
+      t.deps.name = 'Jan Jansen';
+      t.radicale.seed(DR);
+      t.radicale.entries.set(UID, { ...t.radicale.entries.get(UID)!, reader: 2 });
+      expect(await offeredFor(t)).toBeUndefined();
+      expect(t.note.renames).toEqual([]);
+      expect(t.note.frontmatter['name-prefix']).toBe('Dr');
+      expect(t.radicale.entries.get(UID)?.reader).toBe(3);
+    });
+
+    it('a reader-2 base: a prefix changed on the phone offers the rename', async () => {
+      const t = setup({ local: JANSEN });
+      t.deps.name = 'Jan Jansen';
+      const href = t.radicale.seed(DR);
+      t.radicale.entries.set(UID, { ...t.radicale.entries.get(UID)!, reader: 2 });
+      t.radicale.put(href, DR.replace('N:Jansen;Jan;;Dr;', 'N:Jansen;Jan;;Prof;'));
+      expect(await offeredFor(t)).toEqual({ to: 'Prof Jan Jansen' });
+      expect(t.note.frontmatter['name-prefix']).toBe('Prof');
+    });
+
+    it('a later change of the prefix in the note offers the rename', async () => {
+      const t = setup({ local: { ...JANSEN, 'name-prefix': 'Prof' } });
+      t.deps.name = 'Jan Jansen';
+      t.radicale.seed(DR);
+      t.radicale.entries.set(UID, { ...t.radicale.entries.get(UID)!, reader: 3 });
+      expect(await offeredFor(t)).toEqual({ to: 'Prof Jan Jansen' });
+    });
   });
 
   it('unchecked rename keeps the file name', async () => {

@@ -50,6 +50,8 @@ To try the test releases:
       + [📂 A folder per contact](#-a-folder-per-contact)
       + [👪 Relationships in the sidebar](#-relationships-in-the-sidebar)
       + [📱 Relationships on phones](#-relationships-on-phones)
+      + [🔗 Links to Obsidian notes on cards](#-links-to-obsidian-notes-on-cards)
+      + [📅 Dates with a label](#-dates-with-a-label)
       + [🕸️ People graph](#-people-graph)
       + [🔎 Searching Contacts (Fast!)](#-searching-contacts-fast)
    * [📖 Understanding the vCard (VCF) Format](#-understanding-the-vcard-vcf-format)
@@ -57,6 +59,7 @@ To try the test releases:
    * [📌 Supported vCard Fields](#-supported-vcard-fields)
       + [📞 Basic Contact Information](#-basic-contact-information)
       + [🏠 Address Fields](#-address-fields)
+      + [🏷️ Property names in the settings](#-property-names)
       + [🌐 Online Presence](#-online-presence)
       + [🖼️ Profile Photo](#-profile-photo)
       + [🗂️ Categorization & Metadata](#-categorization-metadata)
@@ -265,6 +268,12 @@ A link to `index` says nothing about whom it is, and Obsidian's short form `[[in
 
 When Obsidian updates links after a move it may write the short form again (with its default link format, "Shortest path when possible"). So when you put contacts in folders, rename a contact through Sync or move the contacts folder, the plugin notes beforehand which relationship entries point to those contacts and afterwards writes them as full paths again. A label that was the contact's old name gets the new one, also when the name was changed on the server; a label you wrote yourself is kept. Taking contacts out of their folders moves each note twice (via its temporary name), so there too the plugin notes the entries beforehand and afterwards makes every entry that no longer opens the contact point to its note again. Only relationship properties of contact notes are changed.
 
+**Links in Obsidian's path formats**
+
+Relationship links follow Obsidian's **New link format** (Settings → Files and links). With "Relative path to file" or "Absolute path in vault" a link is a path, such as `../Ger Verhallen/Ger Verhallen`, and a property shows that path. So the plugin writes such a link with the contact's name as the label: `[[../Ger Verhallen/Ger Verhallen|Ger Verhallen]]`. With "Shortest path when possible" a link to a note named for the contact stays `[[Ger Verhallen]]`. This works the same with or without the Folder Notes plugin. Properties only understand `[[wikilinks]]`, so relationship links are always wikilinks, whatever **Use [[Wikilinks]]** says.
+
+**Tidy relationship links** (command) gives the links already in your notes this form: every relationship entry that is a path without a label gets the contact's name as its label. Putting contacts in their own folders does this for the contacts it moves. A label you wrote yourself is kept, and only relationship properties of contact notes are changed.
+
 When you import a contact from the address book, relationships in other notes that pointed to nobody but name this contact become links to the new note (a label you wrote yourself is kept). **Import all** in the Import panel does this once at the end, for all the contacts it imported. This only happens with a fixed note name.
 
 ---
@@ -315,6 +324,48 @@ Each address book has a setting **New contacts** (in the address book's section 
 **Radicale and photos on vCard 4.0 cards.** Radicale (through its vCard parser, vobject) damages a photo stored as a `data:` URI, which is how vCard 4.0 holds an embedded photo: it comes back without the image. On vCard 3.0 cards photos come through intact. Sync recognises such a damaged photo and never puts it into your note: the note keeps its photo, and a photo you change in the note is written once, without a Sync loop. Phones still get no photo from such a 4.0 card, so on Radicale set **New contacts** to **vCard 3.0**.
 
 **When your server starts offering vCard 4.0.** Existing cards keep the version they have: the plugin never converts a card from one version to another (phones rewrite a card in their own version anyway). Only new cards follow: as phones and the server store more 4.0 cards, the majority in the address book changes, and Automatic starts creating 4.0 cards once most of the cards are 4.0. Set the book to vCard 3.0 or vCard 4.0 to fix the version of new cards yourself.
+
+---
+
+<!-- TOC --><a name="-links-to-obsidian-notes-on-cards"></a>
+### 🔗 Links to Obsidian notes on cards
+
+With the setting **Links to Obsidian notes on cards** (in the synchronization settings of the plugin, right below the address books) every card gets a website for each relationship with a contact note: an `obsidian://` link to that note, labelled with the person's name. It is off by default.
+
+```
+item4.URL:obsidian://open?vault=Phone%20Notes&file=Contacts%2FSem%20de%20Vries
+item4.X-ABLabel:Sem de Vries
+```
+
+- **For phones.** The link is a website entry on the card, the same in vCard 3.0 and 4.0 cards. On Android (DAVx5) you tap it in the contact to open the note in Obsidian. Whether the contacts app opens `obsidian://` links depends on the app, so test it with one contact on your phone first.
+- **Vault name on your phone.** The link names the vault to open. The first time you turn the setting on, the field **Vault name on your phone** is filled with the name of this vault. Change it when the vault on your phone has another name; an empty field gives the name of this vault again. Links with an earlier vault name are replaced at each contact's next Sync.
+- **One link per contact note.** A person you have two relationships with gets one link. Relationships to someone without a contact note get no link, and a card gets no link to its own note.
+- **At each contact's next Sync.** Links follow the relationships, a renamed contact, the vault name and turning the setting off. A card that has to change shows the line "Links to Obsidian notes on this card are updated." on the review screen; click **Apply**. A link you delete on the phone, or a label you change there, is put back at the next Sync. Turning the setting off removes the links from the cards.
+- **Only the plugin's own links.** The links never appear in your notes. An `obsidian://` website in a group (like `item4.URL` above) to the vault named in the field (or a name it had before) counts as one of the plugin's links, even one you typed on the phone, and is replaced or removed. Websites in your notes (written to the card as plain website lines) and links to other vaults are never touched.
+- **Update every desktop first.** Update the plugin on every desktop that syncs before you turn the setting on: an older version reads the links as websites and puts them in your notes. The other desktops must also pick up the setting before they sync. They do so by themselves when the plugin's settings file syncs to them (Obsidian Sync or another file sync); otherwise restart Obsidian there.
+
+---
+
+<!-- TOC --><a name="-dates-with-a-label"></a>
+### 📅 Dates with a label
+
+A phone can keep a date under a label of its own, for example "Verkering" for the day two people started dating. Apple Contacts and DAVx5 (Android) store it on the card as a date with a label:
+
+```
+item3.X-ABDATE:2012-05-01
+item3.X-ABLabel:Verkering
+```
+
+The group **Dates with a label** in the plugin settings, right below the property names, gives such a label a property in your notes. Each row has the label on the card and the property in the note, for example `Verkering` and `dating`. The note then holds `dating: 2012-05-01`, and the phone keeps showing the date under "Verkering". A date you fill in in the note goes to the card with its label, in vCard 3.0 and 4.0 cards alike. A second date with the same label goes to `dating-2`, the next to `dating-3`, and so on.
+
+- **English names.** The plugin does not translate labels; you name the property. Use an English name (`dating`, not `verkering`), like the other properties in your notes.
+- **Anniversary** is the first row. Its label is fixed; you can rename its property.
+- **Adding a row.** Type the label and the property in the empty line at the bottom and click **Add**. When contacts already have that date on their card, the plugin asks "Add dating to 2 contact notes, from their last Sync?" and fills the property in those notes first, so the next Sync does not take the date for one you removed in Obsidian. A value you already typed in a note is kept. If a note cannot be filled, the row is not added. On your other devices, and for notes that were not filled, a date that already sits on a card shows up in the note at that contact's next Sync; it is never removed from the card.
+- **Find labels on cards** lists the labels on your contacts' cards that have no row yet, such as "Verkering — on 2 contacts". **Add** next to a label puts it in the empty line with a suggested property name; change that into English and click **Add**. It reads the cards as they were at each contact's last Sync: a label you added on the phone since then shows up after you sync that contact.
+- **Changing a label.** The label of a row cannot be edited: remove the row and add it again.
+- **Removing a row** never touches the cards: the dates stay there and stop showing in Obsidian. The property is removed from your notes (`dating`, `dating-2`, …), after a question that says how many notes change, so a row added again later starts clean.
+- **Reset to defaults** in the property names keeps the rows of this group: they are your own labels. If one of them has a name a default property takes back (say you renamed `birthday` and gave a label the name `birthday`), nothing is saved and the settings show why.
+- **Dates without a label** (Android's "Other" date without a text) are not shown; they stay on the card as they are.
 
 ---
 
@@ -452,10 +503,13 @@ Here’s a breakdown of supported vCard fields and their **human-readable meanin
 | `TEL[HOME]`         | Home Phone                     | `+1987654321`               |
 | `TEL[WORK]`         | Work Phone                     | `+1098765432`               |
 | `BDAY`              | Birthday (YYYY-MM-DD)          | `1985-12-31`                |
-| `GENDER`            | Gender                         | `M`, `F`, `X`               |
+| `GENDER`            | Gender (and optional identity) | `M`, `F`, `O`, `N`, `U`, `O;non-binary` |
 | `ORG`               | Organization Name              | `FakeCorp Inc.`             |
+| `ORG` (second part) | Department                     | `Research`                  |
 | `TITLE`             | Job Title                      | `Senior Developer`          |
 | `ROLE`              | Job Role                       | `Software Engineer`         |
+
+`GENDER` holds one letter, `M`, `F`, `O`, `N` or `U`, and may be followed by `;` and a free text identity (`O;non-binary`). In the note these are the `gender` and `gender-identity` properties. A vCard 3.0 card has no `GENDER`; there a new line is written as `X-GENDER`, and a line that is already on the card keeps its own name. Some servers, such as Radicale, store `O;non-binary` as `O\;non-binary`; the plugin reads both the same way. An identity that itself contains `;` does not survive such a server: `a;b` comes back as `a`. Phones do not show the gender.
 
 Dates without a year, such as a birthday or anniversary where the year is unknown, are written `--MM-DD` (for example `--03-15`). Keep the `birthday` and `anniversary` properties as Text properties in Obsidian; the Date type rejects that form.
 
@@ -466,16 +520,39 @@ Dates without a year, such as a birthday or anniversary where the year is unknow
 
 | **vCard Field**         | **Readable Name**             | **Example**                  |
 |-------------------------|-------------------------------|------------------------------|
+| `ADR[HOME].POBOX`       | Home PO Box                   | `PO Box 12`                  |
+| `ADR[HOME].EXTENDED`    | Home Extra Address Line       | `Apartment 4`                |
 | `ADR[HOME].STREET`      | Home Street Address           | `123 Fake Street`            |
 | `ADR[HOME].LOCALITY`    | Home City                     | `Faketown`                   |
 | `ADR[HOME].REGION`      | Home State/Province           | `FakeState`                  |
 | `ADR[HOME].POSTAL`      | Home Postal Code              | `00000`                      |
 | `ADR[HOME].COUNTRY`     | Home Country                  | `Nowhere Land`               |
+| `ADR[WORK].POBOX`       | Work PO Box                   | `PO Box 99`                  |
+| `ADR[WORK].EXTENDED`    | Work Extra Address Line       | `Floor 3`                    |
 | `ADR[WORK].STREET`      | Work Street Address           | `789 Corporate Ave`          |
 | `ADR[WORK].LOCALITY`    | Work City                     | `Business City`              |
 | `ADR[WORK].REGION`      | Work State/Province           | `IndustryState`              |
 | `ADR[WORK].POSTAL`      | Work Postal Code              | `99999`                      |
 | `ADR[WORK].COUNTRY`     | Work Country                  | `Enterprise Land`            |
+
+---
+
+<!-- TOC --><a name="-property-names"></a>
+### 🏷️ Property names in the settings
+
+The plugin settings have a table with the property names of your notes. Every part of a card field has its own row, so a name prefix, a name suffix, a department, a gender, a gender identity, a PO box and an extra address line (home and work) are all properties you can use. A row has these columns:
+
+- **Name**: the property in your note.
+- **Read from**: the card field or fields it is read from, for example `GENDER, X-GENDER`.
+- **Part**: which part of the field the row is, counting from 1. `ORG` has the company as part 1 and the department as part 2; `N` has the prefix as part 4 and the suffix as part 5.
+- **Write as (vCard 4.0)**: the field a new line gets on a vCard 4.0 card.
+- **Write as (vCard 3.0)**: the field a new line gets on a vCard 3.0 card. Leave it empty (`same as 4.0`) to use the 4.0 field. The gender rows use it to write `X-GENDER`, because vCard 3.0 has no `GENDER`. Rows that are parts of the same field (the same Write as (vCard 4.0)) need the same vCard 3.0 field, because they share one line. The relationship and anniversary rows, and the `uid`, `name` and `photo` rows, show their 3.0 form as plain text, which you cannot change.
+
+A line that is already on a card keeps its own field name when you edit it; the write columns only name new lines. The card's `VERSION` never changes.
+
+Changing **Read from** or **Part** only changes how cards are read from now on. It does not fill your notes again by itself.
+
+Update the plugin on every desktop before you sync from it. An older version does not know the new parts, so it would offer to remove them from the card.
 
 ---
 

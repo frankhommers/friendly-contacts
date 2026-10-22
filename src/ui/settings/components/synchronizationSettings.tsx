@@ -1,5 +1,6 @@
 import {App, Platform} from "obsidian";
 import * as React from "react";
+import {NoteLinksSettings} from "src/ui/settings/components/noteLinksSettings";
 import {SourcesSettings} from "src/ui/settings/components/sourcesSettings";
 
 export function SynchronizationSettings({app}: {app: App}) {
@@ -47,6 +48,7 @@ export function SynchronizationSettings({app}: {app: App}) {
             </div>
           </div>
           <SourcesSettings app={app} />
+          <NoteLinksSettings app={app} />
         </>
       )}
     </>

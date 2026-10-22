@@ -226,8 +226,22 @@ function needsFullLink(app: App, file: TFile): boolean {
  * `linkTarget`, which drops the alias.
  */
 export function contactLinktext(app: App, file: TFile, fromPath: string, omitMdExtension?: boolean): string {
-  if (!needsFullLink(app, file)) return app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
+  if (!needsFullLink(app, file)) return shortLinktext(app, file, fromPath, contactDisplayName(app, file), omitMdExtension);
   return linkWithAlias(file.path.replace(/\.md$/i, ""), contactDisplayName(app, file));
+}
+
+/**
+ * Obsidian's link text for `file` in the user's link format. A path (the "relative" or "absolute" format, or a name
+ * that is not unique) gets `alias`, so the property shows the contact's name and not `../Jan/Jan`.
+ */
+function shortLinktext(app: App, file: TFile, fromPath: string, alias: string, omitMdExtension?: boolean): string {
+  const linktext = app.metadataCache.fileToLinktext(file, fromPath, omitMdExtension);
+  return linktext.includes("/") ? linkWithAlias(linktext, alias) : linktext;
+}
+
+/** A link to a note that shows a path and no name (`[[../Jan/Jan]]`): it gets the contact's name as alias. */
+function bareLinkPath(entry: string): boolean {
+  return /^\[\[[^|\]]*\/[^|\]]*\]\]$/.test(entry.trim());
 }
 
 /** A relationship entry that points to a contact about to move, found before the move. */
@@ -308,9 +322,11 @@ export async function rewriteRelationLinks(app: App, records: RecordedLink[], na
       return entry === link ? undefined : link;
     }
     const linkpath = linkTarget(entry.trim()).trim();
-    if (linkpath !== "" && app.metadataCache.getFirstLinkpathDest(linkpath, note.path) === target) return undefined;
-    const short = app.metadataCache.fileToLinktext(target, note.path, true);
-    return `[[${userAlias === undefined ? short : linkWithAlias(short, userAlias)}]]`;
+    const opens = linkpath !== "" && app.metadataCache.getFirstLinkpathDest(linkpath, note.path) === target;
+    if (opens && !bareLinkPath(entry)) return undefined;
+    const name = names.get(target)?.trim() || contactDisplayName(app, target);
+    const link = userAlias === undefined ? `[[${shortLinktext(app, target, note.path, name, true)}]]` : `[[${linkWithAlias(app.metadataCache.fileToLinktext(target, note.path, true), userAlias)}]]`;
+    return entry === link ? undefined : link;
   };
   let count = 0;
   for (const note of new Set(records.map((r) => r.note))) {
@@ -683,6 +699,15 @@ export function layoutChangeCount(app: App, direction: LayoutDirection): number 
 }
 
 /**
+ * "Tidy relationship links": every relationship entry that points to a contact gets the form links to that contact
+ * have now (`contactLinktext`): a path without a name (`[[../Jan/Jan]]`) gets the contact's name as alias. Returns
+ * the number of entries changed.
+ */
+export async function tidyRelationLinks(app: App): Promise<number> {
+  return rewriteRelationLinks(app, recordRelationLinks(app, contactsInFolder(app, contactsBase()), false));
+}
+
+/**
  * "Put each contact in its own folder" (`into`) / "Take contacts out of their folders" (`out`). Per contact the
  * steps stop at the first failure. Folders that still hold other files stay, with those files, and are listed in
  * `kept`. Throws with the reason when the layout settings cannot be used.
@@ -696,10 +721,9 @@ export async function changeLayout(app: App, direction: LayoutDirection): Promis
     const node = step.kind === "move" && step.from !== undefined ? byPath(app, step.from) : null;
     return node instanceof TFile ? [node] : [];
   });
-  const links =
-    direction === "into"
-      ? recordRelationLinks(app, moving.filter((file) => needsFullLink(app, file)))
-      : recordRelationLinks(app, moving, false);
+  // Every moving contact: after the move each link takes the form its note then needs (the full path for a fixed note
+  // name, else Obsidian's link text, with the name as alias when that is a path).
+  const links = recordRelationLinks(app, moving, false);
   const result = await runSteps(app, plan.groups);
   const relinked = await rewriteRelationLinks(app, links);
   const skipped = [...plan.skipped];

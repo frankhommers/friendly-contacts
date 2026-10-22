@@ -1,6 +1,8 @@
 import { parseCard, serializeCard, serializeLine } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
-import { DEFAULT_MAPPING, isMappedProperty } from 'src/contacts/friendly/mapping';
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
+import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
+import { cardNoteLinks, NoteLinkOptions } from 'src/contacts/friendly/noteLinks';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
@@ -121,6 +123,10 @@ function memoryState(initial: Record<string, SyncStateEntry> = {}) {
       sets.push(uid);
       entries.set(cleanUid(uid), entry);
     },
+    touch: async (uid, storedAt) => {
+      const entry = entries.get(cleanUid(uid));
+      if (entry) entries.set(cleanUid(uid), { ...entry, storedAt: Math.max(entry.storedAt ?? 0, storedAt) });
+    },
     remove: async (uid) => {
       entries.delete(cleanUid(uid));
     },
@@ -173,26 +179,34 @@ function setup(
     base?: string;
     /** The reader the base was stored with; absent: none recorded (reader 1). */
     reader?: number;
+    /** When the base was stored; absent: not recorded. */
+    storedAt?: number;
     local?: Record<string, unknown>;
+    /** The mapping Sync reads with; the default mapping when absent. */
+    rows?: MappingRow[];
     ctx?: RelationContext;
+    /** Links to Obsidian notes on cards; absent: off, as before the setting existed. */
+    noteLinks?: NoteLinkOptions;
   } = {},
 ) {
   const fake = fakeAdapter();
   const serverEtag = opts.server !== undefined ? fake.put(opts.href ?? HREF, opts.server) : undefined;
   const reader = opts.reader === undefined ? {} : { reader: opts.reader };
+  const storedAt = opts.storedAt === undefined ? {} : { storedAt: opts.storedAt };
   const { state, entries, sets } = memoryState(
-    opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF, ...reader } } : {},
+    opts.base !== undefined ? { [UID]: { raw: opts.base, etag: 'old', href: opts.href ?? HREF, ...reader, ...storedAt } } : {},
   );
   const { note, io } = memoryNote(opts.local ?? friendlyOf(V1));
   const notices: string[] = [];
   const deps: SyncDeps = {
     adapter: fake.adapter,
     state,
-    rows: DEFAULT_MAPPING,
+    rows: opts.rows ?? DEFAULT_MAPPING,
     ctx: opts.ctx ?? ctx,
     readOnlyCtx: opts.ctx ?? ctx,
     notify: (msg) => notices.push(msg),
   };
+  if (opts.noteLinks) deps.noteLinks = opts.noteLinks;
   const prepare = () => prepareSync(io, deps, { sourceId: 'radicale' });
   /** Prepare, then (when there is a review) apply with the preselections plus the given choices. */
   async function sync(choices: Record<string, Choice> = {}, applyOpts: { rename?: string; sourceName: string } = OPTS) {
@@ -220,19 +234,19 @@ const changedRows = (prepared: PreparedSync) =>
 
 describe('prepareSync', () => {
   it('unchanged on both sides is up to date and writes nothing', async () => {
-    const t = setup({ server: V1, base: V1 });
+    const t = setup({ server: V1, base: V1, reader: 3 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     expect(t.pushes).toEqual([]);
     expect(t.note.writes).toEqual([]);
     expect(t.notices).toEqual([]);
     expect(t.sets).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF, reader: 3 });
   });
 
   it('no base and equal stores the base only', async () => {
     const t = setup({ server: V1 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF, reader: 3 });
     expect(t.pushes).toEqual([]);
     expect(t.note.writes).toEqual([]);
     expect(t.cards.get(HREF)!.raw).toBe(V1);
@@ -257,28 +271,201 @@ describe('prepareSync', () => {
       ]);
     });
 
-    it('Apply puts them into the note, leaves the card alone and records reader 2', async () => {
+    it('Apply puts them into the note, leaves the card alone and records the current reader', async () => {
       const t = setup({ server: PHONE, base: PHONE, local: oldNote() });
       expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
       expect(t.pushes).toEqual([]);
       expect(t.note.frontmatter).toMatchObject({ parents: ['[[Ger Verhallen]]'], anniversary: '2012-06-21' });
-      expect(t.entries.get(UID)).toEqual({ raw: PHONE, etag: t.serverEtag, href: HREF, reader: 2 });
+      expect(t.entries.get(UID)).toEqual({ raw: PHONE, etag: t.serverEtag, href: HREF, reader: 3 });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     });
 
     it('the same base stored by the current reader would mean they were removed in the note', async () => {
       const t = setup({ server: PHONE, local: oldNote() });
-      t.entries.set(UID, { raw: PHONE, etag: 'old', href: HREF, reader: 2 });
+      t.entries.set(UID, { raw: PHONE, etag: 'old', href: HREF, reader: 3 });
       expect(changedRows(await reviewOf(t))).toEqual([
         ['anniversary', 'local'],
         ['parents', 'local'],
       ]);
     });
 
-    it('new base records reader 2', async () => {
+    it('new base records the current reader', async () => {
       const t = setup({ server: PHONE, local: toFriendly(parseCard(PHONE), DEFAULT_MAPPING, ctx).props });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-      expect(t.entries.get(UID)?.reader).toBe(2);
+      expect(t.entries.get(UID)?.reader).toBe(3);
+    });
+  });
+
+  describe('a date with a label added after the base was stored (on another device)', () => {
+    // The phone's date under its own label; the base holds it, the note was never filled from this device's base.
+    const DATED = edit(V1, 'TITLE:Baker\r\n', 'TITLE:Baker\r\nitem9.X-ABDATE:2012-05-01\r\nitem9.X-ABLabel:Verkering\r\n');
+    const rowsSince = (since: number) => insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', since));
+    const note = () => toFriendly(parseCard(DATED), DEFAULT_MAPPING, ctx).props;
+
+    it('the date is the card\'s own: the server is preselected, and Apply pulls it without a PUT', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: note() });
+      expect(t.note.frontmatter.dating).toBeUndefined();
+      expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(DATED);
+      expect(t.note.frontmatter.dating).toBe('2012-05-01');
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('a note that holds the date is up to date, and the card is stored as the base again', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.pushes).toEqual([]);
+      expect(t.note.writes).toEqual([]);
+      expect(t.sets).toEqual([UID]);
+      // No storedAt given: the store records the time it is stored (tests/syncState.spec.ts), later than the row.
+      expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: t.serverEtag, href: HREF, reader: 3 });
+    });
+
+    it('a base that is up to date and has every row is not stored again', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 3, storedAt: 3000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.sets).toEqual([]);
+    });
+
+    describe('on the device that added the row', () => {
+      // The note was filled from this base (the date is the phone's), then the row was saved with since 2000.
+      const filled = () => ({ ...note(), dating: '2012-05-01' });
+      const SERVER_WITHOUT = V1;
+
+      it('a base left as it was still keeps the phone\'s deletion: the note holds the base\'s date', async () => {
+        const t = setup({ server: SERVER_WITHOUT, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: filled() });
+        expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
+      });
+
+      it('a touched base keeps the phone\'s deletion: the server is preselected', async () => {
+        const t = setup({ server: SERVER_WITHOUT, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: filled() });
+        await t.deps.state.touch(UID, 2000);
+        expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: 'old', href: HREF, reader: 2, storedAt: 2000 });
+        expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
+      });
+    });
+
+    it('a row added before the base was stored: the date was removed in the note', async () => {
+      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(500), local: note() });
+      expect(changedRows(await reviewOf(t))).toEqual([['dating', 'local']]);
+    });
+  });
+
+  describe('parts that became visible (rows of reader 3) on a base stored by reader 2', () => {
+    const PARTS = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;Dr;', 'ORG:Acme;Sales', 'GENDER:M', 'END:VCARD', ''].join('\r\n');
+    const PLAIN = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;;', 'ORG:Acme', 'END:VCARD', ''].join('\r\n');
+    // The note as reader 2 made it: no department, prefix or gender properties.
+    const note = () => ({ uid: UID, name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', company: 'Acme' });
+
+    it('arrive from the card: server additions, never removals from the card', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: note() });
+      const prepared = await reviewOf(t);
+      expect(changedRows(prepared)).toEqual([
+        ['name-prefix', 'server'],
+        ['department', 'server'],
+        ['gender', 'server'],
+      ]);
+      expect(prepared.rows.filter((r) => r.changed && r.preselect !== 'server')).toEqual([]);
+    });
+
+    it('Apply with the defaults leaves the card alone, fills the note and stores the base with reader 3', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: note() });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(PARTS);
+      expect(t.note.frontmatter).toMatchObject({ 'name-prefix': 'Dr', department: 'Sales', gender: 'M' });
+      expect(t.entries.get(UID)).toEqual({ raw: PARTS, etag: t.serverEtag, href: HREF, reader: 3 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('the same base stored by reader 3 means they were removed in the note', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 3, local: note() });
+      expect(changedRows(await reviewOf(t))).toEqual([
+        ['name-prefix', 'local'],
+        ['department', 'local'],
+        ['gender', 'local'],
+      ]);
+    });
+
+    it('a card without such parts is up to date, and the base is stored again with reader 3', async () => {
+      const t = setup({ server: PLAIN, base: PLAIN, reader: 2, local: note() });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.pushes).toEqual([]);
+      expect(t.note.writes).toEqual([]);
+      expect(t.sets).toEqual([UID]);
+      expect(t.entries.get(UID)).toEqual({ raw: PLAIN, etag: t.serverEtag, href: HREF, reader: 3 });
+    });
+
+    describe('filled into the note on another desktop, then removed on the phone', () => {
+      // Another desktop synced after the update and filled the parts into the (shared) note; this desktop's base is
+      // still the reader-2 one. The phone then removed the department.
+      const PHONE = PARTS.replace('ORG:Acme;Sales', 'ORG:Acme');
+      const filled = () => ({ ...note(), 'name-prefix': 'Dr', department: 'Sales', gender: 'M' });
+
+      it('the removal is the phone\'s: the server is preselected, never pushed back', async () => {
+        const t = setup({ server: PHONE, base: PARTS, reader: 2, local: filled() });
+        expect(changedRows(await reviewOf(t))).toEqual([['department', 'server']]);
+      });
+
+      it('Apply with the defaults removes it from the note and leaves the card alone', async () => {
+        const t = setup({ server: PHONE, base: PARTS, reader: 2, local: filled() });
+        expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+        expect(t.pushes).toEqual([]);
+        expect(t.cards.get(HREF)!.raw).toBe(PHONE);
+        expect(t.note.frontmatter.department).toBeUndefined();
+        expect(t.note.frontmatter).toMatchObject({ 'name-prefix': 'Dr', gender: 'M' });
+        expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      });
+
+      it('a note that holds the same parts as the card is up to date', async () => {
+        const t = setup({ server: PARTS, base: PARTS, reader: 2, local: filled() });
+        expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+        expect(t.entries.get(UID)).toMatchObject({ raw: PARTS, reader: 3 });
+      });
+    });
+
+    it('a department written in the note by hand that differs from the card is a conflict', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: { ...note(), department: 'Marketing' } });
+      const prepared = await reviewOf(t);
+      const department = prepared.rows.find((r) => r.property === 'department');
+      expect(department).toMatchObject({ changed: true, preselect: undefined, server: 'Sales', local: 'Marketing' });
+    });
+
+    it('the rename check gets the base with the parts it was read without', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: note() });
+      const prepared = await reviewOf(t);
+      expect(prepared.base?.['name-prefix']).toBeUndefined();
+      expect(prepared.nameBase).toMatchObject({ 'name-prefix': 'Dr', department: 'Sales', gender: 'M', company: 'Acme' });
+    });
+
+    it('a base with every row needs no separate rename base', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 3, local: note() });
+      expect((await reviewOf(t)).nameBase).toBeUndefined();
+    });
+
+    it('an X-GENDER on a 3.0 card arrives in the note, the card stays as it is', async () => {
+      const V3 = ['BEGIN:VCARD', 'VERSION:3.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;;', 'ORG:Acme', 'X-GENDER:M', 'END:VCARD', ''].join('\r\n');
+      const t = setup({ server: V3, base: V3, reader: 2, local: note() });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(V3);
+      expect(t.note.frontmatter).toMatchObject({ gender: 'M' });
+      expect(t.entries.get(UID)).toMatchObject({ raw: V3, reader: 3 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('a PO box and an extra address line arrive in the note, the card stays as it is', async () => {
+      const ADR = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;;', 'ORG:Acme', 'ADR;TYPE=HOME:PO 12;Unit 3;Main St 1;Utrecht;;3542 AA;NL', 'END:VCARD', ''].join('\r\n');
+      const home = { street: 'Main St 1', city: 'Utrecht', postcode: '3542 AA', country: 'NL' };
+      const t = setup({ server: ADR, base: ADR, reader: 2, local: { ...note(), ...home } });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(ADR);
+      expect(t.note.frontmatter).toMatchObject({ ...home, 'po-box': 'PO 12', 'address-extra': 'Unit 3' });
+      expect(t.entries.get(UID)).toMatchObject({ raw: ADR, reader: 3 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     });
   });
 
@@ -505,7 +692,7 @@ describe('applySync', () => {
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
     expect(t.note.writes).toEqual([{ set: { mobile: '06-99999999', source: 'Radicale' }, remove: [] }]);
     expect(t.pushes).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF, reader: 3 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
@@ -534,7 +721,7 @@ describe('applySync', () => {
     expect(t.note.writes).toEqual([]);
     const stored = t.cards.get(HREF)!;
     expect(stored.raw).toBe(put.vcard.raw);
-    expect(t.entries.get(UID)).toEqual({ raw: put.vcard.raw, etag: stored.etag, href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: put.vcard.raw, etag: stored.etag, href: HREF, reader: 3 });
   });
 
   it('local and server changes on different properties give both', async () => {
@@ -632,7 +819,7 @@ describe('applySync', () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
     t.options.etagOnPut = false;
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
-    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF, reader: 3 });
   });
 
   it('a failed PUT fails without writing the note or the base', async () => {
@@ -658,7 +845,7 @@ describe('applySync', () => {
     const href = '/frank/contacts/sem-0001.vcf';
     const card = t.cards.get(href)!;
     expect(friendlyOf(card.raw)).toMatchObject({ name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' });
-    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href, reader: 2 });
+    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href, reader: 3 });
     expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
   });
 
@@ -1384,5 +1571,208 @@ describe('locateCard', () => {
       { sourceId: 'c', message: 'HTTP 500' },
       { sourceId: 'd', message: 'offline' },
     ]);
+  });
+});
+
+describe('links to Obsidian notes on cards', () => {
+  const SEM = 'sem-uid';
+  const ANNA = 'anna-uid';
+  const LINKS: NoteLinkOptions = { enabled: true, vault: 'Notes', ownVaults: ['Notes'] };
+  const SEM_URL = 'obsidian://open?vault=Notes&file=Contacts%2FSem';
+  const ANNA_URL = 'obsidian://open?vault=Notes&file=Contacts%2FAnna';
+  const MAC_URL = 'obsidian://open?vault=Mac%20Notes&file=Contacts%2FSem';
+
+  /** Sem, Anna and Jan (this contact) with their notes; a test may move a note. */
+  function people() {
+    const notes = new Map<string, { path: string; name: string }>([
+      ['Sem', { path: 'Contacts/Sem.md', name: 'Sem de Vries' }],
+      ['Anna', { path: 'Contacts/Anna.md', name: 'Anna Smit' }],
+      ['Jan', { path: 'Contacts/Jan.md', name: 'Jan de Vries' }],
+    ]);
+    const uids: Record<string, string> = { Sem: SEM, Anna: ANNA, Jan: UID };
+    const byUid = (uid: string) => Object.keys(uids).find((key) => cleanUid(uids[key]) === cleanUid(uid));
+    const ctx: RelationContext = {
+      uidToName: byUid,
+      displayName: (uid) => {
+        const key = byUid(uid);
+        return key === undefined ? undefined : notes.get(key)?.name;
+      },
+      resolveLink: (name) => {
+        const key = Object.keys(uids).find((k) => k === name || notes.get(k)?.name === name);
+        return key === undefined ? { text: name } : { uid: uids[key] };
+      },
+      contactNote: (target) => notes.get(target),
+    };
+    return { ctx, notes };
+  }
+
+  const withLines = (raw: string, ...lines: string[]) => edit(raw, 'TITLE:Baker\r\n', `TITLE:Baker\r\n${lines.map((l) => `${l}\r\n`).join('')}`);
+  const SPOUSE = [`item9.X-ABRELATEDNAMES;X-FRIENDLY-UID=${SEM}:Sem de Vries`, 'item9.X-ABLabel:_$!<Spouse>!$_'];
+  const link = (url: string, label = 'Sem de Vries', n = 10) => [`item${n}.URL:${url}`, `item${n}.X-ABLabel:${label}`];
+  /** The card with the spouse line and no links. */
+  const CARD = withLines(V1, ...SPOUSE);
+  /** The card with the spouse line and Sem's link. */
+  const LINKED = withLines(V1, ...SPOUSE, ...link(SEM_URL));
+  const local = (raw = CARD) => ({ ...toFriendly(parseCard(raw), DEFAULT_MAPPING, people().ctx).props, spouse: '[[Sem]]' });
+  const links = (raw: string) => cardNoteLinks(parseCard(raw), ['Notes', 'Mac Notes']).map(({ url, label }) => [url, label]);
+  const withoutRev = (raw: string) => lineTexts(raw).filter((l) => !l.startsWith('REV:'));
+  const noLinkInNote = (t: ReturnType<typeof setup>) => {
+    expect(t.note.frontmatter.website).toBe('https://jan.example.nl');
+    expect(JSON.stringify(t.note.frontmatter)).not.toContain('obsidian://');
+  };
+
+  it('a card without links: a review with no changed row, Apply adds only the link lines, then up to date', async () => {
+    const t = setup({ server: CARD, base: CARD, reader: 2, local: local(), ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(prepared.rewriteRelations).toBe(false);
+    expect(changedRows(prepared)).toEqual([]);
+
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(withoutRev(raw).filter((l) => !withoutRev(CARD).includes(l))).toEqual([`item10.URL:${SEM_URL}`, 'item10.X-ABLabel:Sem de Vries']);
+    expect(withoutRev(CARD).filter((l) => !withoutRev(raw).includes(l))).toEqual([]);
+    expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
+    noLinkInNote(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('the card holds the link and the base (stored by another device) does not: up to date', async () => {
+    const t = setup({ server: LINKED, base: CARD, reader: 2, local: local(), ctx: people().ctx, noteLinks: LINKS });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('the base holds a link with a former vault name and the card the current one: up to date', async () => {
+    const base = withLines(V1, ...SPOUSE, ...link(MAC_URL));
+    const t = setup({ server: LINKED, base, reader: 2, local: local(), ctx: people().ctx, noteLinks: { ...LINKS, ownVaults: ['Notes', 'Mac Notes'] } });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('the card holds a link with a former vault name: replaced, never read as website', async () => {
+    const server = withLines(V1, ...SPOUSE, ...link(MAC_URL));
+    const t = setup({ server, base: server, reader: 2, local: local(), ctx: people().ctx, noteLinks: { ...LINKS, ownVaults: ['Notes', 'Mac Notes'] } });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(links(raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+    expect(raw).not.toContain('Mac%20Notes');
+    noLinkInNote(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('the linked note moved into a folder: one review, Apply changes the URL, then up to date', async () => {
+    const { ctx, notes } = people();
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: local(), ctx, noteLinks: LINKS });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    notes.set('Sem', { path: 'Contacts/Sem/index.md', name: 'Sem de Vries' });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([['obsidian://open?vault=Notes&file=Contacts%2FSem%2Findex', 'Sem de Vries']]);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('the setting turned off: the own link is removed at the next Sync, then up to date', async () => {
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: local(), ctx: people().ctx, noteLinks: { ...LINKS, enabled: false } });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(true);
+    expect(changedRows(prepared)).toEqual([]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(links(raw)).toEqual([]);
+    expect(withoutRev(raw)).toEqual(withoutRev(CARD));
+    noLinkInNote(t);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  const NO_OWN_VAULTS: NoteLinkOptions = { enabled: false, vault: '', ownVaults: [] };
+  for (const [what, noteLinks] of [
+    ['no link options', undefined],
+    ['no own vaults', NO_OWN_VAULTS],
+  ] as const) {
+    it(`${what}: the link reads as a website, exactly as before, and nothing is removed`, async () => {
+      const { ctx } = people();
+      const t = setup({ server: LINKED, base: CARD, reader: 2, local: local(), ctx, noteLinks });
+      // As read before the links existed: the link is one of the card's websites.
+      const today = toFriendly(parseCard(LINKED), DEFAULT_MAPPING, ctx).props;
+      const websites = Object.fromEntries(Object.entries(today).filter(([k]) => k.startsWith('website')));
+      expect(Object.values(websites)).toContain(SEM_URL);
+      const prepared = await reviewOf(t);
+      expect(prepared.rewriteLinks).toBe(false);
+      expect(prepared.server!.friendly.props).toMatchObject(websites);
+      expect(changedRows(prepared).map(([property]) => property)).toEqual(Object.keys(websites));
+      expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(LINKED);
+      expect(t.note.frontmatter).toMatchObject(websites);
+    });
+  }
+
+  it('the owner\'s own obsidian:// website is a plain URL line, kept once, and the next Sync is up to date', async () => {
+    const OWN = 'obsidian://open?vault=Notes&file=Projects%2FFoo';
+    const server = edit(LINKED, 'item2.URL;type=pref:https://jan.example.nl\r\nitem2.X-ABLabel:_$!<HomePage>!$_\r\n', '');
+    const t = setup({ server, base: server, reader: 2, local: { ...local(server), website: OWN }, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(changedRows(prepared)).toEqual([['website', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const own = (raw: string) => lineTexts(raw).filter((l) => l.includes('Projects%2FFoo'));
+    expect(own(t.cards.get(HREF)!.raw)).toEqual([`URL:${OWN}`]);
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(own(t.cards.get(HREF)!.raw)).toEqual([`URL:${OWN}`]);
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+    expect(t.note.frontmatter.website).toBe(OWN);
+  });
+
+  it('a relationship added on the phone: Apply pulls it and the card gets its link in the same Apply', async () => {
+    const server = withLines(V1, ...SPOUSE, ...link(SEM_URL), 'item11.X-ABRELATEDNAMES:Anna Smit', 'item11.X-ABLabel:_$!<Partner>!$_');
+    const t = setup({ server, base: LINKED, reader: 2, local: local(), ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(changedRows(prepared)).toEqual([['partner', 'server']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'both' });
+    expect(t.note.frontmatter.partner).toBe('[[Anna]]');
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([
+      [SEM_URL, 'Sem de Vries'],
+      [ANNA_URL, 'Anna Smit'],
+    ]);
+    noLinkInNote(t);
+  });
+
+  it('a relationship removed from the note: Apply removes its line and its link, then up to date', async () => {
+    const { spouse: _spouse, ...noSpouse } = local();
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: noSpouse, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['spouse', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    const raw = t.cards.get(HREF)!.raw;
+    expect(raw).not.toContain('X-ABRELATEDNAMES');
+    expect(raw).not.toContain('obsidian://');
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+  });
+
+  it('a new card is created with the link lines', async () => {
+    const t = setup({ local: { name: 'Jan de Vries', uid: UID, spouse: '[[Sem]]' }, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'created' });
+    const raw = [...t.cards.values()][0].raw;
+    expect(links(raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+    expect(JSON.stringify(t.note.frontmatter)).not.toContain('obsidian://');
+  });
+
+  it('no link to the contact\'s own note', async () => {
+    const t = setup({ server: LINKED, base: LINKED, reader: 2, local: { ...local(), friends: ['[[Jan]]'] }, ctx: people().ctx, noteLinks: LINKS });
+    const prepared = await reviewOf(t);
+    expect(prepared.rewriteLinks).toBe(false);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(links(t.cards.get(HREF)!.raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
   });
 });

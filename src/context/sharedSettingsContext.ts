@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals-core";
-import { migrateMapping } from "src/contacts/friendly/mapping";
+import { addDefaultRows, migrateMapping } from "src/contacts/friendly/mapping";
+import { normalizeNoteLinks } from "src/contacts/friendly/noteLinks";
 import { normalizeLayout } from "src/contacts/layout";
 import { insightService } from "src/insights/insightService";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
@@ -17,44 +18,60 @@ function isLegacyDefault(keys: unknown): boolean {
     && keys.every((key, i) => key === LEGACY_CREATE_FIELDS_KEYS[i]);
 }
 
-export async function initSettings(
-  loadData: () => Promise<any>,   // a callable async function
-  mySaveData: (data: any) => Promise<void> // another callable async function
-): Promise<{ migratedFrom?: string }> {
-
-  const insightsSetting = insightService.settings();
-  const insightsSettingDefaults = insightsSetting.reduce((acc:Record<string, string|boolean>, setting) => {
+/** Settings as read from data.json, with defaults filled in and old shapes migrated; nothing is saved here. */
+function normalizeLoaded(loaded: any): { settings: ContactsPluginSettings; migratedFrom?: string } {
+  const insightsSettingDefaults = insightService.settings().reduce((acc: Record<string, string | boolean>, setting) => {
     acc[setting.settingPropertyName] = setting.settingDefaultValue;
     return acc;
   }, {} as Record<string, string>);
 
-
-  saveData = mySaveData;
-  const loaded = await loadData() ?? {};
   const { CardDAV: _cardDAV, syncSelected: _syncSelected, syncEnabled: _syncEnabled, ...rest } = loaded;
   const { sources, defaultSource, migratedFrom } = migrateSources(loaded);
-  const initializedSettings = {
-      ...DEFAULT_SETTINGS,
-      ...rest,
-      sources,
-      defaultSource,
-      processors: {
-        ...insightsSettingDefaults,
-        ...(loaded.processors ?? {})
-      },
-      createFieldsKeys: isLegacyDefault(loaded.createFieldsKeys)
-        ? DEFAULT_SETTINGS.createFieldsKeys
-        : (loaded.createFieldsKeys ?? DEFAULT_SETTINGS.createFieldsKeys),
-      // Only the mapping lives here; "mirror relationships" is per device (src/settings/deviceSettings.ts),
-      // so an old mirrorRelations value in data.json is dropped.
-      friendly: {
-        mapping: migrateMapping(loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping)
-      },
-      layout: normalizeLayout(loaded.layout),
-      meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid
-    };
-    await setSettings(initializedSettings);
-    return { migratedFrom };
+  const seen = loaded.friendly?.defaultRowsSeen;
+  const { rows: mapping, seen: defaultRowsSeen } = addDefaultRows(
+    migrateMapping(loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping),
+    typeof seen === "number" ? seen : 0
+  );
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...rest,
+    sources,
+    defaultSource,
+    processors: {
+      ...insightsSettingDefaults,
+      ...(loaded.processors ?? {})
+    },
+    createFieldsKeys: isLegacyDefault(loaded.createFieldsKeys)
+      ? DEFAULT_SETTINGS.createFieldsKeys
+      : (loaded.createFieldsKeys ?? DEFAULT_SETTINGS.createFieldsKeys),
+    // Only the mapping lives here; "mirror relationships" is per device (src/settings/deviceSettings.ts),
+    // so an old mirrorRelations value in data.json is dropped. The new default rows are added once (defaultRowsSeen).
+    friendly: { mapping, defaultRowsSeen },
+    layout: normalizeLayout(loaded.layout),
+    meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid,
+    noteLinks: normalizeNoteLinks(loaded.noteLinks)
+  };
+  return { settings, migratedFrom };
+}
+
+export async function initSettings(
+  loadData: () => Promise<any>,   // a callable async function
+  mySaveData: (data: any) => Promise<void> // another callable async function
+): Promise<{ migratedFrom?: string }> {
+  saveData = mySaveData;
+  const { settings: initializedSettings, migratedFrom } = normalizeLoaded(await loadData() ?? {});
+  await setSettings(initializedSettings);
+  return { migratedFrom };
+}
+
+/**
+ * Reads data.json again after it changed on disk (Obsidian Sync or another file sync), the same way as at
+ * startup, and shows the result to everyone watching the settings. Nothing is saved: a save here would change
+ * the file again and could start a reload loop between devices; a migration is saved with the next change.
+ */
+export async function reloadSettings(loadData: () => Promise<any>): Promise<void> {
+  const { settings: reloaded } = normalizeLoaded(await loadData() ?? {});
+  settings.value = deepCloneObject(reloaded);
 }
 
 export async function updateSetting(path: string, value: string | boolean | string[]) {

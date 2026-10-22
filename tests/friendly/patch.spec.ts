@@ -1,5 +1,7 @@
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard, serializeCard, serializeLine, VCardLine } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { cardNoteLinks, NoteLink, noteLinkUrl, noteLinksDiffer } from 'src/contacts/friendly/noteLinks';
 import { needsLegacyRewrite } from 'src/contacts/friendly/patch';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, newCard, patch, toFriendly } from 'src/contacts/friendly/translate';
@@ -776,5 +778,333 @@ describe('relationships and anniversaries in the card\'s own form', () => {
       const lines = card('FN:X', 'RELATED;TYPE=child:urn:uuid:nobody', 'RELATED;TYPE=agent;VALUE=text:Bond');
       expect(go(lines, read(lines).props, true).lines).toEqual(lines);
     });
+  });
+});
+
+describe('patch labelled dates', () => {
+  const rows = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating'));
+  const go = (lines: VCardLine[], after: Record<string, FriendlyValue>) =>
+    patch(lines, toFriendly(lines, rows, ctx), after, rows, ctx);
+  const read = (lines: VCardLine[]) => toFriendly(lines, rows, ctx).props;
+  const existing = ['FN:X', 'item1.X-ABDATE:2000-01-01', 'item1.X-ABLabel:Other', 'item7.EMAIL:a@b.nl', 'item7.X-ABLabel:Home'];
+
+  it('3.0: a new date is a labelled X-ABDATE group above every item number', () => {
+    const lines = card(...existing);
+    const result = go(lines, { ...read(lines), dating: '2012-05-01' });
+    expect(texts(result.lines).slice(lines.length)).toEqual(['item8.X-ABDATE:2012-05-01', 'item8.X-ABLabel:Verkering']);
+    result.lines.slice(0, lines.length).forEach((line, i) => expect(line).toBe(lines[i]));
+    expect(result.lines[0].value).toBe('3.0');
+    expect(read(result.lines).dating).toBe('2012-05-01');
+  });
+
+  it('4.0: a new date is a labelled X-ABDATE group in the 4.0 form', () => {
+    const lines = card4(...existing);
+    const result = go(lines, { ...read(lines), dating: '2012-05-01' });
+    expect(texts(result.lines).slice(lines.length)).toEqual(['item8.X-ABDATE:20120501', 'item8.X-ABLabel:Verkering']);
+    result.lines.slice(0, lines.length).forEach((line, i) => expect(line).toBe(lines[i]));
+    expect(result.lines[0].value).toBe('4.0');
+    expect(read(result.lines).dating).toBe('2012-05-01');
+  });
+
+  it('writes a year-less date in the form of the version', () => {
+    expect(texts(go(card('FN:X'), { dating: '--05-01' }).lines).slice(2)).toEqual([
+      'item1.X-ABDATE;X-APPLE-OMIT-YEAR=1604:1604-05-01',
+      'item1.X-ABLabel:Verkering',
+    ]);
+    expect(texts(go(card4('FN:X'), { dating: '--05-01' }).lines).slice(2)).toEqual([
+      'item1.X-ABDATE:--0501',
+      'item1.X-ABLabel:Verkering',
+    ]);
+  });
+
+  it('4.0: a new anniversary is still ANNIVERSARY', () => {
+    expect(texts(go(card4('FN:X'), { anniversary: '2012-06-21' }).lines).slice(2)).toEqual(['ANNIVERSARY:20120621']);
+  });
+
+  it('changes a date in place and removes it with its label', () => {
+    const lines = card('FN:X', 'item3.X-ABDATE:2012-05-01', 'item3.X-ABLabel:Verkering');
+    const changed = go(lines, { dating: '2013-01-02' });
+    expect(texts(changed.lines).slice(2)).toEqual(['item3.X-ABDATE:2013-01-02', 'item3.X-ABLabel:Verkering']);
+    expect(changed.lines[3]).toBe(lines[3]);
+    expect(texts(go(lines, { dating: '' }).lines).filter((l) => l.startsWith('item3.'))).toEqual([]);
+  });
+
+  it('removing dating-2 leaves the first group intact', () => {
+    const lines = card(
+      'FN:X',
+      'item1.X-ABDATE:2012-05-01',
+      'item1.X-ABLabel:Verkering',
+      'item2.X-ABDATE:2013-06-02',
+      'item2.X-ABLabel:Verkering',
+    );
+    const props = read(lines);
+    expect(props['dating-2']).toBe('2013-06-02');
+    const result = go(lines, { ...props, 'dating-2': '' });
+    expect(texts(result.lines).slice(2)).toEqual(['item1.X-ABDATE:2012-05-01', 'item1.X-ABLabel:Verkering']);
+    expect(result.lines[2]).toBe(lines[2]);
+    expect(result.lines[3]).toBe(lines[3]);
+  });
+});
+
+describe('links to Obsidian notes on cards', () => {
+  const own = ['Notes'];
+  const url = noteLinkUrl('Notes', 'Contacts/Ger Verhallen.md');
+  const ger: NoteLink = { url, label: 'Ger Verhallen' };
+  const moved = noteLinkUrl('Notes', 'Contacts/Ger Verhallen/index.md');
+  const anna: NoteLink = { url: noteLinkUrl('Notes', 'Contacts/Anna.md'), label: 'Anna' };
+  const geRelated = ['FN:X', 'item3.X-ABRELATEDNAMES:Ger Verhallen', 'item3.X-ABLabel:_$!<Friend>!$_'];
+  const read = (lines: VCardLine[]) => toFriendly(lines, DEFAULT_MAPPING, ctx, { ownVaults: own });
+  const link = (lines: VCardLine[], wanted: NoteLink[], after?: Record<string, FriendlyValue>) => {
+    const before = read(lines);
+    return patch(lines, before, after ?? before.props, DEFAULT_MAPPING, ctx, { noteLinks: { wanted, ownVaults: own } });
+  };
+  const ownGroup = (group: string, value = url, label = 'Ger Verhallen') => [
+    `${group}.URL:${value}`,
+    `${group}.X-ABLabel:${label}`,
+  ];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 17, 8, 5, 3)));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  for (const [version, make] of [['3.0', card], ['4.0', card4]] as const) {
+    it(`${version}: a wanted link is added as itemN.URL + itemN.X-ABLabel, every other line untouched`, () => {
+      const lines = make(...geRelated);
+      const result = link(lines, [ger]);
+      expect(result.lines.slice(0, lines.length)).toEqual(lines);
+      lines.forEach((line, i) => expect(result.lines[i]).toBe(line));
+      expect(texts(result.lines.slice(lines.length))).toEqual([
+        'item4.URL:obsidian://open?vault=Notes&file=Contacts%2FGer%20Verhallen',
+        'item4.X-ABLabel:Ger Verhallen',
+      ]);
+      expect(texts(result.lines)[0]).toBe(`VERSION:${version}`);
+    });
+  }
+
+  it('a card already holding the wanted link is not rewritten (REV stays)', () => {
+    const lines = card(...geRelated, 'REV:20200101T000000Z', ...ownGroup('item4'));
+    const result = link(lines, [ger]);
+    expect(result.lines).toHaveLength(lines.length);
+    lines.forEach((line, i) => expect(result.lines[i]).toBe(line));
+  });
+
+  it('patching an already patched card (not re-parsed) with the same links changes nothing', () => {
+    const once = link(card(...geRelated), [ger, anna]).lines;
+    const fixed = link(card(...geRelated, ...ownGroup('item4', url, 'Ger')), [ger]).lines;
+    for (const [lines, wanted] of [[once, [ger, anna]], [fixed, [ger]]] as const) {
+      const before = read(lines);
+      const again = patch(lines, before, before.props, DEFAULT_MAPPING, ctx, { noteLinks: { wanted: [...wanted], ownVaults: own } });
+      expect(again.lines).toHaveLength(lines.length);
+      lines.forEach((line, i) => expect(again.lines[i]).toBe(line));
+    }
+  });
+
+  it('a label changed on the phone is put back in place; nothing else changes', () => {
+    const lines = card(...geRelated, ...ownGroup('item4', url, 'Ger'));
+    const result = link(lines, [ger]);
+    expect(texts(result.lines)).toEqual([...texts(lines).slice(0, -1), 'item4.X-ABLabel:Ger Verhallen']);
+    lines.slice(0, -1).forEach((line, i) => expect(result.lines[i]).toBe(line));
+  });
+
+  it('a kept link without a label line gets one right after it', () => {
+    const lines = card(...geRelated, `item4.URL:${url}`, 'NOTE:x');
+    const result = link(lines, [ger]);
+    expect(texts(result.lines)).toEqual([
+      ...texts(lines).slice(0, -1),
+      'item4.X-ABLabel:Ger Verhallen',
+      'NOTE:x',
+    ]);
+  });
+
+  it('no wanted links: own groups go, plain URLs, other labels and other vaults stay byte-identical', () => {
+    const lines = card(
+      'FN:X',
+      ...ownGroup('item4'),
+      'URL:obsidian://open?vault=Notes&file=x',
+      'item5.URL:https://blog.example',
+      'item5.X-ABLabel:Blog',
+      'item6.URL:obsidian://open?vault=Other&file=x',
+    );
+    const result = link(lines, []);
+    expect(result.lines).toEqual([lines[0], lines[1], ...lines.slice(4)]);
+    [lines[0], lines[1], ...lines.slice(4)].forEach((line, i) => expect(result.lines[i]).toBe(line));
+  });
+
+  it('two own groups with the same URL: the first is kept, the second removed', () => {
+    const lines = card('FN:X', ...ownGroup('item4'), ...ownGroup('item5'));
+    const result = link(lines, [ger]);
+    expect(texts(result.lines)).toEqual(texts(lines).slice(0, 4));
+    lines.slice(0, 4).forEach((line, i) => expect(result.lines[i]).toBe(line));
+  });
+
+  it('a moved note: the old group goes, a new group with the next free number is appended', () => {
+    const lines = card(...geRelated, ...ownGroup('item4'));
+    const result = link(lines, [{ url: moved, label: 'Ger Verhallen' }]);
+    expect(texts(result.lines)).toEqual([
+      ...texts(lines).slice(0, -2),
+      `item5.URL:${moved}`,
+      'item5.X-ABLabel:Ger Verhallen',
+    ]);
+  });
+
+  it('group numbers never collide with the card\'s groups or each other', () => {
+    const dated = card('FN:X', ...ownGroup('item4'), 'item9.X-ABDATE:2012-05-01', 'item9.X-ABLabel:Verkering');
+    const one = link(dated, [{ url: moved, label: 'Ger Verhallen' }]);
+    expect(texts(one.lines).slice(-2)).toEqual([`item10.URL:${moved}`, 'item10.X-ABLabel:Ger Verhallen']);
+    const two = link(dated, [{ url: moved, label: 'Ger Verhallen' }, anna]);
+    expect(texts(two.lines).filter((l) => /^item\d+\.URL/i.test(l))).toEqual([
+      `item10.URL:${moved}`,
+      `item11.URL:${anna.url}`,
+    ]);
+    expect(texts(two.lines)).not.toContain(`item4.URL:${url}`);
+  });
+
+  it('labels are escaped text, never an Apple label', () => {
+    const lines = card(...geRelated);
+    expect(texts(link(lines, [{ url, label: 'Verhallen, Ger' }]).lines)).toContain('item4.X-ABLabel:Verhallen\\, Ger');
+    expect(texts(link(lines, [{ url, label: 'Manager' }]).lines)).toContain('item4.X-ABLabel:Manager');
+    expect(texts(link(lines, [{ url, label: 'Zoë; Ørsted' }]).lines)).toContain('item4.X-ABLabel:Zoë\\; Ørsted');
+  });
+
+  it('a long link folds and reads back the same', () => {
+    const long = { url: noteLinkUrl('Notes', 'Contacts/Ger Verhallen van der Berg-Hoogeveen/index.md'), label: 'Verhallen, Ger' };
+    const result = link(card(...geRelated), [long]);
+    const text = serializeCard(result.lines);
+    expect(text).toContain('\r\n ');
+    const back = parseCard(text);
+    expect(cardNoteLinks(back, own).map(({ url: u, label }) => ({ url: u, label }))).toEqual([long]);
+    expect(noteLinksDiffer(back, [long], own)).toBe(false);
+  });
+
+  it('the owner\'s own obsidian:// website is a plain URL line and stays', () => {
+    const value = 'obsidian://open?vault=Notes&file=Projects%2FFoo';
+    const first = link(card('FN:X'), [ger], { name: 'X', website: value });
+    expect(texts(first.lines)).toContain(`URL:${value}`);
+    const again = parseCard(serializeCard(first.lines));
+    expect(read(again).props).toEqual({ name: 'X', website: value });
+    const second = link(again, [ger]);
+    expect(second.lines).toEqual(again);
+  });
+
+  it('without the option, own groups are left alone', () => {
+    const lines = card('FN:X', 'TITLE:a', ...ownGroup('item4', url, 'Ger'), ...ownGroup('item5'));
+    const result = patch(lines, read(lines), { ...read(lines).props, title: 'b' }, DEFAULT_MAPPING, ctx);
+    expect(texts(result.lines)).toEqual(['VERSION:3.0', 'FN:X', 'TITLE:b', ...texts(lines).slice(3)]);
+    lines.slice(3).forEach((line, i) => expect(result.lines[i + 3]).toBe(line));
+  });
+
+  for (const version of ['3.0', '4.0'] as const) {
+    it(`newCard ${version} holds the wanted links only when asked`, () => {
+      const withLinks = texts(newCard({ uid: 'a', name: 'Anna' }, DEFAULT_MAPPING, ctx, version, {
+        noteLinks: { wanted: [ger], ownVaults: own },
+      }).lines);
+      expect(withLinks.slice(-2)).toEqual([
+        'item1.URL:obsidian://open?vault=Notes&file=Contacts%2FGer%20Verhallen',
+        'item1.X-ABLabel:Ger Verhallen',
+      ]);
+      expect(withLinks[0]).toBe(`VERSION:${version}`);
+      const plain = texts(newCard({ uid: 'a', name: 'Anna' }, DEFAULT_MAPPING, ctx, version).lines);
+      expect(plain.some((l) => /URL|X-ABLabel/i.test(l))).toBe(false);
+    });
+  }
+});
+
+describe('write key per vCard version', () => {
+  const fresh = (props: Record<string, FriendlyValue>, version: '3.0' | '4.0', rows = DEFAULT_MAPPING) =>
+    texts(newCard(props, rows, ctx, version).lines);
+  const edit = (lines: VCardLine[], after: Record<string, FriendlyValue>, rows = DEFAULT_MAPPING) =>
+    texts(patch(lines, toFriendly(lines, rows, ctx), after, rows, ctx).lines);
+
+  it('a new gender line is GENDER on 4.0 and X-GENDER on 3.0', () => {
+    const v4 = fresh({ name: 'A', gender: 'M' }, '4.0');
+    expect(v4).toContain('GENDER:M');
+    expect(v4.some((l) => l.startsWith('X-GENDER'))).toBe(false);
+    const v3 = fresh({ name: 'A', gender: 'M' }, '3.0');
+    expect(v3).toContain('X-GENDER:M');
+    expect(v3.some((l) => l.startsWith('GENDER'))).toBe(false);
+  });
+
+  it('gender and identity share one line', () => {
+    const lines = fresh({ name: 'A', gender: 'O', 'gender-identity': 'non-binair' }, '3.0');
+    expect(lines.filter((l) => /GENDER/.test(l))).toEqual(['X-GENDER:O;non-binair']);
+  });
+
+  it('existing lines keep their field name on edit', () => {
+    const v3 = edit(card('FN:A', 'GENDER:M', 'REV:x'), { name: 'A', gender: 'F' });
+    expect(v3).toContain('GENDER:F');
+    expect(v3.some((l) => l.startsWith('X-GENDER'))).toBe(false);
+    const v4 = edit(card4('FN:A', 'X-GENDER:Male', 'REV:x'), { name: 'A', gender: 'F' });
+    expect(v4).toContain('X-GENDER:F');
+    expect(v4.some((l) => l.startsWith('GENDER'))).toBe(false);
+  });
+
+  it('clearing the sex keeps the identity; clearing both removes the line', () => {
+    const lines = card4('FN:A', 'GENDER:O;non-binair', 'REV:x');
+    expect(edit(lines, { name: 'A', 'gender-identity': 'non-binair' })).toContain('GENDER:;non-binair');
+    expect(edit(lines, { name: 'A' }).some((l) => l.includes('GENDER'))).toBe(false);
+  });
+
+  it('editing the identity on a GENDER line a server stored with an escaped ; keeps the sex', () => {
+    const lines = card4('FN:A', String.raw`GENDER:O\;non-binair`, 'REV:x');
+    expect(edit(lines, { name: 'A', gender: 'O', 'gender-identity': 'queer' })).toContain('GENDER:O;queer');
+  });
+
+  it('changing the sex on a GENDER line a server stored with an escaped ; keeps the identity', () => {
+    const lines = card4('FN:A', String.raw`GENDER:O\;non-binair`, 'REV:x');
+    const props = toFriendly(lines, DEFAULT_MAPPING, ctx).props;
+    expect(edit(lines, { ...props, gender: 'F' })).toContain('GENDER:F;non-binair');
+  });
+
+  it('editing another field leaves a GENDER line a server stored with an escaped ; as it was', () => {
+    const lines = card4('FN:A', 'TEL;TYPE=CELL:06 1', String.raw`GENDER:O\;non-binair`, 'REV:x');
+    const props = toFriendly(lines, DEFAULT_MAPPING, ctx).props;
+    const after = patch(lines, toFriendly(lines, DEFAULT_MAPPING, ctx), { ...props, mobile: '06 2' }, DEFAULT_MAPPING, ctx).lines;
+    expect(texts(after)).toContain('TEL;TYPE=CELL:06 2');
+    expect(after.find((l) => l.name === 'GENDER')).toBe(lines.find((l) => l.name === 'GENDER'));
+  });
+
+  it('patches the department of an ORG line and keeps the escaped company', () => {
+    const lines = card4('FN:A', 'ORG:A\\;B;Sales', 'REV:x');
+    expect(toFriendly(lines, DEFAULT_MAPPING, ctx).props).toMatchObject({ company: 'A;B', department: 'Sales' });
+    expect(edit(lines, { name: 'A', company: 'A;B', department: 'Ops' })).toContain('ORG:A\\;B;Ops');
+  });
+
+  it('adding a department to an ORG with an escaped ; keeps the company whole', () => {
+    const lines = card4('FN:A', String.raw`ORG:A\;B`, 'REV:x');
+    const props = toFriendly(lines, DEFAULT_MAPPING, ctx).props;
+    expect(edit(lines, { ...props, department: 'Ops' })).toContain(String.raw`ORG:A\;B;Ops`);
+  });
+
+  it('a new 3.0 card with only a name prefix has N:;;;Dr;', () => {
+    expect(fresh({ name: 'A', 'name-prefix': 'Dr' }, '3.0')).toContain('N:;;;Dr;');
+  });
+
+  it('a new home address with only a PO box has seven components', () => {
+    expect(fresh({ name: 'A', 'po-box': '12' }, '4.0')).toContain('ADR;TYPE=HOME:12;;;;;;');
+  });
+
+  it('any row with a writeV3 key follows the card version', () => {
+    const rows: typeof DEFAULT_MAPPING = [
+      ...DEFAULT_MAPPING,
+      { kind: 'field', property: 'x', read: ['X-FOO'], write: 'X-FOO', writeV3: 'X-BAR' },
+    ];
+    expect(fresh({ name: 'A', x: '1' }, '3.0', rows)).toContain('X-BAR:1');
+    const v4 = fresh({ name: 'A', x: '1' }, '4.0', rows);
+    expect(v4).toContain('X-FOO:1');
+    expect(v4.some((l) => l.startsWith('X-BAR'))).toBe(false);
+    const existing = edit(card('FN:A', 'X-FOO:1', 'REV:x'), { name: 'A', x: '2' }, rows);
+    expect(existing).toContain('X-FOO:2');
+    expect(existing.some((l) => l.startsWith('X-BAR'))).toBe(false);
+  });
+
+  it('untouched lines keep their raw text', () => {
+    const lines = card('FN:A', 'tel;type=cell:06 1', 'GENDER:M', 'ORG:Co;Sales', 'REV:x');
+    const after = patch(lines, toFriendly(lines, DEFAULT_MAPPING, ctx), { name: 'A', mobile: '06 1', gender: 'F', company: 'Co', department: 'Sales' }, DEFAULT_MAPPING, ctx).lines;
+    const rest = (ls: VCardLine[]) => ls.filter((l) => l.name !== 'REV' && l.name !== 'GENDER').map((l) => l.raw ?? serializeLine(l));
+    expect(rest(after)).toEqual(rest(lines));
   });
 });

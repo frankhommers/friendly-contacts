@@ -1,4 +1,5 @@
-import { DEFAULT_MAPPING } from "src/contacts/friendly/mapping";
+import { DEFAULT_MAPPING, DEFAULT_ROWS_SET } from "src/contacts/friendly/mapping";
+import { DEFAULT_NOTE_LINKS } from "src/contacts/friendly/noteLinks";
 import { DEFAULT_LAYOUT } from "src/contacts/layout";
 import { ContactsPluginSettings } from "src/settings/settings";
 
@@ -38,8 +39,10 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
     'street', 'city', 'postcode', 'country', 'website', 'company', 'title', 'categories',
   ],
   friendly: {
-    mapping: DEFAULT_MAPPING
+    mapping: DEFAULT_MAPPING,
+    defaultRowsSeen: DEFAULT_ROWS_SET
   },
   layout: DEFAULT_LAYOUT,
-  meUid: ''
+  meUid: '',
+  noteLinks: DEFAULT_NOTE_LINKS
 }

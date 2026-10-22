@@ -25,6 +25,8 @@ export interface SyncReviewInput {
   moveLine?: string;
   /** The info line "Relationships on this card are rewritten ..."; with no differing row the screen shows only this. */
   rewriteLine?: string;
+  /** The info line "Links to Obsidian notes on this card are updated."; like `rewriteLine`, it may be all there is. */
+  linksLine?: string;
   /** The address book whose card the server column shows (its column, pick buttons and "All from" use the name). */
   serverName: string;
   /** Warning lines above the table. */
@@ -89,7 +91,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
   const setAll = (side: Side) => set(rows.filter((r) => r.changed).map((r) => [r.property, side]));
 
   const { visible, hidden: hiddenCount } = shownRows(rows, showAll);
-  const rewriteOnly = isRewriteOnly(rows, input.rewriteLine !== undefined);
+  const rewriteOnly = isRewriteOnly(rows, input.rewriteLine !== undefined || input.linksLine !== undefined);
   const ok = canApply(rows, choices) && !importing;
   const hint = applyHint(undecidedCount(rows, choices));
   // Both follow the current picks.
@@ -200,6 +202,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
       ))}
       {input.moveLine ? <p className="friendly-review-move">{input.moveLine}</p> : null}
       {input.rewriteLine ? <p className="friendly-review-rewrite">{input.rewriteLine}</p> : null}
+      {input.linksLine ? <p className="friendly-review-rewrite">{input.linksLine}</p> : null}
       {rewriteOnly ? null : (
         <>
           <div className="friendly-review-toolbar">

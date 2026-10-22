@@ -161,6 +161,38 @@ export function splitStructured(v: string): string[] {
   return parts;
 }
 
+/** Fields the vCard format defines as made of parts that every server knows, with their part count. */
+export const COMPONENT_COUNT: Record<string, number> = { ADR: 7, N: 5, ORG: 2 };
+
+/**
+ * The parts of a field made of parts; parts stay escaped. `ADR`, `N` and `ORG` are split on unescaped `;` only. A
+ * server that does not know a field (Radicale with `GENDER` or `X-GENDER`) stores `O;non-binary` as
+ * `O\;non-binary`, so for any other field a value with no unescaped `;` but an escaped one is read as such a
+ * flattened value, its escaped `;` separating the parts. Known limit: a part that itself holds a `;` cannot be told
+ * apart there (an identity `a;b` comes back as identity `a`).
+ */
+export function splitParts(name: string, v: string): string[] {
+  const parts = splitStructured(v);
+  const field = name.slice(name.indexOf('.') + 1).toUpperCase();
+  if (field in COMPONENT_COUNT || parts.length > 1 || !v.includes('\\;')) return parts;
+  const flattened: string[] = [];
+  let current = '';
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (c === '\\' && v[i + 1] === ';') {
+      flattened.push(current);
+      current = '';
+      i++;
+    } else if (c === '\\' && i + 1 < v.length) {
+      current += c + v[++i];
+    } else {
+      current += c;
+    }
+  }
+  flattened.push(current);
+  return flattened;
+}
+
 export function joinStructured(parts: string[]): string {
   return parts.join(';');
 }

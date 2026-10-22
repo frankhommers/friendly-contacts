@@ -37,6 +37,8 @@ export interface RelationContext {
   displayName(uid: string): string | undefined;
   /** Resolves a link target (a name) to a contact UID, plain text, or "ambiguous". */
   resolveLink(name: string): { uid: string } | { text: string } | { ambiguous: true };
+  /** The contact note a link target resolves to (vault path with `.md`, display name); never writes. Absent: none is known. */
+  contactNote?(target: string): { path: string; name: string } | undefined;
 }
 
 export function toLink(name: string): string {
@@ -44,15 +46,15 @@ export function toLink(name: string): string {
 }
 
 /**
- * Link text for a note whose file name does not say who it is (a fixed folder note name such as `index`):
- * `Contacts/Jan de Vries/index` -> `Contacts/Jan de Vries/index|Jan de Vries`. The link text as it is when its last
- * path segment already is the display name (or the name cannot be used as an alias). Characters that would break
- * a link (`|`, `[`, `]`) are left out of the alias.
+ * Link text that shows the contact's name: `Contacts/Jan de Vries/index` -> `Contacts/Jan de Vries/index|Jan de Vries`,
+ * and a path (Obsidian's "relative" or "absolute" link format) the same way:
+ * `../Jan de Vries/Jan de Vries` -> `../Jan de Vries/Jan de Vries|Jan de Vries`. The link text as it is when it already
+ * is the name (or the name cannot be used as an alias). Characters that would break a link (`|`, `[`, `]`) are left
+ * out of the alias.
  */
 export function linkWithAlias(linktext: string, displayName: string): string {
   const alias = displayName.replace(/[|[\]\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
-  const last = linktext.slice(linktext.lastIndexOf('/') + 1);
-  return alias === '' || last === alias ? linktext : `${linktext}|${alias}`;
+  return alias === '' || linktext === alias ? linktext : `${linktext}|${alias}`;
 }
 
 /**

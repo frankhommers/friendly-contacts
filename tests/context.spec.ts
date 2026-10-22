@@ -3,7 +3,7 @@ import { App } from "obsidian";
 import { clearApp,getApp, setApp } from 'src/context/sharedAppContext'
 import {
   clearSettings,
-  getSettings, initSettings,
+  getSettings, initSettings, reloadSettings,
   setSettings,
   settings, updateSetting,
 } from 'src/context/sharedSettingsContext';
@@ -19,6 +19,7 @@ vi.mock("src/insights/insightService", () => ({
 }));
 
 import { DEFAULT_MAPPING } from "src/contacts/friendly/mapping";
+import { DEFAULT_NOTE_LINKS } from "src/contacts/friendly/noteLinks";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import type { ContactsPluginSettings, Source } from 'src/settings/settings.d';
 import { afterEach,describe, expect, it, vi } from 'vitest';
@@ -36,6 +37,7 @@ const mockSettings: ContactsPluginSettings = {
   friendly: { mapping: [], mirrorRelations: false } as ContactsPluginSettings['friendly'],
   layout: { layout: 'note', noteName: '{{name}}', location: 'inside' },
   meUid: '',
+  noteLinks: DEFAULT_NOTE_LINKS,
 };
 
 const testDefaultSettings = {
@@ -110,7 +112,7 @@ describe('sharedSettingsContext', () => {
   it('keeps a stored mapping and drops a stored mirrorRelations (it is per device now)', async () => {
     const mapping = [{ kind: 'field', property: 'uid', read: ['UID'], write: 'UID' }];
     await initSettings(async () => ({ ...mockSettings, friendly: { mapping, mirrorRelations: true } }), saveData);
-    expect(Object.keys(getSettings().friendly)).toEqual(['mapping']);
+    expect(Object.keys(getSettings().friendly)).toEqual(['mapping', 'defaultRowsSeen']);
     expect(getSettings().friendly.mapping.slice(0, 1)).toEqual(mapping);
   });
 
@@ -128,6 +130,44 @@ describe('sharedSettingsContext', () => {
     expect(mapping.map((r) => r.property)).not.toContain('children');
     expect(mapping.find((r) => r.property === 'kinderen')).toMatchObject({ labels: ['Child'] });
     expect(mapping.find((r) => r.property === 'anniversary')).toMatchObject({ appleDateLabel: 'Anniversary' });
+  });
+
+  it('adds the new default rows to a stored mapping once and records it', async () => {
+    const old = DEFAULT_MAPPING.filter((r) => (r as { sinceReader?: number }).sinceReader === undefined);
+    await initSettings(async () => ({ ...mockSettings, friendly: { mapping: old } }), saveData);
+    const saved = saveData.mock.calls[0][0] as ContactsPluginSettings;
+    expect(saved.friendly.mapping.map((r) => r.property)).toContain('department');
+    expect(saved.friendly.defaultRowsSeen).toBe(1);
+  });
+
+  it('does not bring back a new default row once the set was seen', async () => {
+    const old = DEFAULT_MAPPING.filter((r) => (r as { sinceReader?: number }).sinceReader === undefined);
+    await initSettings(async () => ({ ...mockSettings, friendly: { mapping: old, defaultRowsSeen: 1 } }), saveData);
+    const saved = saveData.mock.calls[0][0] as ContactsPluginSettings;
+    expect(saved.friendly.mapping.map((r) => r.property)).not.toContain('department');
+    expect(saved.friendly.defaultRowsSeen).toBe(1);
+  });
+
+  it('links to Obsidian notes default to off, and a stored setting is kept', async () => {
+    const { noteLinks: _omitted, ...legacy } = mockSettings;
+    await initSettings(async () => legacy, saveData);
+    expect(getSettings().noteLinks).toEqual(DEFAULT_NOTE_LINKS);
+    const stored = { enabled: true, vaultName: 'Notes', formerVaultNames: ['Old'] };
+    await initSettings(async () => ({ ...mockSettings, noteLinks: stored }), saveData);
+    expect(getSettings().noteLinks).toEqual(stored);
+  });
+
+  it('reloadSettings picks up settings changed on disk, normalised, without saving', async () => {
+    await initSettings(async () => mockSettings, saveData);
+    saveData.mockClear();
+    const seen: ContactsPluginSettings[] = [];
+    const dispose = effect(() => { if (settings.value) seen.push(settings.value); });
+    const onDisk = { ...mockSettings, noteLinks: { enabled: true, vaultName: ' Notes ', formerVaultNames: ['Old', 'Old'] } };
+    await reloadSettings(async () => onDisk);
+    dispose();
+    expect(getSettings().noteLinks).toEqual({ enabled: true, vaultName: 'Notes', formerVaultNames: ['Old'] });
+    expect(seen.at(-1)!.noteLinks.vaultName).toBe('Notes');
+    expect(saveData).not.toHaveBeenCalled();
   });
 
   it('layout defaults to one note per contact', async () => {

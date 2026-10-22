@@ -4,7 +4,7 @@ import {Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
 import { getPluginDir, setPluginDir } from "src/context/sharedAppContext";
 import { defaultSourceOf } from "src/sync/sources";
 import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
-import { getSettings, initSettings, settings } from "src/context/sharedSettingsContext";
+import { getSettings, initSettings, reloadSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
 import { CONTACTS_VIEW_CONFIG, PEOPLE_GRAPH_VIEW } from "src/util/constants";
@@ -22,6 +22,7 @@ import { isSyncAvailable } from "src/sync/adapters";
 import { registerNoteSyncAction, syncContactNote } from "src/ui/noteSyncAction";
 import { MoveContactsModal } from "src/ui/modals/moveContactsModal";
 import { runLayoutCommand } from "src/ui/modals/layoutChangeModal";
+import { tidyRelationLinks } from "src/contacts/layoutNotes";
 import { CheckRelationsModal, oneSidedRelations } from "src/ui/modals/checkRelationsModal";
 import { ContactsPluginSettings } from  './settings/settings.d';
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -129,6 +130,19 @@ export default class ContactsPlugin extends Plugin {
       id: "friendly-contacts-out-of-folders",
       name: "Take contacts out of their folders",
       callback: () => runLayoutCommand(this.app, "out"),
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-tidy-links",
+      name: "Tidy relationship links",
+      callback: async () => {
+        try {
+          const changed = await tidyRelationLinks(this.app);
+          new Notice(changed === 0 ? "All relationship links are tidy." : `${changed} relationship link${changed === 1 ? "" : "s"} tidied.`);
+        } catch (err) {
+          new Notice(`Tidy relationship links failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
     });
 
     this.addCommand({
@@ -277,6 +291,11 @@ export default class ContactsPlugin extends Plugin {
 	}
 
 	onunload() {}
+
+	/** data.json changed on disk (Obsidian Sync or another file sync): use the settings of the other device. */
+	async onExternalSettingsChange() {
+		await reloadSettings(this.loadData.bind(this));
+	}
 
 
 	async activateSidebarView() {

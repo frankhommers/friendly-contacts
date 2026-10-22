@@ -1,7 +1,9 @@
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { noteLinkUrl } from 'src/contacts/friendly/noteLinks';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
-import { patch, toFriendly } from 'src/contacts/friendly/translate';
+import { CURRENT_READER, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { describe, expect, it } from 'vitest';
 
@@ -333,5 +335,123 @@ describe('reading every form', () => {
     expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Other>!$_')).props).toEqual({});
     expect(translate(card('X-ABDATE:2012-06-21')).props).toEqual({});
     expect(translate(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:Wedding')).props).toEqual({});
+  });
+});
+
+describe('labelled date rows', () => {
+  const rows = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating'));
+  const read = (text: string) => toFriendly(parseCard(text), rows, ctx).props;
+  const card4 = (...body: string[]) => ['BEGIN:VCARD', 'VERSION:4.0', ...body, 'END:VCARD'].join('\r\n');
+
+  it('reads a group with the row\'s label on 3.0 and 4.0', () => {
+    const body = ['item3.X-ABDATE:2012-05-01', 'item3.X-ABLabel:Verkering'];
+    expect(read(card(...body))).toEqual({ dating: '2012-05-01' });
+    expect(read(card4(...body))).toEqual({ dating: '2012-05-01' });
+  });
+
+  it('reads the label in any case and in the Apple form', () => {
+    expect(read(card('item1.X-ABDATE:2012-05-01', 'item1.X-ABLabel:verkering')).dating).toBe('2012-05-01');
+    expect(read(card('item1.X-ABDATE:2012-05-01', 'item1.X-ABLabel:_$!<Verkering>!$_')).dating).toBe('2012-05-01');
+  });
+
+  it('still reads the anniversary label as anniversary', () => {
+    expect(read(card('item1.X-ABDATE:2012-06-21', 'item1.X-ABLabel:_$!<Anniversary>!$_'))).toEqual({
+      anniversary: '2012-06-21',
+    });
+  });
+
+  it('reads an unlabelled X-ABDATE as nothing', () => {
+    expect(read(card('X-ABDATE:2012-05-01'))).toEqual({});
+    expect(read(card('item1.X-ABDATE:2012-05-01'))).toEqual({});
+  });
+
+  it('numbers several groups with one label', () => {
+    expect(
+      read(
+        card(
+          'item1.X-ABDATE:2012-05-01',
+          'item1.X-ABLabel:Verkering',
+          'item2.X-ABDATE:2013-06-02',
+          'item2.X-ABLabel:Verkering',
+        ),
+      ),
+    ).toEqual({ dating: '2012-05-01', 'dating-2': '2013-06-02' });
+  });
+});
+
+describe('own note links', () => {
+  const own = ['Notes'];
+  const url = noteLinkUrl('Notes', 'Contacts/Ger Verhallen.md');
+  const body = ['URL:https://a.example', `item4.URL:${url}`, 'item4.X-ABLabel:Ger Verhallen', 'URL:https://b.example'];
+  const versioned = (version: string, ...lines: string[]) =>
+    parseCard(['BEGIN:VCARD', `VERSION:${version}`, ...lines, 'END:VCARD'].join('\r\n'));
+
+  for (const version of ['3.0', '4.0']) {
+    it(`${version}: an own link feeds no row; provenance indexes are those of the full card`, () => {
+      const lines = versioned(version, ...body);
+      const read = toFriendly(lines, DEFAULT_MAPPING, ctx, { ownVaults: own });
+      expect(read.props).toEqual({ website: 'https://a.example', 'website-2': 'https://b.example' });
+      expect(read.source.website).toEqual({ line: 1 });
+      expect(read.source['website-2']).toEqual({ line: 4 });
+      expect(serializeCard([lines[4]])).toContain('URL:https://b.example');
+    });
+
+    it(`${version}: without own vaults the link is read as a website (as before)`, () => {
+      const read = toFriendly(versioned(version, ...body), DEFAULT_MAPPING, ctx);
+      expect(read.props).toEqual({ website: 'https://a.example', 'website-2': url, 'website-3': 'https://b.example' });
+    });
+  }
+
+  it('a plain URL line to this vault stays a website', () => {
+    const value = 'obsidian://open?vault=Notes&file=Projects%2FFoo';
+    const read = toFriendly(versioned('3.0', `URL:${value}`), DEFAULT_MAPPING, ctx, { ownVaults: own });
+    expect(read.props).toEqual({ website: value });
+  });
+
+  it('a link to another vault stays a website', () => {
+    const value = 'obsidian://open?vault=Other&file=x';
+    const read = toFriendly(versioned('3.0', `item1.URL:${value}`), DEFAULT_MAPPING, ctx, { ownVaults: own });
+    expect(read.props).toEqual({ website: value });
+  });
+});
+
+describe('every part of a structured value', () => {
+  it('reads the prefix and suffix of N', () => {
+    expect(translate(card('N:Jansen;Jan;;Dr;Jr')).props).toMatchObject({
+      lastname: 'Jansen',
+      firstname: 'Jan',
+      'name-prefix': 'Dr',
+      'name-suffix': 'Jr',
+    });
+  });
+
+  it('reads the department of ORG and unescapes the company', () => {
+    expect(translate(card('ORG:A\\;B;Sales')).props).toMatchObject({ company: 'A;B', department: 'Sales' });
+  });
+
+  it('reads an ORG with an escaped ; and no department as one company', () => {
+    const props = translate(card(String.raw`ORG:A\;B`)).props;
+    expect(props).toMatchObject({ company: 'A;B' });
+    expect(props.department).toBeUndefined();
+  });
+
+  it('reads GENDER and X-GENDER as sex and identity', () => {
+    expect(translate(card('GENDER:O;non-binair')).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
+    expect(translate(card('X-GENDER:M')).props).toMatchObject({ gender: 'M' });
+  });
+
+  it('reads a GENDER line a server stored with an escaped ; as sex and identity', () => {
+    expect(translate(card(String.raw`GENDER:O\;non-binair`)).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
+  });
+});
+
+describe('readerOf', () => {
+  it('reads the stored reader of a sync base', () => {
+    expect(CURRENT_READER).toBe(3);
+    expect(readerOf(3)).toBe(3);
+    expect(readerOf(4)).toBe(3);
+    expect(readerOf(2)).toBe(2);
+    expect(readerOf(1)).toBe(1);
+    expect(readerOf(undefined)).toBe(1);
   });
 });

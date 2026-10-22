@@ -2,18 +2,32 @@
  * One Sync of a contact note with its CardDAV card, in two phases.
  *
  * `prepareSync` reads the note (L), the base (B) and the server card (S) and returns either "up to date" or the
- * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists.
+ * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists (or the
+ * base was read without some of the rows: a date with a label added after it was stored, or a part an older reader
+ * did not read, see `rowsForBase`).
  * `applySync` takes the result R built from the user's choices, checks nothing moved underneath, patches the card
  * line by line and writes it with If-Match, then renames the note (when asked), writes it and stores the base.
  * Nothing from obsidian or src/context: the note, the server and the base store all come in through `deps`.
  */
 
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
+import { rowsForBase, withFilledLeftOut, withUnfilledDates } from 'src/contacts/friendly/dateLabels';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
+import { NoteLink, NoteLinkOptions, noteLinksDiffer, noteLinkUrl, wantedNoteLinks } from 'src/contacts/friendly/noteLinks';
 import { notePhotoLines, repairDamagedPhotos } from 'src/contacts/friendly/photo';
 import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
-import { CURRENT_READER, Friendly, FriendlyValue, needsLegacyRewrite, newCard, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
+import {
+  CURRENT_READER,
+  Friendly,
+  FriendlyValue,
+  needsLegacyRewrite,
+  newCard,
+  patch,
+  Reader,
+  readerOf,
+  toFriendly,
+} from 'src/contacts/friendly/translate';
 import type { VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import type { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { moveCard } from 'src/sync/moveCard';
@@ -52,6 +66,11 @@ export interface SyncDeps {
   notify(msg: string): void;
   /** The vCard version of a card created in the target book; asked only when creating. 4.0 when absent. */
   newCardVersion?(): Promise<'3.0' | '4.0'>;
+  /**
+   * Links to Obsidian notes on cards. Absent: no own vaults and no links (own links are neither read nor touched).
+   * Present but not `enabled`: no links wanted, so the own links on a card are removed at its next Sync.
+   */
+  noteLinks?: NoteLinkOptions;
 }
 
 export type SyncOutcome = 'unchanged' | 'pulled' | 'pushed' | 'both' | 'created' | 'failed';
@@ -70,9 +89,16 @@ export interface PreparedSync {
    */
   server?: { lines: VCardLine[]; friendly: Friendly; href: string; etag: string; raw: string; baseRaw: string };
   base?: Props;
+  /**
+   * The base for the rename check, when the base was read without some of the rows: `base` plus the base's values
+   * for those rows (read with all rows), so parts that only became visible are no name change. Absent: `base`.
+   */
+  nameBase?: Props;
   rows: ReviewRow[];
   /** The card holds relationship lines the plugin wrote that Apply puts right (`needsLegacyRewrite`), 3.0 or 4.0. */
   rewriteRelations: boolean;
+  /** The card's own links to Obsidian notes differ from the links wanted for the note; Apply puts them right. */
+  rewriteLinks: boolean;
   /** Where the card will live. */
   target: { sourceId: string };
   /** The card is currently in another source (Part 1 'move'); Apply moves it to the target. */
@@ -165,15 +191,24 @@ export async function prepareSync(
       }
     }
 
-    // Read the way it was stored: lines an older reader ignored then are the server's additions now.
+    // Read the way it was stored: lines and parts an older reader ignored then are the server's additions now. So are
+    // the dates with a label added after the base was stored (the note may never have been filled from it, see
+    // rowsForBase).
+    const baseReader = readerOf(baseEntry?.reader);
+    const baseRows = rowsForBase(deps.rows, baseEntry?.storedAt, baseReader);
     const baseCard = baseLines && {
       lines: baseLines,
-      friendly: canonicalFriendly(
-        toFriendly(baseLines, deps.rows, deps.readOnlyCtx, { reader: readerOf(baseEntry?.reader) }),
-        deps,
-      ),
+      friendly: canonicalFriendly(readCard(baseLines, baseRows, deps.readOnlyCtx, deps, baseReader), deps),
     };
-    const base = baseCard?.friendly.props;
+    const readBase = baseCard?.friendly.props;
+    // The base read with every row, when it was read without some.
+    const fullBase =
+      baseLines && readBase && baseRows.length < deps.rows.length
+        ? canonicalFriendly(readCard(baseLines, deps.rows, deps.readOnlyCtx, deps, baseReader), deps).props
+        : undefined;
+    // A prefix that only became visible is no rename: the rename check sees the base's values for the rows left out.
+    const nameBase =
+      readBase && fullBase ? withUnfilledDates(readBase, fullBase, deps.rows, baseEntry?.storedAt, baseReader) : undefined;
 
     // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
     const mine: Props = { ...local };
@@ -182,21 +217,42 @@ export async function prepareSync(
     // A legacy Apple `1604-03-12` in the note is the cards' `--03-12`: no difference.
     const aligned = alignNoteDates(mine, deps.rows, [baseCard, server && { lines: server.lines, friendly: server.friendly }]);
     const L = canonicalRelations(aligned, deps.readOnlyCtx, deps.rows);
+    // A left-out row the note already holds with the base's value was filled on another device: the base knew it.
+    const base =
+      readBase && fullBase ? withFilledLeftOut(readBase, fullBase, L, deps.rows, baseEntry?.storedAt, baseReader) : readBase;
 
     let rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
     // A new card's UID is no choice: Apply always writes the prepared one.
     if (!server) rows = rows.filter((r) => r.property !== 'uid');
     // Decided with the same lookups as Apply uses, so a line Apply cannot rewrite never reopens the review.
     const rewriteRelations = server !== undefined && needsLegacyRewrite(server.lines, deps.rows, deps.readOnlyCtx);
-    if (server && !where.move && isUpToDate(rows, rewriteRelations)) {
-      // The only write before Apply (spec): a first Sync where both sides agree stores the card as the base.
-      if (!baseEntry) {
+    // Against the links the note wants: the card's own links are no property, so no row shows them.
+    const rewriteLinks =
+      server !== undefined &&
+      deps.noteLinks !== undefined &&
+      noteLinksDiffer(server.lines, wantedLinks(L, uid, deps), deps.noteLinks.ownVaults);
+    if (server && !where.move && isUpToDate(rows, rewriteRelations || rewriteLinks)) {
+      // The only writes before Apply (spec): when both sides agree, the card is stored as the base on a first Sync,
+      // and over a base read without some of the rows (a date with a label added after it was stored, a part of an
+      // older reader), so those rows count for this contact from now on.
+      if (!baseEntry || baseRows.length < deps.rows.length) {
         await deps.state.set(uid, { raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER });
       }
       return { kind: 'upToDate' };
     }
 
-    const prepared: PreparedSync = { uid, local: L, noteSnapshot, server, base, rows, rewriteRelations, target: { sourceId: where.sourceId } };
+    const prepared: PreparedSync = {
+      uid,
+      local: L,
+      noteSnapshot,
+      server,
+      base,
+      rows,
+      rewriteRelations,
+      rewriteLinks,
+      target: { sourceId: where.sourceId },
+    };
+    if (nameBase) prepared.nameBase = nameBase;
     if (where.move) prepared.move = { ...where.move };
     return { kind: 'review', prepared };
   } catch (e) {
@@ -212,8 +268,34 @@ function serverCard(
   repair: (lines: VCardLine[]) => { lines: VCardLine[]; repaired: boolean },
 ): NonNullable<PreparedSync['server']> {
   const { lines, repaired } = repair(parseCard(pulled.raw));
-  const friendly = canonicalFriendly(toFriendly(lines, deps.rows, deps.readOnlyCtx), deps);
+  const friendly = canonicalFriendly(readCard(lines, deps.rows, deps.readOnlyCtx, deps), deps);
   return { lines, friendly, href, etag: etag ?? '', raw: pulled.raw, baseRaw: repaired ? serializeCard(lines) : pulled.raw };
+}
+
+/** Every card read in Sync: the card's own links to Obsidian notes are never read (no `website`, no row). */
+function readCard(lines: VCardLine[], rows: MappingRow[], ctx: RelationContext, deps: SyncDeps, reader?: Reader): Friendly {
+  return toFriendly(lines, rows, ctx, { reader, ownVaults: deps.noteLinks?.ownVaults ?? [] });
+}
+
+/**
+ * The links to Obsidian notes the card of the contact with `uid` should hold for `props`; none when the setting is
+ * off. Always decided with `readOnlyCtx`, in prepare and in Apply alike (see `SyncDeps.readOnlyCtx`). A relationship
+ * to the contact itself gets no link: its own note is found the way its relationships are (its link text, `uidToName`).
+ */
+function wantedLinks(props: Props, uid: string, deps: SyncDeps): NoteLink[] {
+  const options = deps.noteLinks;
+  if (!options?.enabled) return [];
+  const ctx = deps.readOnlyCtx;
+  const links = wantedNoteLinks(props, deps.rows, ctx, options.vault);
+  const ownName = ctx.uidToName(uid);
+  const ownNote = ownName ? ctx.contactNote?.(linkTarget(toLink(ownName))) : undefined;
+  const ownUrl = ownNote && noteLinkUrl(options.vault, ownNote.path);
+  return ownUrl === undefined ? links : links.filter((link) => link.url !== ownUrl);
+}
+
+/** What `patch` and `newCard` get: with the link options, the card's own links are made equal to the wanted ones. */
+function linkOptions(props: Props, uid: string, deps: SyncDeps): { noteLinks?: { wanted: NoteLink[]; ownVaults: string[] } } {
+  return deps.noteLinks ? { noteLinks: { wanted: wantedLinks(props, uid, deps), ownVaults: deps.noteLinks.ownVaults } } : {};
 }
 
 /**
@@ -249,26 +331,29 @@ export async function applySync(
     let oldKept: boolean | undefined;
     if (!server) {
       const version = deps.newCardVersion ? await deps.newCardVersion() : '4.0';
-      const card = newCard(result, deps.rows, deps.ctx, version);
+      // From the result, as everything Apply writes.
+      const card = newCard(result, deps.rows, deps.ctx, version, linkOptions(result, prepared.uid, deps));
       const raw = serializeCard(card.lines);
       const id = cleanUid(prepared.uid);
       const res = await deps.adapter.push({ uid: id, raw }, { ifNoneMatch: true });
       if (res.status === 412) return { kind: 'stale', reason: 'server' };
       if (!succeeded(res)) return { kind: 'failed', message: describeResponse(res) };
       stored = await createdBase(deps.adapter, id, raw, res);
-      final = canonicalRelations(toFriendly(card.lines, deps.rows, deps.ctx).props, deps.readOnlyCtx, deps.rows);
+      final = canonicalRelations(readCard(card.lines, deps.rows, deps.ctx, deps).props, deps.readOnlyCtx, deps.rows);
       warnings = card.warnings;
       serverChanged = true;
     } else {
+      // Links from the result, so a relationship taken from the card gets its link in this same Apply.
       const patched = patch(server.lines, server.friendly, result, deps.rows, deps.ctx, {
         rewriteLegacyRelations: prepared.rewriteRelations,
+        ...linkOptions(result, prepared.uid, deps),
       });
       const raw = serializeCard(patched.lines);
       warnings = patched.warnings;
       serverChanged = raw !== serializeCard(server.lines);
       // As prepared: canonical links, so a name without the hint does not replace the note's link to that contact.
       final = serverChanged
-        ? canonicalRelations(toFriendly(patched.lines, deps.rows, deps.ctx).props, deps.readOnlyCtx, deps.rows)
+        ? canonicalRelations(readCard(patched.lines, deps.rows, deps.ctx, deps).props, deps.readOnlyCtx, deps.rows)
         : server.friendly.props;
       if (prepared.move) {
         const moved = await applyMove(prepared, prepared.move, serverChanged ? raw : server.baseRaw, deps);
