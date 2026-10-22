@@ -227,3 +227,101 @@ describe('removing a date with a label', () => {
     expect(notices).toEqual(['Could not remove dating: disk full']);
   });
 });
+
+describe('the table', () => {
+  // The first table is the property names table; the date labels table follows it.
+  const propertyTable = () => container.querySelector('.vcf-mapping-table')!;
+  const rowOf = (property: string) =>
+    [...propertyTable().querySelectorAll('tbody tr')].find((tr) => {
+      const name = tr.querySelector('td');
+      return name?.textContent === property || name?.querySelector<HTMLInputElement>('input')?.value === property;
+    }) as HTMLTableRowElement;
+  const cell = (property: string, column: number) => rowOf(property).querySelectorAll('td')[column];
+  const input = (property: string, label: string) =>
+    rowOf(property).querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  const commitText = (element: HTMLInputElement, text: string) => {
+    type(element, text);
+    act(() => {
+      element.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+  };
+  const stored = (property: string) => getSettings().friendly.mapping.find((r) => r.property === property);
+
+  it('has exactly these headers', async () => {
+    await render(DEFAULT_MAPPING);
+    expect([...propertyTable().querySelectorAll('th')].map((th) => th.textContent)).toEqual([
+      'Name', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)',
+    ]);
+  });
+
+  it('shows the part of a component row as a number from 1', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(input('department', 'Part for department').value).toBe('2');
+    expect(input('company', 'Part for company').value).toBe('1');
+  });
+
+  it('a field row has no Part input', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(cell('nickname', 2).querySelector('input')).toBeNull();
+    expect(cell('nickname', 2).textContent).toBe('');
+  });
+
+  it('committing a part saves the 0-based index', async () => {
+    await render(DEFAULT_MAPPING);
+    await act(async () => commitText(input('department', 'Part for department'), ' 3 '));
+    expect(container.querySelector('.vcf-mapping-errors')).toBeNull();
+    expect(stored('department')).toMatchObject({ index: 2 });
+  });
+
+  it.each(['0', 'abc', '1.5', ''])('committing part %j shows the invalid part error and saves nothing', async (text) => {
+    await render(DEFAULT_MAPPING);
+    await act(async () => commitText(input('department', 'Part for department'), text));
+    expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain('Property "department" has an invalid part.');
+    expect(saves).toEqual([]);
+    expect(stored('department')).toMatchObject({ index: 1 });
+  });
+
+  it('commits and removes a vCard 3.0 write key', async () => {
+    await render(DEFAULT_MAPPING);
+    const key = () => input('company', 'vCard 3.0 write key for company');
+    expect(key().placeholder).toBe('same as 4.0');
+    expect(key().value).toBe('');
+    await act(async () => commitText(key(), ' X-ORG '));
+    expect(stored('company')).toMatchObject({ writeV3: 'X-ORG' });
+    await act(async () => commitText(key(), ''));
+    expect(stored('company')).not.toHaveProperty('writeV3');
+  });
+
+  it('a field row has a vCard 3.0 input too', async () => {
+    await render(DEFAULT_MAPPING);
+    await act(async () => commitText(input('nickname', 'vCard 3.0 write key for nickname'), 'X-NICK'));
+    expect(stored('nickname')).toMatchObject({ writeV3: 'X-NICK' });
+  });
+
+  it('shows the vCard 3.0 key a row has', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(input('gender', 'vCard 3.0 write key for gender').value).toBe('X-GENDER');
+  });
+
+  it('shows what a relation row writes, as text', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(cell('spouse', 2).textContent).toBe('');
+    expect(cell('spouse', 3).textContent).toBe('RELATED;TYPE=spouse');
+    expect(cell('spouse', 3).querySelector('input')).toBeNull();
+    expect(cell('spouse', 4).textContent).toBe('X-ABRELATEDNAMES · label Spouse');
+    expect(cell('spouse', 4).querySelector('input')).toBeNull();
+  });
+
+  it('a relation row without a label writes the same as 4.0', async () => {
+    const mapping = DEFAULT_MAPPING.map((r) => (r.kind === 'relation' && r.property === 'spouse' ? { ...r, labels: [' '] } : r));
+    await render(mapping);
+    expect(cell('spouse', 4).textContent).toBe('same as 4.0');
+  });
+
+  it('the anniversary row shows its vCard 3.0 date as text', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(cell('anniversary', 3).querySelector('input')?.value).toBe('ANNIVERSARY');
+    expect(cell('anniversary', 4).textContent).toBe('X-ABDATE · label Anniversary');
+    expect(cell('anniversary', 4).querySelector('input')).toBeNull();
+  });
+});

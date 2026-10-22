@@ -8,7 +8,7 @@ import {
   readableLabel,
   withLabelledDateRows,
 } from "src/contacts/friendly/dateLabels";
-import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
@@ -25,6 +25,27 @@ const splitPatterns = (text: string): string[] =>
 const reportFailure = (action: "add" | "remove", property: string, error: unknown) => {
   console.error(`Friendly Contacts: could not ${action} ${property}`, error);
   new Notice(`Could not ${action} ${property}: ${error instanceof Error ? error.message : String(error)}`);
+};
+
+const SAME_AS_4 = "same as 4.0";
+
+/** The 0-based index for the Part a person typed (1, 2, ...); NaN for anything else, which `validateMapping` reports. */
+const partIndex = (text: string): number => {
+  const t = text.trim();
+  return /^\d+$/.test(t) && Number(t) >= 1 ? Number(t) - 1 : NaN;
+};
+
+/** The row with its vCard 3.0 write key set; an empty key removes it (the 3.0 card gets the 4.0 key). */
+const withWriteV3 = (row: MappingRow, key: string): MappingRow => {
+  if (row.kind === "relation") return row;
+  const { writeV3: _removed, ...rest } = row;
+  return (key === "" ? rest : { ...rest, writeV3: key }) as MappingRow;
+};
+
+/** What a relation is written as on a vCard 3.0 card: the label on `X-ABRELATEDNAMES`, or the 4.0 form without one. */
+const relationWriteV3 = (row: RelationRow): string => {
+  const label = (row.labels ?? [])[0]?.trim() ?? "";
+  return label === "" ? SAME_AS_4 : `X-ABRELATEDNAMES · label ${label}`;
 };
 
 const BASES_NOT_UPDATED = "Some sync bases could not be updated; see console.";
@@ -249,6 +270,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           <div className="setting-item-description">
             The names of the properties in your contact notes, and the vCard fields they are read from and written to.
             Read patterns are comma separated, e.g. <code>TEL[CELL], TEL[IPHONE,CELL]</code>.
+            Part picks one part of a field made of parts (<code>ORG</code> part 2 is the department).
+            The vCard 3.0 column is used for new fields on vCard 3.0 cards; empty means the same as 4.0.
+            Changing Read from or Part does not refill your notes.
           </div>
         </div>
         <div className="setting-item-control">
@@ -291,7 +315,9 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           <tr>
             <th>Name</th>
             <th>Read from</th>
-            <th>Write as</th>
+            <th>Part</th>
+            <th>Write as (vCard 4.0)</th>
+            <th>Write as (vCard 3.0)</th>
           </tr>
         </thead>
         <tbody>
@@ -323,11 +349,38 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                 )}
               </td>
               <td>
-                <CommitInput
-                  label={`Write key for ${row.property}`}
-                  value={row.write}
-                  onCommit={(text) => edit(i, (r) => ({ ...r, write: text.trim() }))}
-                />
+                {row.kind === "component" && (
+                  <CommitInput
+                    label={`Part for ${row.property}`}
+                    value={String(row.index + 1)}
+                    onCommit={(text) => edit(i, (r) => ({ ...r, index: partIndex(text) }) as MappingRow)}
+                  />
+                )}
+              </td>
+              <td>
+                {row.kind === "relation" ? (
+                  <span className="vcf-mapping-readonly">{`RELATED;TYPE=${row.types[0] ?? ""}`}</span>
+                ) : (
+                  <CommitInput
+                    label={`Write key for ${row.property}`}
+                    value={row.write}
+                    onCommit={(text) => edit(i, (r) => ({ ...r, write: text.trim() }))}
+                  />
+                )}
+              </td>
+              <td>
+                {row.kind === "relation" ? (
+                  <span className="vcf-mapping-readonly">{relationWriteV3(row)}</span>
+                ) : row.kind === "field" && row.appleDateLabel !== undefined ? (
+                  <span className="vcf-mapping-readonly">{`X-ABDATE · label ${row.appleDateLabel}`}</span>
+                ) : (
+                  <CommitInput
+                    label={`vCard 3.0 write key for ${row.property}`}
+                    placeholder={SAME_AS_4}
+                    value={row.writeV3 ?? ""}
+                    onCommit={(text) => edit(i, (r) => withWriteV3(r, text.trim()))}
+                  />
+                )}
               </td>
             </tr>
           ))}
