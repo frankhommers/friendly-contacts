@@ -13,6 +13,7 @@ import {
   rowForProperty,
   validateMapping,
 } from './mapping';
+import { sameValue } from './merge';
 import { RelationContext } from './relations';
 import { CURRENT_READER, FriendlyValue, Reader, toFriendly } from './translate';
 
@@ -84,6 +85,30 @@ export function withUnfilledDates(
   const result = { ...note };
   for (const [key, value] of Object.entries(base)) {
     if (rowForProperty(key, kept) === undefined && isEmptyValue(note[key])) result[key] = value;
+  }
+  return result;
+}
+
+/**
+ * `base` plus the full base's value for each row `rowsForBase` leaves out that the note already holds with that same
+ * value: another device filled it into the note, so this base knew it, and a removal on the card is a removal.
+ * A row the note leaves empty or holds with another value stays out (a server addition, or a conflict).
+ * `full`: the base read with all `rows`.
+ */
+export function withFilledLeftOut(
+  base: Record<string, FriendlyValue>,
+  full: Record<string, FriendlyValue>,
+  note: Record<string, FriendlyValue>,
+  rows: MappingRow[],
+  storedAt: number | undefined,
+  reader: Reader = CURRENT_READER,
+): Record<string, FriendlyValue> {
+  const kept = rowsForBase(rows, storedAt, reader);
+  const result = { ...base };
+  for (const [key, value] of Object.entries(full)) {
+    if (rowForProperty(key, kept) === undefined && !isEmptyValue(value) && sameValue(note[key], value, key)) {
+      result[key] = value;
+    }
   }
   return result;
 }

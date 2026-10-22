@@ -11,7 +11,7 @@
  */
 
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
-import { rowsForBase, withUnfilledDates } from 'src/contacts/friendly/dateLabels';
+import { rowsForBase, withFilledLeftOut, withUnfilledDates } from 'src/contacts/friendly/dateLabels';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { NoteLink, NoteLinkOptions, noteLinksDiffer, noteLinkUrl, wantedNoteLinks } from 'src/contacts/friendly/noteLinks';
@@ -190,18 +190,15 @@ export async function prepareSync(
       lines: baseLines,
       friendly: canonicalFriendly(readCard(baseLines, baseRows, deps.readOnlyCtx, deps, baseReader), deps),
     };
-    const base = baseCard?.friendly.props;
+    const readBase = baseCard?.friendly.props;
+    // The base read with every row, when it was read without some.
+    const fullBase =
+      baseLines && readBase && baseRows.length < deps.rows.length
+        ? canonicalFriendly(readCard(baseLines, deps.rows, deps.readOnlyCtx, deps, baseReader), deps).props
+        : undefined;
     // A prefix that only became visible is no rename: the rename check sees the base's values for the rows left out.
     const nameBase =
-      baseLines && base && baseRows.length < deps.rows.length
-        ? withUnfilledDates(
-            base,
-            canonicalFriendly(readCard(baseLines, deps.rows, deps.readOnlyCtx, deps, baseReader), deps).props,
-            deps.rows,
-            baseEntry?.storedAt,
-            baseReader,
-          )
-        : undefined;
+      readBase && fullBase ? withUnfilledDates(readBase, fullBase, deps.rows, baseEntry?.storedAt, baseReader) : undefined;
 
     // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
     const mine: Props = { ...local };
@@ -210,6 +207,9 @@ export async function prepareSync(
     // A legacy Apple `1604-03-12` in the note is the cards' `--03-12`: no difference.
     const aligned = alignNoteDates(mine, deps.rows, [baseCard, server && { lines: server.lines, friendly: server.friendly }]);
     const L = canonicalRelations(aligned, deps.readOnlyCtx, deps.rows);
+    // A left-out row the note already holds with the base's value was filled on another device: the base knew it.
+    const base =
+      readBase && fullBase ? withFilledLeftOut(readBase, fullBase, L, deps.rows, baseEntry?.storedAt, baseReader) : readBase;
 
     let rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
     // A new card's UID is no choice: Apply always writes the prepared one.

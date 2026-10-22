@@ -334,9 +334,9 @@ describe('prepareSync', () => {
       const filled = () => ({ ...note(), dating: '2012-05-01' });
       const SERVER_WITHOUT = V1;
 
-      it('a base left as it was reads the phone\'s deletion as the note\'s addition (the problem)', async () => {
+      it('a base left as it was still keeps the phone\'s deletion: the note holds the base\'s date', async () => {
         const t = setup({ server: SERVER_WITHOUT, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: filled() });
-        expect(changedRows(await reviewOf(t))).toEqual([['dating', 'local']]);
+        expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
       });
 
       it('a touched base keeps the phone\'s deletion: the server is preselected', async () => {
@@ -396,6 +396,34 @@ describe('prepareSync', () => {
       expect(t.note.writes).toEqual([]);
       expect(t.sets).toEqual([UID]);
       expect(t.entries.get(UID)).toEqual({ raw: PLAIN, etag: t.serverEtag, href: HREF, reader: 3 });
+    });
+
+    describe('filled into the note on another desktop, then removed on the phone', () => {
+      // Another desktop synced after the update and filled the parts into the (shared) note; this desktop's base is
+      // still the reader-2 one. The phone then removed the department.
+      const PHONE = PARTS.replace('ORG:Acme;Sales', 'ORG:Acme');
+      const filled = () => ({ ...note(), 'name-prefix': 'Dr', department: 'Sales', gender: 'M' });
+
+      it('the removal is the phone\'s: the server is preselected, never pushed back', async () => {
+        const t = setup({ server: PHONE, base: PARTS, reader: 2, local: filled() });
+        expect(changedRows(await reviewOf(t))).toEqual([['department', 'server']]);
+      });
+
+      it('Apply with the defaults removes it from the note and leaves the card alone', async () => {
+        const t = setup({ server: PHONE, base: PARTS, reader: 2, local: filled() });
+        expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+        expect(t.pushes).toEqual([]);
+        expect(t.cards.get(HREF)!.raw).toBe(PHONE);
+        expect(t.note.frontmatter.department).toBeUndefined();
+        expect(t.note.frontmatter).toMatchObject({ 'name-prefix': 'Dr', gender: 'M' });
+        expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      });
+
+      it('a note that holds the same parts as the card is up to date', async () => {
+        const t = setup({ server: PARTS, base: PARTS, reader: 2, local: filled() });
+        expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+        expect(t.entries.get(UID)).toMatchObject({ raw: PARTS, reader: 3 });
+      });
     });
 
     it('a department written in the note by hand that differs from the card is a conflict', async () => {
