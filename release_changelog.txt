@@ -1,7 +1,10 @@
-## Friendly Contacts 3.0.0-alpha.12
+## Friendly Contacts 3.0.0-alpha.13
 
-**Removals on your phone stick, also with several desktops.** After the update to alpha.11 a desktop that had not yet synced a contact could put back a part (a department, a prefix, a date with a label) that you had removed on your phone, because another desktop had already filled it into your note. Sync now sees that your note already held the card's old value and takes the removal from the phone.
+**Photos on vCard 4.0 cards on Radicale are no longer lost.** Radicale damages a photo on a vCard 4.0 card: it comes back without the image. Until now the next Sync put that damaged value into your note, and the photo was gone on both sides.
 
-Everything from 3.0.0-alpha.11 still applies: every part of a card field (name prefix and suffix, department, gender and gender identity, PO box and extra address line) is a property in your notes, and the property names table has Part and vCard 4.0 / 3.0 write columns.
+- Sync recognises a damaged photo and never puts it into your note. An edit elsewhere on the card leaves your note's photo alone, and a photo you add, change or remove in the note is written once, without a Sync loop.
+- A phone cannot show such a photo; when it sends the card back without it, that is not taken for a removal.
+- A note an earlier version already damaged is put right at its next Sync: the review says so, and Apply removes the damaged value or puts back the photo of the last Sync.
+- Phones still get no photo from a 4.0 card on Radicale: set **New contacts** to **vCard 3.0** there. vCard 3.0 cards were never affected.
 
-Update the plugin on every desktop before you sync from it. Back up your vault before installing.
+Update the plugin on every desktop that shares the vault: an older version keeps writing the damaged photo into your notes. Back up your vault before installing.
