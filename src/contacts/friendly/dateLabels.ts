@@ -14,7 +14,7 @@ import {
   validateMapping,
 } from './mapping';
 import { RelationContext } from './relations';
-import { FriendlyValue, Reader, toFriendly } from './translate';
+import { CURRENT_READER, FriendlyValue, Reader, toFriendly } from './translate';
 
 export { isLabelledDateRow, readableLabel };
 export type { LabelledDateRow };
@@ -48,28 +48,39 @@ export function labelledDateRow(label: string, property: string, since?: number)
 }
 
 /**
- * The rows a sync base stored at `storedAt` is read with: `rows` without the dates with a label added after it. The
- * base of the device that added the row holds the date, but the note it belongs to may not have been filled (the
- * sync bases are per device, the settings travel): read with the row, the date would look removed in the note.
- * Without it the date is the card's own, so Sync brings it into the note. A base without `storedAt` is older than
- * every row with a `since`; a row without `since` is always there.
+ * The rows a sync base stored at `storedAt` by `reader` is read with: `rows` without the dates with a label added
+ * after it, and without the rows of a later reader (`sinceReader` above `reader`). The base of the device that added
+ * the row holds the date, but the note it belongs to may not have been filled (the sync bases are per device, the
+ * settings travel): read with the row, the date would look removed in the note. Without it the date is the card's
+ * own, so Sync brings it into the note. A base without `storedAt` is older than every row with a `since`; a row
+ * without `since` is always there. Likewise a part a later reader made visible (a department, a prefix) was never in
+ * the note: read without its row it is the card's own, not a removal. Relation rows carry no reader mark.
  */
-export function rowsForBase(rows: MappingRow[], storedAt: number | undefined): MappingRow[] {
-  return rows.filter((row) => !isLabelledDateRow(row) || (row.since ?? 0) <= (storedAt ?? 0));
+export function rowsForBase(
+  rows: MappingRow[],
+  storedAt: number | undefined,
+  reader: Reader = CURRENT_READER,
+): MappingRow[] {
+  return rows.filter(
+    (row) =>
+      (!isLabelledDateRow(row) || (row.since ?? 0) <= (storedAt ?? 0)) &&
+      (row.kind === 'relation' || row.sinceReader === undefined || row.sinceReader <= reader),
+  );
 }
 
 /**
  * The note's properties to patch the base with (an export): `note` plus the base's values for the rows `rowsForBase`
- * leaves out that the note leaves empty. Such a date was not filled into the note, so it is no removal. `base`: the
- * base read with all `rows`.
+ * leaves out (for `storedAt` and `reader`) that the note leaves empty. Such a date or part was not filled into the
+ * note, so it is no removal. `base`: the base read with all `rows`.
  */
 export function withUnfilledDates(
   note: Record<string, FriendlyValue>,
   base: Record<string, FriendlyValue>,
   rows: MappingRow[],
   storedAt: number | undefined,
+  reader: Reader = CURRENT_READER,
 ): Record<string, FriendlyValue> {
-  const kept = rowsForBase(rows, storedAt);
+  const kept = rowsForBase(rows, storedAt, reader);
   const result = { ...note };
   for (const [key, value] of Object.entries(base)) {
     if (rowForProperty(key, kept) === undefined && isEmptyValue(note[key])) result[key] = value;

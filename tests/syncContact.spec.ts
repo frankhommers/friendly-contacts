@@ -234,19 +234,19 @@ const changedRows = (prepared: PreparedSync) =>
 
 describe('prepareSync', () => {
   it('unchanged on both sides is up to date and writes nothing', async () => {
-    const t = setup({ server: V1, base: V1 });
+    const t = setup({ server: V1, base: V1, reader: 3 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     expect(t.pushes).toEqual([]);
     expect(t.note.writes).toEqual([]);
     expect(t.notices).toEqual([]);
     expect(t.sets).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF });
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: 'old', href: HREF, reader: 3 });
   });
 
   it('no base and equal stores the base only', async () => {
     const t = setup({ server: V1 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: V1, etag: t.serverEtag, href: HREF, reader: 3 });
     expect(t.pushes).toEqual([]);
     expect(t.note.writes).toEqual([]);
     expect(t.cards.get(HREF)!.raw).toBe(V1);
@@ -271,28 +271,28 @@ describe('prepareSync', () => {
       ]);
     });
 
-    it('Apply puts them into the note, leaves the card alone and records reader 2', async () => {
+    it('Apply puts them into the note, leaves the card alone and records the current reader', async () => {
       const t = setup({ server: PHONE, base: PHONE, local: oldNote() });
       expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
       expect(t.pushes).toEqual([]);
       expect(t.note.frontmatter).toMatchObject({ parents: ['[[Ger Verhallen]]'], anniversary: '2012-06-21' });
-      expect(t.entries.get(UID)).toEqual({ raw: PHONE, etag: t.serverEtag, href: HREF, reader: 2 });
+      expect(t.entries.get(UID)).toEqual({ raw: PHONE, etag: t.serverEtag, href: HREF, reader: 3 });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
     });
 
     it('the same base stored by the current reader would mean they were removed in the note', async () => {
       const t = setup({ server: PHONE, local: oldNote() });
-      t.entries.set(UID, { raw: PHONE, etag: 'old', href: HREF, reader: 2 });
+      t.entries.set(UID, { raw: PHONE, etag: 'old', href: HREF, reader: 3 });
       expect(changedRows(await reviewOf(t))).toEqual([
         ['anniversary', 'local'],
         ['parents', 'local'],
       ]);
     });
 
-    it('new base records reader 2', async () => {
+    it('new base records the current reader', async () => {
       const t = setup({ server: PHONE, local: toFriendly(parseCard(PHONE), DEFAULT_MAPPING, ctx).props });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
-      expect(t.entries.get(UID)?.reader).toBe(2);
+      expect(t.entries.get(UID)?.reader).toBe(3);
     });
   });
 
@@ -320,11 +320,11 @@ describe('prepareSync', () => {
       expect(t.note.writes).toEqual([]);
       expect(t.sets).toEqual([UID]);
       // No storedAt given: the store records the time it is stored (tests/syncState.spec.ts), later than the row.
-      expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: t.serverEtag, href: HREF, reader: 2 });
+      expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: t.serverEtag, href: HREF, reader: 3 });
     });
 
     it('a base that is up to date and has every row is not stored again', async () => {
-      const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 3000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
+      const t = setup({ server: DATED, base: DATED, reader: 3, storedAt: 3000, rows: rowsSince(2000), local: { ...note(), dating: '2012-05-01' } });
       expect(await t.prepare()).toEqual({ kind: 'upToDate' });
       expect(t.sets).toEqual([]);
     });
@@ -350,6 +350,71 @@ describe('prepareSync', () => {
     it('a row added before the base was stored: the date was removed in the note', async () => {
       const t = setup({ server: DATED, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(500), local: note() });
       expect(changedRows(await reviewOf(t))).toEqual([['dating', 'local']]);
+    });
+  });
+
+  describe('parts that became visible (rows of reader 3) on a base stored by reader 2', () => {
+    const PARTS = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;Dr;', 'ORG:Acme;Sales', 'GENDER:M', 'END:VCARD', ''].join('\r\n');
+    const PLAIN = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;;', 'ORG:Acme', 'END:VCARD', ''].join('\r\n');
+    // The note as reader 2 made it: no department, prefix or gender properties.
+    const note = () => ({ uid: UID, name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', company: 'Acme' });
+
+    it('arrive from the card: server additions, never removals from the card', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: note() });
+      const prepared = await reviewOf(t);
+      expect(changedRows(prepared)).toEqual([
+        ['name-prefix', 'server'],
+        ['department', 'server'],
+        ['gender', 'server'],
+      ]);
+      expect(prepared.rows.filter((r) => r.changed && r.preselect !== 'server')).toEqual([]);
+    });
+
+    it('Apply with the defaults leaves the card alone, fills the note and stores the base with reader 3', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: note() });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(PARTS);
+      expect(t.note.frontmatter).toMatchObject({ 'name-prefix': 'Dr', department: 'Sales', gender: 'M' });
+      expect(t.entries.get(UID)).toEqual({ raw: PARTS, etag: t.serverEtag, href: HREF, reader: 3 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('the same base stored by reader 3 means they were removed in the note', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 3, local: note() });
+      expect(changedRows(await reviewOf(t))).toEqual([
+        ['name-prefix', 'local'],
+        ['department', 'local'],
+        ['gender', 'local'],
+      ]);
+    });
+
+    it('a card without such parts is up to date, and the base is stored again with reader 3', async () => {
+      const t = setup({ server: PLAIN, base: PLAIN, reader: 2, local: note() });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+      expect(t.pushes).toEqual([]);
+      expect(t.note.writes).toEqual([]);
+      expect(t.sets).toEqual([UID]);
+      expect(t.entries.get(UID)).toEqual({ raw: PLAIN, etag: t.serverEtag, href: HREF, reader: 3 });
+    });
+
+    it('a department written in the note by hand that differs from the card is a conflict', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: { ...note(), department: 'Marketing' } });
+      const prepared = await reviewOf(t);
+      const department = prepared.rows.find((r) => r.property === 'department');
+      expect(department).toMatchObject({ changed: true, preselect: undefined, server: 'Sales', local: 'Marketing' });
+    });
+
+    it('the rename check gets the base with the parts it was read without', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 2, local: note() });
+      const prepared = await reviewOf(t);
+      expect(prepared.base?.['name-prefix']).toBeUndefined();
+      expect(prepared.nameBase).toMatchObject({ 'name-prefix': 'Dr', department: 'Sales', gender: 'M', company: 'Acme' });
+    });
+
+    it('a base with every row needs no separate rename base', async () => {
+      const t = setup({ server: PARTS, base: PARTS, reader: 3, local: note() });
+      expect((await reviewOf(t)).nameBase).toBeUndefined();
     });
   });
 
@@ -576,7 +641,7 @@ describe('applySync', () => {
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
     expect(t.note.writes).toEqual([{ set: { mobile: '06-99999999', source: 'Radicale' }, remove: [] }]);
     expect(t.pushes).toEqual([]);
-    expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: v2, etag: t.serverEtag, href: HREF, reader: 3 });
     expect(await t.prepare()).toEqual({ kind: 'upToDate' });
   });
 
@@ -605,7 +670,7 @@ describe('applySync', () => {
     expect(t.note.writes).toEqual([]);
     const stored = t.cards.get(HREF)!;
     expect(stored.raw).toBe(put.vcard.raw);
-    expect(t.entries.get(UID)).toEqual({ raw: put.vcard.raw, etag: stored.etag, href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: put.vcard.raw, etag: stored.etag, href: HREF, reader: 3 });
   });
 
   it('local and server changes on different properties give both', async () => {
@@ -703,7 +768,7 @@ describe('applySync', () => {
     const t = setup({ server: V1, base: V1, local: { ...friendlyOf(V1), title: 'Chef' } });
     t.options.etagOnPut = false;
     expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
-    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF, reader: 2 });
+    expect(t.entries.get(UID)).toEqual({ raw: t.pushes[0].vcard.raw, etag: '', href: HREF, reader: 3 });
   });
 
   it('a failed PUT fails without writing the note or the base', async () => {
@@ -729,7 +794,7 @@ describe('applySync', () => {
     const href = '/frank/contacts/sem-0001.vcf';
     const card = t.cards.get(href)!;
     expect(friendlyOf(card.raw)).toMatchObject({ name: 'Sem Jansen', uid: 'urn:uuid:sem-0001', mobile: '06-55555555' });
-    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href, reader: 2 });
+    expect(t.entries.get('sem-0001')).toEqual({ raw: put.vcard.raw, etag: card.etag, href, reader: 3 });
     expect(t.note.writes).toEqual([{ set: { source: 'Radicale' }, remove: [] }]);
   });
 

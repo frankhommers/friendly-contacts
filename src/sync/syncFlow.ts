@@ -256,8 +256,9 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     const renameTo = (choices: Map<string, Choice>): RenameOffer | undefined => {
       // A name changed since the last Sync on either side (against the base; without one, the note's values)
       // renames; a note renamed by hand with unchanged names is left alone, and a declined rename is not offered
-      // again (the base then holds the new name).
-      const to = renameTarget(review.base ?? review.local, preview(choices), deps.rows);
+      // again (the base then holds the new name). A part the base was read without (a prefix that only became
+      // visible) counts with its value in the base: no change, so no rename (`nameBase`).
+      const to = renameTarget(review.nameBase ?? review.base ?? review.local, preview(choices), deps.rows);
       if (to === undefined || to === deps.name) return undefined;
       const offer: RenameOffer = deps.renamesFolder ? { to, folder: true } : { to };
       const blocked = deps.renameBlocked(to);

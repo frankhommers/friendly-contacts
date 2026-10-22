@@ -3,7 +3,7 @@ import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { noteLinkUrl } from 'src/contacts/friendly/noteLinks';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
-import { patch, toFriendly } from 'src/contacts/friendly/translate';
+import { CURRENT_READER, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { describe, expect, it } from 'vitest';
 
@@ -432,5 +432,16 @@ describe('every part of a structured value', () => {
   it('reads GENDER and X-GENDER as sex and identity', () => {
     expect(translate(card('GENDER:O;non-binair')).props).toMatchObject({ gender: 'O', 'gender-identity': 'non-binair' });
     expect(translate(card('X-GENDER:M')).props).toMatchObject({ gender: 'M' });
+  });
+});
+
+describe('readerOf', () => {
+  it('reads the stored reader of a sync base', () => {
+    expect(CURRENT_READER).toBe(3);
+    expect(readerOf(3)).toBe(3);
+    expect(readerOf(4)).toBe(3);
+    expect(readerOf(2)).toBe(2);
+    expect(readerOf(1)).toBe(1);
+    expect(readerOf(undefined)).toBe(1);
   });
 });

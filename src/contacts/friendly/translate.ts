@@ -13,15 +13,17 @@ export type FriendlyValue = string | string[];
 
 /**
  * How cards are read. 1: before Part 6 (no group labels, so `X-ABRELATEDNAMES` and `X-ABDATE` were not mapped, and
- * no `X-FRIENDLY-UID` hint); 2: every form. A sync base is read the way it was stored, so lines the old reader
- * ignored show as the server's additions instead of as removals made in the note.
+ * no `X-FRIENDLY-UID` hint); 2: every form; 3: as 2, with the rows marked `sinceReader: 3` (every part of N, ORG, ADR
+ * and GENDER). A sync base is read the way it was stored, so lines and parts the old reader ignored show as the
+ * server's additions instead of as removals made in the note (the rows: see `rowsForBase`).
  */
-export type Reader = 1 | 2;
-export const CURRENT_READER: Reader = 2;
+export type Reader = 1 | 2 | 3;
+export const CURRENT_READER: Reader = 3;
 
 /** The reader a stored sync base was read with: one stored before readers were recorded is 1. */
 export function readerOf(stored: number | undefined): Reader {
-  return stored !== undefined && stored >= 2 ? 2 : 1;
+  if (stored === undefined || stored < 2) return 1;
+  return stored >= 3 ? 3 : 2;
 }
 
 export type Provenance = { line: number; component?: number };

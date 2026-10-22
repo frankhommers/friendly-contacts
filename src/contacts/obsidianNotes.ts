@@ -453,9 +453,11 @@ export async function friendlyNoteCard(
   if (base) {
     const baseLines = parseCard(base.raw);
     // Read the way it was stored, so lines an older reader ignored are not taken for relationships removed in the note.
-    const before = toFriendly(baseLines, rows, ctx, { reader: readerOf(base.reader), ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults });
-    // A date with a label added after the base was stored may never have been filled into the note: not a removal.
-    lines = patch(baseLines, before, withUnfilledDates(props, before.props, rows, base.storedAt), rows, ctx).lines;
+    const reader = readerOf(base.reader);
+    const before = toFriendly(baseLines, rows, ctx, { reader, ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults });
+    // A date with a label added after the base was stored, or a part an older reader did not read, may never have
+    // been filled into the note: not a removal.
+    lines = patch(baseLines, before, withUnfilledDates(props, before.props, rows, base.storedAt, reader), rows, ctx).lines;
   } else {
     lines = newCard(props, rows, ctx).lines;
   }

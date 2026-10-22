@@ -15,6 +15,7 @@ import {
 } from 'src/contacts/friendly/dateLabels';
 import { parseCard } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING, MappingRow, renameRow, validateMapping } from 'src/contacts/friendly/mapping';
+import { patch, toFriendly } from 'src/contacts/friendly/translate';
 import { describe, expect, it } from 'vitest';
 
 const dating = labelledDateRow('Verkering', 'dating');
@@ -111,6 +112,30 @@ describe('rowsForBase', () => {
     expect(rowsForBase(rows(1), undefined)).toEqual(DEFAULT_MAPPING);
   });
 
+  it('a base stored by reader 2 or 1 is read without the rows of reader 3', () => {
+    const marked = DEFAULT_MAPPING.filter((r) => r.kind !== 'relation' && r.sinceReader === 3).map((r) => r.property);
+    expect(marked).toEqual(expect.arrayContaining(['department', 'name-prefix', 'gender']));
+    for (const reader of [1, 2] as const) {
+      const kept = names(rowsForBase(DEFAULT_MAPPING, undefined, reader));
+      expect(kept).not.toContain('department');
+      expect(kept.filter((p) => marked.includes(p))).toEqual([]);
+      expect(kept).toEqual(names(DEFAULT_MAPPING).filter((p) => !marked.includes(p)));
+    }
+    expect(rowsForBase(DEFAULT_MAPPING, undefined, 3)).toEqual(DEFAULT_MAPPING);
+    expect(rowsForBase(DEFAULT_MAPPING, undefined)).toEqual(DEFAULT_MAPPING);
+  });
+
+  it('filters dates with a label by since whatever the reader', () => {
+    const withoutMarked = rowsForBase(DEFAULT_MAPPING, undefined, 2);
+    expect(rowsForBase(rows(2000), 1000, 2)).toEqual(withoutMarked);
+    expect(names(rowsForBase(rows(500), 1000, 2))).toContain('dating');
+  });
+
+  it('keeps a relation row whatever its mark (only fields and components carry one)', () => {
+    const spouse = DEFAULT_MAPPING.find((r) => r.kind === 'relation')!;
+    expect(rowsForBase([{ ...spouse, sinceReader: 3 } as unknown as MappingRow], undefined, 1)).toHaveLength(1);
+  });
+
   it('never drops other rows', () => {
     // Only a labelled row has a since; one on another row (a hand-edited data.json) is ignored.
     const anniversary = DEFAULT_MAPPING.find((r) => r.property === 'anniversary')!;
@@ -140,6 +165,25 @@ describe('withUnfilledDates', () => {
 
   it('changes nothing for a base stored after the row was added', () => {
     expect(withUnfilledDates({ name: 'Dora' }, base, rows, 3000)).toEqual({ name: 'Dora' });
+  });
+
+  it('takes the parts a reader-2 base was read without that the note leaves empty', () => {
+    const parts = { name: 'Jan', company: 'Acme', department: 'Sales', 'name-prefix': 'Dr' };
+    expect(withUnfilledDates({ name: 'Jan', company: 'Acme' }, parts, DEFAULT_MAPPING, 1000, 2)).toEqual(parts);
+    expect(withUnfilledDates({ name: 'Jan', company: 'Acme', department: 'HR' }, parts, DEFAULT_MAPPING, 1000, 2)).toEqual({
+      ...parts,
+      department: 'HR',
+    });
+    expect(withUnfilledDates({ name: 'Jan', company: 'Acme' }, parts, DEFAULT_MAPPING, 1000, 3)).toEqual({ name: 'Jan', company: 'Acme' });
+  });
+
+  it('an export over a reader-2 base keeps the parts the note does not have yet', () => {
+    const raw = ['BEGIN:VCARD', 'VERSION:3.0', 'UID:u1', 'FN:Jan Jansen', 'N:Jansen;Jan;;Dr;', 'ORG:Acme;Sales', 'END:VCARD'].join('\r\n');
+    const baseLines = parseCard(raw);
+    const before = toFriendly(baseLines, DEFAULT_MAPPING, NO_LOOKUPS, { reader: 2 });
+    const note = { uid: 'u1', name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', company: 'Acme' };
+    const out = patch(baseLines, before, withUnfilledDates(note, before.props, DEFAULT_MAPPING, 1000, 2), DEFAULT_MAPPING, NO_LOOKUPS);
+    expect(out.lines.map((l) => `${l.name}:${l.value}`)).toEqual(expect.arrayContaining(['ORG:Acme;Sales', 'N:Jansen;Jan;;Dr;']));
   });
 });
 

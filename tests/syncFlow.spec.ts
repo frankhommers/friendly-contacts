@@ -839,6 +839,41 @@ describe('syncFlow: also changes and rename', () => {
     expect(fromNote).toBeUndefined();
   });
 
+  describe('a prefix that became visible (a row of reader 3)', () => {
+    const DR = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;Dr;', 'END:VCARD', ''].join('\r\n');
+    const JANSEN = { name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', uid: UID, source: 'Radicale' };
+    const offeredFor = async (t: ReturnType<typeof setup>) => {
+      let offered: ReturnType<ReviewRequest['rename']> = { to: 'x' };
+      t.setScript([
+        (r) => {
+          offered = r.rename(new Map());
+          return preselected();
+        },
+      ]);
+      await t.run();
+      return offered;
+    };
+
+    it('a reader-2 base: the prefix comes into the note, no rename offer', async () => {
+      const t = setup({ local: JANSEN });
+      t.deps.name = 'Jan Jansen';
+      t.radicale.seed(DR);
+      t.radicale.entries.set(UID, { ...t.radicale.entries.get(UID)!, reader: 2 });
+      expect(await offeredFor(t)).toBeUndefined();
+      expect(t.note.renames).toEqual([]);
+      expect(t.note.frontmatter['name-prefix']).toBe('Dr');
+      expect(t.radicale.entries.get(UID)?.reader).toBe(3);
+    });
+
+    it('a later change of the prefix in the note offers the rename', async () => {
+      const t = setup({ local: { ...JANSEN, 'name-prefix': 'Prof' } });
+      t.deps.name = 'Jan Jansen';
+      t.radicale.seed(DR);
+      t.radicale.entries.set(UID, { ...t.radicale.entries.get(UID)!, reader: 3 });
+      expect(await offeredFor(t)).toEqual({ to: 'Prof Jan Jansen' });
+    });
+  });
+
   it('unchecked rename keeps the file name', async () => {
     const t = setup({ local: { ...JAN, source: 'Radicale' } });
     renamedOnServer(t);
