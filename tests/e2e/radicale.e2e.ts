@@ -1197,4 +1197,59 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       notes = savedNotes;
     }
   });
+
+  // The plugin writes `GENDER:O;non-binair`; Radicale does not know GENDER as a field made of parts and stores the
+  // `;` escaped. The plugin reads that escaped `;` as the separator, so the identity survives the next Sync.
+  it.each([
+    ['3.0', String.raw`X-GENDER:O\;non-binair`, '3'],
+    ['4.0', String.raw`GENDER:O\;non-binair`, '4'],
+  ])('22. %s: department, prefix and gender from the note are written as parts; the next Sync is up to date', async (version, genderLine, suffix) => {
+    const uid = `C0FFEE00-0000-4000-8000-00000000022${suffix}`;
+    const href = `${BOOK}parts-${version}.vcf`;
+    await putCard(
+      href,
+      ['BEGIN:VCARD', `VERSION:${version}`, `UID:${uid}`, 'FN:Piet Parts', 'N:Parts;Piet;;;', 'ORG:Acme', 'END:VCARD', ''].join('\r\n'),
+    );
+    const piet = await importCard(href);
+    expect(piet.frontmatter).toMatchObject({ company: 'Acme' });
+    expect(await sync(piet)).toBe('unchanged');
+    const before = unfolded(await serverCard(href));
+
+    Object.assign(piet.frontmatter, { department: 'Sales', 'name-prefix': 'Dr.', gender: 'O', 'gender-identity': 'non-binair' });
+    expect(await sync(piet)).toBe('pushed');
+    const after = unfolded(await serverCard(href));
+    expect(after).toContain(`VERSION:${version}`);
+    expect(upper(changed(minus(after, before)))).toEqual(upper(['ORG:Acme;Sales', 'N:Parts;Piet;;Dr.;', genderLine]));
+    expect(upper(changed(minus(before, after)))).toEqual(upper(['ORG:Acme', 'N:Parts;Piet;;;']));
+    expect(piet.frontmatter).toMatchObject({ department: 'Sales', 'name-prefix': 'Dr.', gender: 'O', 'gender-identity': 'non-binair' });
+
+    expect(await sync(piet)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+  });
+
+  it.each([
+    ['3.0', '3'],
+    ['4.0', '4'],
+  ])('23. %s: a part an older reader did not show arrives in the note and the card stays as it is', async (version, suffix) => {
+    const uid = `C0FFEE00-0000-4000-8000-00000000025${suffix}`;
+    const href = `${BOOK}parts-old-reader-${version}.vcf`;
+    await putCard(
+      href,
+      ['BEGIN:VCARD', `VERSION:${version}`, `UID:${uid}`, 'FN:Mia Parts', 'N:Parts;Mia;;;', 'ORG:Acme;Sales', 'END:VCARD', ''].join('\r\n'),
+    );
+    const mia = await importCard(href);
+    // The base as a device with reader 2 stored it: ORG's second part was not read then.
+    const stored = await bookList[0].state.get(cleanUid(uid));
+    if (!stored) throw new Error('no base stored');
+    await bookList[0].state.set(cleanUid(uid), { ...stored, reader: 2 });
+    delete mia.frontmatter.department;
+    const start = unfolded(await serverCard(href));
+
+    expect(await sync(mia)).toBe('pulled');
+    expect(pushes).toEqual([]);
+    expect(mia.frontmatter).toMatchObject({ company: 'Acme', department: 'Sales' });
+    expect(unfolded(await serverCard(href))).toEqual(start);
+    expect(await sync(mia)).toBe('unchanged');
+    expect(pushes).toEqual([]);
+  });
 });

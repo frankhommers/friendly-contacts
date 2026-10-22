@@ -59,6 +59,7 @@ To try the test releases:
    * [📌 Supported vCard Fields](#-supported-vcard-fields)
       + [📞 Basic Contact Information](#-basic-contact-information)
       + [🏠 Address Fields](#-address-fields)
+      + [🏷️ Property names in the settings](#-property-names)
       + [🌐 Online Presence](#-online-presence)
       + [🖼️ Profile Photo](#-profile-photo)
       + [🗂️ Categorization & Metadata](#-categorization-metadata)
@@ -500,10 +501,13 @@ Here’s a breakdown of supported vCard fields and their **human-readable meanin
 | `TEL[HOME]`         | Home Phone                     | `+1987654321`               |
 | `TEL[WORK]`         | Work Phone                     | `+1098765432`               |
 | `BDAY`              | Birthday (YYYY-MM-DD)          | `1985-12-31`                |
-| `GENDER`            | Gender                         | `M`, `F`, `X`               |
+| `GENDER`            | Gender (and optional identity) | `M`, `F`, `O`, `N`, `U`, `O;non-binary` |
 | `ORG`               | Organization Name              | `FakeCorp Inc.`             |
+| `ORG` (second part) | Department                     | `Research`                  |
 | `TITLE`             | Job Title                      | `Senior Developer`          |
 | `ROLE`              | Job Role                       | `Software Engineer`         |
+
+`GENDER` holds one letter, `M`, `F`, `O`, `N` or `U`, and may be followed by `;` and a free text identity (`O;non-binary`). In the note these are the `gender` and `gender-identity` properties. A vCard 3.0 card has no `GENDER`; there a new line is written as `X-GENDER`, and a line that is already on the card keeps its own name. Some servers, such as Radicale, store `O;non-binary` as `O\;non-binary`; the plugin reads both the same way. Phones do not show the gender.
 
 Dates without a year, such as a birthday or anniversary where the year is unknown, are written `--MM-DD` (for example `--03-15`). Keep the `birthday` and `anniversary` properties as Text properties in Obsidian; the Date type rejects that form.
 
@@ -514,16 +518,39 @@ Dates without a year, such as a birthday or anniversary where the year is unknow
 
 | **vCard Field**         | **Readable Name**             | **Example**                  |
 |-------------------------|-------------------------------|------------------------------|
+| `ADR[HOME].POBOX`       | Home PO Box                   | `PO Box 12`                  |
+| `ADR[HOME].EXTENDED`    | Home Extra Address Line       | `Apartment 4`                |
 | `ADR[HOME].STREET`      | Home Street Address           | `123 Fake Street`            |
 | `ADR[HOME].LOCALITY`    | Home City                     | `Faketown`                   |
 | `ADR[HOME].REGION`      | Home State/Province           | `FakeState`                  |
 | `ADR[HOME].POSTAL`      | Home Postal Code              | `00000`                      |
 | `ADR[HOME].COUNTRY`     | Home Country                  | `Nowhere Land`               |
+| `ADR[WORK].POBOX`       | Work PO Box                   | `PO Box 99`                  |
+| `ADR[WORK].EXTENDED`    | Work Extra Address Line       | `Floor 3`                    |
 | `ADR[WORK].STREET`      | Work Street Address           | `789 Corporate Ave`          |
 | `ADR[WORK].LOCALITY`    | Work City                     | `Business City`              |
 | `ADR[WORK].REGION`      | Work State/Province           | `IndustryState`              |
 | `ADR[WORK].POSTAL`      | Work Postal Code              | `99999`                      |
 | `ADR[WORK].COUNTRY`     | Work Country                  | `Enterprise Land`            |
+
+---
+
+<!-- TOC --><a name="-property-names"></a>
+### 🏷️ Property names in the settings
+
+The plugin settings have a table with the property names of your notes. Every part of a card field has its own row, so a name prefix, a name suffix, a department, a gender, a gender identity, a PO box and an extra address line (home and work) are all properties you can use. A row has these columns:
+
+- **Name**: the property in your note.
+- **Read from**: the card field or fields it is read from, for example `GENDER, X-GENDER`.
+- **Part**: which part of the field the row is, counting from 1. `ORG` has the company as part 1 and the department as part 2; `N` has the prefix as part 4 and the suffix as part 5.
+- **Write as (vCard 4.0)**: the field a new line gets on a vCard 4.0 card.
+- **Write as (vCard 3.0)**: the field a new line gets on a vCard 3.0 card. Leave it empty (`same as 4.0`) to use the 4.0 field. The gender rows use it to write `X-GENDER`, because vCard 3.0 has no `GENDER`. The relationship and anniversary rows show their 3.0 form as plain text, which you cannot change.
+
+A line that is already on a card keeps its own field name when you edit it; the write columns only name new lines. The card's `VERSION` never changes.
+
+Changing **Read from** or **Part** only changes how cards are read from now on. It does not fill your notes again by itself.
+
+Update the plugin on every desktop before you sync from it. An older version does not know the new parts, so it would offer to remove them from the card.
 
 ---
 
