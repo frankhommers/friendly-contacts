@@ -1,11 +1,12 @@
-## Friendly Contacts 3.0.0-alpha.10
+## Friendly Contacts 3.0.0-alpha.11
 
-**Links to Obsidian notes on cards.** A new setting, off by default. When it is on, every relationship with a contact note also becomes a website on the card: an `obsidian://` link to that person's note, labelled with their name. On Android (DAVx5) you tap it to open the note in Obsidian on your phone.
+**Every part of a card field is visible.** Name prefix and suffix, department, gender and gender identity, PO box and extra address line (home and work) are now properties in your notes. Values already on your cards arrive in your notes at the next Sync; nothing is removed from a card.
 
-- Settings → Contacts server synchronization settings → **Links to Obsidian notes on cards**. The first time you turn it on, **Vault name on your phone** is filled with this vault's name; change it if the vault on your phone has another name.
-- Links follow relationships, renamed or moved notes, the vault name and the setting itself at each contact's next Sync. The review shows "Links to Obsidian notes on this card are updated."
-- The links never appear in your notes. Websites in your notes and links to other vaults are never touched.
-- Whether your contacts app opens `obsidian://` links depends on the app: try one contact on your phone first.
-- Update the plugin on every desktop that syncs before you turn it on. Settings changed on another device are now picked up as soon as the settings file syncs.
+- The property names table in the settings has a **Part** column (which part of a field made of parts, counting from 1: `ORG` part 2 is the department) and two write columns: **Write as (vCard 4.0)** and **Write as (vCard 3.0)**. Leave the 3.0 column empty to use the 4.0 field. Gender is written as `GENDER` on 4.0 cards and `X-GENDER` on 3.0 cards.
+- The new rows are added once to your existing table, next to the rows they belong to.
+- `gender` is one letter (`M`, `F`, `O`, `N`, `U`); `gender-identity` is free text. Phones do not show the gender.
+- Radicale stores `GENDER:O;non-binary` with the `;` escaped; the plugin reads both the same way.
+- Changing **Read from** or **Part** only changes how cards are read from now on; it does not refill your notes.
+- Update the plugin on every desktop before you sync from it: an older version would offer to remove the new parts from your cards.
 
 Back up your vault before installing.

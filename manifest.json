@@ -1,7 +1,7 @@
 {
   "id": "friendly-contacts",
   "name": "Friendly Contacts",
-  "version": "3.0.0-alpha.10",
+  "version": "3.0.0-alpha.11",
   "minAppVersion": "1.4.10",
   "description": "Contacts as notes with readable properties, a reviewed two-way CardDAV sync with several address books, and relationships between people.",
   "author": "Frank Hommers",
