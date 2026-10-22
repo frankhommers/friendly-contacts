@@ -101,11 +101,11 @@ row in `toFriendly`.
 
 ### Migration
 
-`migrateMapping` (`mapping.ts`, applied on load in `src/context/sharedSettingsContext.ts`) adds the `gender` row once
-when the stored mapping has no row writing `GENDER` and no property named `gender`; after `role` if present, else
-after the last field row before the address components *(my call; position only matters for display)*. It never
-re-adds a row the owner removed later — the builder picks how "already added once" is remembered (e.g. a marker in the
-settings), since today `migrateMapping` only knows "rows new in Part 6".
+`migrateMapping` (`mapping.ts`, applied on load in `src/context/sharedSettingsContext.ts`) adds the `gender` row when
+the stored mapping has no property named `gender` and no row that reads `GENDER` or `X-GENDER`; right after `role`
+if present, else before the first address component row, else at the end *(my call; position only matters for
+display)*. *(My call, after the builder check:)* no separate "added once" record: the settings UI cannot remove rows,
+so the row can only be missing again after a hand edit of `data.json`, and then adding it back is fine.
 
 ### Existing genders on cards (goal 5)
 
@@ -145,15 +145,14 @@ stricter rules).
 
 - The migration is saved at startup (`initSettings` → `setSettings`), not on `reloadSettings`. Fine for the row
   itself, since it carries no timestamp in this design.
-- The settings UI cannot remove rows, so "never re-add a removed row" only guards hand-edited `data.json`; still do it.
 
 ## Testing
 
 - Unit: new `gender` line written as `GENDER` on 4.0 and `X-GENDER` on 3.0 (patch and `newCard`); an existing line
   keeps its name on edit, on both versions; identity text kept when the letter changes; reading both names; a card with
   both; untouched lines byte-identical; `writeV3` on an arbitrary other field row works the same (proves no gender code).
-- Migration: the row is added once, not when `gender` or a `GENDER` writer exists, not again after removal; anniversary
-  and relation rows unchanged.
+- Migration: the row is added; not when a `gender` property or a row reading `GENDER`/`X-GENDER` exists; running it
+  again changes nothing; anniversary and relation rows unchanged.
 - Base: a card with `GENDER:M` whose base was stored with reader 2 → after Sync the note has `gender: M` and the card
   is unchanged; the export path likewise. A base stored with reader 3 and a note without gender → removal offered.
 - Convert: a note with `GENDER: M` becomes `gender: M`.
