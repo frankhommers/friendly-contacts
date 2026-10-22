@@ -120,8 +120,9 @@ On a 3.0 card `X-GENDER` thus gets `M;non-binair` when both are set. Apps that w
 - Wherever a new line's name and params come from `row.write` (`addLine` in `patchField`, `patchComponent` and its
   pending lines in `newParts`, the plain branch of `patchDate`, `patchPhoto`'s fallback, `newCard` via `patch`), use
   the key for the card's version.
-- `COMPONENT_COUNT` (`patch.ts`) is looked up by the name of the key actually written. It gets `GENDER: 2`. Other names
-  (`X-GENDER`, any `X-` field) get as many parts as the rows set (`setPart` pads), as today.
+- `COMPONENT_COUNT` (`patch.ts`) is looked up by the name of the key actually written. `GENDER` gets no entry *(my
+  call)*: like `X-GENDER` and any `X-` field it gets as many parts as the rows set (`setPart` pads), so a new line is
+  `GENDER:M`, not `GENDER:M;`.
 - `anniversary` keeps its behaviour; how it is stored is the builder's choice, as long as cards come out identical.
 - Relation rows: unchanged behaviour. The 3.0 cell shows `X-ABRELATEDNAMES · label <labels[0]>`, or "same as 4.0"
   when the row has no label (then 3.0 gets `RELATED`, as today).
