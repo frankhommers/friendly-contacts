@@ -87,7 +87,7 @@ const GENDER_READ: Pattern[] = ['GENDER', 'X-GENDER'];
 /** The key to write a row's line under: `writeV3` on a card that is not vCard 4.0, else `write`. */
 export function writeKeyFor(row: FieldRow | ComponentRow, version: string): string {
   const v3 = row.writeV3?.trim();
-  return version.trim() !== '4.0' && v3 ? row.writeV3! : row.write;
+  return version.trim() !== '4.0' && v3 ? v3 : row.write;
 }
 
 const relation = (
@@ -390,7 +390,8 @@ const sameField = (a: KeyedRow, b: KeyedRow): boolean =>
  *   its field (it maps a field new to the mapping, e.g. gender) while a stored row reads one of its field names;
  * - copies read patterns and both write keys from its sibling, the first older default row on the same field (else
  *   the nearest new one before it, e.g. `gender` for `gender-identity`), as stored: the row with the sibling's
- *   identity, else with its name. So a part follows an edited write key and the field stays one line;
+ *   identity, else with its name, when it is of the same kind (else the row keeps its own keys). So a part follows
+ *   an edited write key and the field stays one line;
  * - goes right after the stored counterpart of the nearest default row before it, else at the end.
  */
 export function addDefaultRows(stored: MappingRow[], seen: number): { rows: MappingRow[]; seen: number } {
@@ -412,7 +413,7 @@ export function addDefaultRows(stored: MappingRow[], seen: number): { rows: Mapp
     if (!older && row.read.some(storedReads)) return;
     const sibling = older ?? onField.filter((r) => DEFAULT_MAPPING.indexOf(r) < d).pop();
     const found = sibling && counterpart(sibling);
-    const keys = found && found.kind !== 'relation' ? found : row;
+    const keys = found && found.kind === row.kind ? found : row;
     const next: KeyedRow = { ...row, read: [...keys.read], write: keys.write };
     if (keys.writeV3 !== undefined) next.writeV3 = keys.writeV3;
     else delete next.writeV3;
@@ -491,6 +492,8 @@ export function validateMapping(rows: MappingRow[]): string[] {
   const seen = new Set<string>();
   const labels = new Set<string>();
   const doubled = new Set<string>();
+  // The first part row per write key; the parts of one field are one line, so they share its 3.0 key too.
+  const firstPart = new Map<string, ComponentRow>();
   for (const row of rows) {
     const key = row.property.trim();
     if (key === '') errors.push('A property name is empty.');
@@ -535,6 +538,14 @@ export function validateMapping(rows: MappingRow[]): string[] {
     }
     if (row.kind === 'component' && !(Number.isInteger(row.index) && row.index >= 0)) {
       errors.push(`Property "${key}" has an invalid part.`);
+    }
+    if (row.kind === 'component') {
+      const first = firstPart.get(row.write);
+      if (!first) firstPart.set(row.write, row);
+      else if ((first.writeV3?.trim() ?? '') !== (row.writeV3?.trim() ?? '')) {
+        const other = first.property.trim();
+        errors.push(`Property "${key}" writes ${row.write} like "${other}" but has a different vCard 3.0 write key.`);
+      }
     }
   }
   return errors;

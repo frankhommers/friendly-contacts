@@ -478,6 +478,7 @@ describe('parts and the vCard 3.0 write key', () => {
     expect(writeKeyFor(gender, '4.0')).toBe('GENDER');
     expect(writeKeyFor(gender, ' 4.0 ')).toBe('GENDER');
     expect(writeKeyFor({ ...gender, writeV3: '  ' }, '3.0')).toBe('GENDER');
+    expect(writeKeyFor({ ...gender, writeV3: ' X-SEX ' }, '3.0')).toBe('X-SEX');
   });
 
   it('has the new rows in place', () => {
@@ -524,11 +525,36 @@ describe('parts and the vCard 3.0 write key', () => {
     expect(dept(1.5)).toContain('Property "department" has an invalid part.');
     expect(dept(0)).toEqual([]);
     const gender = (writeV3: string) =>
-      validateMapping(DEFAULT_MAPPING.map((r) => (r.property === 'gender' ? { ...r, writeV3 } : r)) as MappingRow[]);
+      validateMapping(DEFAULT_MAPPING.map((r) => (r.write === 'GENDER' ? { ...r, writeV3 } : r)) as MappingRow[]);
     expect(gender(';TYPE=X')).toContain('Property "gender" has an invalid vCard 3.0 write key.');
     expect(gender('')).toEqual([]);
     expect(gender('  ')).toEqual([]);
     expect(gender('X-FOO;TYPE=X')).toEqual([]);
+  });
+
+  it('rows on the same field must agree on their vCard 3.0 write key', () => {
+    const identity = (writeV3: string | undefined) =>
+      validateMapping(
+        DEFAULT_MAPPING.map((r) => (r.property === 'gender-identity' ? { ...r, writeV3 } : r)) as MappingRow[],
+      );
+    const message = 'Property "gender-identity" writes GENDER like "gender" but has a different vCard 3.0 write key.';
+    expect(identity('X-SEX')).toEqual([message]);
+    expect(identity(undefined)).toEqual([message]);
+    expect(identity(' X-GENDER ')).toEqual([]);
+    const department = validateMapping(
+      DEFAULT_MAPPING.map((r) => (r.property === 'department' ? { ...r, writeV3: 'X-ORG' } : r)) as MappingRow[],
+    );
+    expect(department).toEqual(['Property "department" writes ORG like "company" but has a different vCard 3.0 write key.']);
+  });
+
+  it('default rows on the same field read and write alike', () => {
+    const parts = DEFAULT_MAPPING.filter((r) => r.kind === 'component');
+    for (const a of parts) {
+      for (const b of parts.filter((r) => r.write === a.write)) {
+        expect(b.read, `${a.property} / ${b.property}`).toEqual(a.read);
+        expect(b.writeV3, `${a.property} / ${b.property}`).toEqual(a.writeV3);
+      }
+    }
   });
 });
 
@@ -613,6 +639,13 @@ describe('adding the new default rows', () => {
 
     const anyGender: MappingRow = { kind: 'component', property: 'sekse', read: ['gender[*]'], write: 'GENDER', index: 0 };
     expect(names(addDefaultRows([...withoutNew(), anyGender], 0).rows)).not.toContain('gender-identity');
+  });
+
+  it('copies keys only from a stored sibling of the same kind', () => {
+    const company: MappingRow = { kind: 'field', property: 'company', read: ['X-COMPANY'], write: 'X-COMPANY' };
+    const stored = withoutNew().map((r) => (r.property === 'company' ? company : r));
+    const { rows } = addDefaultRows(stored, 0);
+    expect(find(rows, 'department')).toMatchObject({ kind: 'component', read: ['ORG'], write: 'ORG', index: 1, sinceReader: 3 });
   });
 
   it('leaves the relation rows and the anniversary row as they are', () => {
