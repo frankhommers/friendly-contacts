@@ -544,7 +544,7 @@ The plugin settings have a table with the property names of your notes. Every pa
 - **Read from**: the card field or fields it is read from, for example `GENDER, X-GENDER`.
 - **Part**: which part of the field the row is, counting from 1. `ORG` has the company as part 1 and the department as part 2; `N` has the prefix as part 4 and the suffix as part 5.
 - **Write as (vCard 4.0)**: the field a new line gets on a vCard 4.0 card.
-- **Write as (vCard 3.0)**: the field a new line gets on a vCard 3.0 card. Leave it empty (`same as 4.0`) to use the 4.0 field. The gender rows use it to write `X-GENDER`, because vCard 3.0 has no `GENDER`. The relationship and anniversary rows show their 3.0 form as plain text, which you cannot change.
+- **Write as (vCard 3.0)**: the field a new line gets on a vCard 3.0 card. Leave it empty (`same as 4.0`) to use the 4.0 field. The gender rows use it to write `X-GENDER`, because vCard 3.0 has no `GENDER`. Rows that are parts of the same field (the same Write as (vCard 4.0)) need the same vCard 3.0 field, because they share one line. The relationship and anniversary rows, and the `uid`, `name` and `photo` rows, show their 3.0 form as plain text, which you cannot change.
 
 A line that is already on a card keeps its own field name when you edit it; the write columns only name new lines. The card's `VERSION` never changes.
 

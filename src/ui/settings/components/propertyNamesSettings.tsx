@@ -57,6 +57,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   /** Bumped by `revert`: the inputs are remounted so they show the saved values even when `rows` did not change. */
   const [revision, setRevision] = React.useState(0);
   const [mirror, setMirror] = React.useState(() => mirrorRelationsOnThisDevice(app));
+  /** The Part text typed per row; shown while the row's part is invalid (NaN), so the input never reads "NaN". */
+  const [partText, setPartText] = React.useState<Record<number, string>>({});
 
   const save = async (mapping: MappingRow[]) => {
     const current = getSettings();
@@ -352,8 +354,11 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                 {row.kind === "component" && (
                   <CommitInput
                     label={`Part for ${row.property}`}
-                    value={String(row.index + 1)}
-                    onCommit={(text) => edit(i, (r) => ({ ...r, index: partIndex(text) }) as MappingRow)}
+                    value={Number.isNaN(row.index) ? (partText[i] ?? "") : String(row.index + 1)}
+                    onCommit={(text) => {
+                      setPartText((typed) => ({ ...typed, [i]: text }));
+                      return edit(i, (r) => ({ ...r, index: partIndex(text) }) as MappingRow);
+                    }}
                   />
                 )}
               </td>
@@ -373,6 +378,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                   <span className="vcf-mapping-readonly">{relationWriteV3(row)}</span>
                 ) : row.kind === "field" && row.appleDateLabel !== undefined ? (
                   <span className="vcf-mapping-readonly">{`X-ABDATE · label ${row.appleDateLabel}`}</span>
+                ) : isFixedProperty(row.property) ? (
+                  <span className="vcf-mapping-readonly">{row.writeV3?.trim() || SAME_AS_4}</span>
                 ) : (
                   <CommitInput
                     label={`vCard 3.0 write key for ${row.property}`}

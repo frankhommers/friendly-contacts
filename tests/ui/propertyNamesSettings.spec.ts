@@ -47,9 +47,9 @@ let container: HTMLDivElement;
 let root: Root;
 let saves: unknown[];
 
-async function render(mapping: MappingRow[]) {
+async function render(mapping: MappingRow[], friendly: Record<string, unknown> = {}) {
   saves = [];
-  await initSettings(async () => ({ friendly: { mapping } }), async (data) => void saves.push(data));
+  await initSettings(async () => ({ friendly: { ...friendly, mapping } }), async (data) => void saves.push(data));
   saves = [];
   act(() => root.render(React.createElement(PropertyNamesSettings, { app })));
 }
@@ -281,15 +281,54 @@ describe('the table', () => {
     expect(stored('department')).toMatchObject({ index: 1 });
   });
 
+  it('after an invalid part the input shows what was typed', async () => {
+    await render(DEFAULT_MAPPING);
+    await act(async () => commitText(input('department', 'Part for department'), 'abc'));
+    expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain('Property "department" has an invalid part.');
+    expect(input('department', 'Part for department').value).toBe('abc');
+  });
+
+  it('a table save keeps the record of the default rows added', async () => {
+    await render(DEFAULT_MAPPING, { defaultRowsSeen: 1 });
+    await act(async () => commitText(input('department', 'Part for department'), '3'));
+    expect(saves).toHaveLength(1);
+    expect(getSettings().friendly).toMatchObject({ defaultRowsSeen: 1 });
+  });
+
   it('commits and removes a vCard 3.0 write key', async () => {
     await render(DEFAULT_MAPPING);
-    const key = () => input('company', 'vCard 3.0 write key for company');
+    const key = () => input('title', 'vCard 3.0 write key for title');
     expect(key().placeholder).toBe('same as 4.0');
     expect(key().value).toBe('');
-    await act(async () => commitText(key(), ' X-ORG '));
-    expect(stored('company')).toMatchObject({ writeV3: 'X-ORG' });
+    await act(async () => commitText(key(), ' X-TITLE '));
+    expect(stored('title')).toMatchObject({ writeV3: 'X-TITLE' });
     await act(async () => commitText(key(), ''));
-    expect(stored('company')).not.toHaveProperty('writeV3');
+    expect(stored('title')).not.toHaveProperty('writeV3');
+  });
+
+  it('the parts of one field share their vCard 3.0 write key', async () => {
+    await render(DEFAULT_MAPPING);
+    await act(async () => commitText(input('department', 'vCard 3.0 write key for department'), 'X-ORG'));
+    expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain(
+      'Property "department" writes ORG like "company" but has a different vCard 3.0 write key.',
+    );
+    expect(saves).toEqual([]);
+    await act(async () => commitText(input('company', 'vCard 3.0 write key for company'), 'X-ORG'));
+    expect(container.querySelector('.vcf-mapping-errors')).toBeNull();
+    expect(stored('company')).toMatchObject({ writeV3: 'X-ORG' });
+    expect(stored('department')).toMatchObject({ writeV3: 'X-ORG' });
+  });
+
+  it('a fixed row has no vCard 3.0 input', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(cell('uid', 4).querySelector('input')).toBeNull();
+    expect(cell('uid', 4).textContent).toBe('same as 4.0');
+  });
+
+  it('a fixed row with a vCard 3.0 write key shows it as text', async () => {
+    await render(DEFAULT_MAPPING.map((r) => (r.property === 'name' ? { ...r, writeV3: 'X-FN' } : r)) as MappingRow[]);
+    expect(cell('name', 4).querySelector('input')).toBeNull();
+    expect(cell('name', 4).textContent).toBe('X-FN');
   });
 
   it('a field row has a vCard 3.0 input too', async () => {
