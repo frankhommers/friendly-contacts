@@ -10,7 +10,7 @@ import { withUnfilledDates } from "src/contacts/friendly/dateLabels";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { MappingRow } from "src/contacts/friendly/mapping";
-import { photoDamagedOn, repairDamagedPhotos } from "src/contacts/friendly/photo";
+import { photoDamagedOn, repairDamagedPhotos, repairNotePhotos } from "src/contacts/friendly/photo";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
 import { hasFixedNoteName } from "src/contacts/layout";
@@ -451,16 +451,19 @@ export async function friendlyNoteCard(
   );
   const base = uid !== "" && source ? await contactSyncState(source.id, app).get(uid) : undefined;
   let lines;
+  // A damaged photo (one an earlier version wrote into the note, or in an old base) is put right as Sync does: the
+  // base's photo, or none (see repairNotePhotos).
+  const baseLines = base ? repairDamagedPhotos(parseCard(base.raw), []).lines : [];
+  const noteProps = repairNotePhotos(props, baseLines).props;
   if (base) {
-    const baseLines = parseCard(base.raw);
     // Read the way it was stored, so lines an older reader ignored are not taken for relationships removed in the note.
     const reader = readerOf(base.reader);
     const before = toFriendly(baseLines, rows, ctx, { reader, ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults });
     // A date with a label added after the base was stored, or a part an older reader did not read, may never have
     // been filled into the note: not a removal.
-    lines = patch(baseLines, before, withUnfilledDates(props, before.props, rows, base.storedAt, reader), rows, ctx).lines;
+    lines = patch(baseLines, before, withUnfilledDates(noteProps, before.props, rows, base.storedAt, reader), rows, ctx).lines;
   } else {
-    lines = newCard(props, rows, ctx).lines;
+    lines = newCard(noteProps, rows, ctx).lines;
   }
   return serializeCard(lines);
 }
