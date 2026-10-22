@@ -14,6 +14,10 @@ export type FieldRow = {
   property: string;
   read: Pattern[];
   write: string;
+  /** Written instead of `write` on a vCard 3.0 card (see `writeKeyFor`); blank or absent: same as `write`. */
+  writeV3?: string;
+  /** The reader version that added this row (see `sinceReader` in the migration and sync bases); absent: always there. */
+  sinceReader?: number;
   format?: 'date' | 'list';
   /** vCard 3.0 date written as `itemN.X-ABDATE` with this label (`Anniversary`); read with it too. */
   appleDateLabel?: string;
@@ -23,6 +27,11 @@ export type ComponentRow = {
   property: string;
   read: Pattern[];
   write: string;
+  /** Written instead of `write` on a vCard 3.0 card (see `writeKeyFor`); blank or absent: same as `write`. */
+  writeV3?: string;
+  /** The reader version that added this row (see `sinceReader` in the migration and sync bases); absent: always there. */
+  sinceReader?: number;
+  /** 0-based position of the part in the structured value. */
   index: number;
 };
 export type RelationRow = {
@@ -56,13 +65,30 @@ const field = (
   format?: 'date' | 'list',
 ): FieldRow => (format ? { kind: 'field', property, read, write, format } : { kind: 'field', property, read, write });
 
-const component = (property: string, read: Pattern[], write: string, index: number): ComponentRow => ({
+const component = (
+  property: string,
+  read: Pattern[],
+  write: string,
+  index: number,
+  extra: Partial<ComponentRow> = {},
+): ComponentRow => ({
   kind: 'component',
   property,
   read,
   write,
   index,
+  ...extra,
 });
+
+/** The reader version that added the part rows (prefix, suffix, department, gender, PO box, extra address line). */
+const PARTS_READER = 3;
+const GENDER_READ: Pattern[] = ['GENDER', 'X-GENDER'];
+
+/** The key to write a row's line under: `writeV3` on a card that is not vCard 4.0, else `write`. */
+export function writeKeyFor(row: FieldRow | ComponentRow, version: string): string {
+  const v3 = row.writeV3?.trim();
+  return version.trim() !== '4.0' && v3 ? row.writeV3! : row.write;
+}
 
 const relation = (
   property: string,
@@ -82,9 +108,11 @@ const WORK_ADR: Pattern[] = ['ADR[WORK]'];
 
 export const DEFAULT_MAPPING: MappingRow[] = [
   field('name', ['FN'], 'FN'),
+  component('name-prefix', ['N'], 'N', 3, { sinceReader: PARTS_READER }),
   component('firstname', ['N'], 'N', 1),
   component('middlename', ['N'], 'N', 2),
   component('lastname', ['N'], 'N', 0),
+  component('name-suffix', ['N'], 'N', 4, { sinceReader: PARTS_READER }),
   field('nickname', ['NICKNAME'], 'NICKNAME'),
   field('mobile', ['TEL[CELL]'], 'TEL;TYPE=CELL'),
   field('phone', ['TEL', 'TEL[HOME]', 'TEL[MAIN]'], 'TEL;TYPE=HOME'),
@@ -94,15 +122,22 @@ export const DEFAULT_MAPPING: MappingRow[] = [
   field('website', ['URL', 'URL[HOME]'], 'URL'),
   field('work-website', ['URL[WORK]'], 'URL;TYPE=WORK'),
   component('company', ['ORG'], 'ORG', 0),
+  component('department', ['ORG'], 'ORG', 1, { sinceReader: PARTS_READER }),
   field('title', ['TITLE'], 'TITLE'),
   field('role', ['ROLE'], 'ROLE'),
+  component('gender', GENDER_READ, 'GENDER', 0, { writeV3: 'X-GENDER', sinceReader: PARTS_READER }),
+  component('gender-identity', GENDER_READ, 'GENDER', 1, { writeV3: 'X-GENDER', sinceReader: PARTS_READER }),
   field('birthday', ['BDAY'], 'BDAY', 'date'),
   { ...field('anniversary', ['ANNIVERSARY'], 'ANNIVERSARY', 'date'), appleDateLabel: 'Anniversary' },
+  component('po-box', HOME_ADR, 'ADR;TYPE=HOME', 0, { sinceReader: PARTS_READER }),
+  component('address-extra', HOME_ADR, 'ADR;TYPE=HOME', 1, { sinceReader: PARTS_READER }),
   component('street', HOME_ADR, 'ADR;TYPE=HOME', 2),
   component('postcode', HOME_ADR, 'ADR;TYPE=HOME', 5),
   component('city', HOME_ADR, 'ADR;TYPE=HOME', 3),
   component('region', HOME_ADR, 'ADR;TYPE=HOME', 4),
   component('country', HOME_ADR, 'ADR;TYPE=HOME', 6),
+  component('work-po-box', WORK_ADR, 'ADR;TYPE=WORK', 0, { sinceReader: PARTS_READER }),
+  component('work-address-extra', WORK_ADR, 'ADR;TYPE=WORK', 1, { sinceReader: PARTS_READER }),
   component('work-street', WORK_ADR, 'ADR;TYPE=WORK', 2),
   component('work-postcode', WORK_ADR, 'ADR;TYPE=WORK', 5),
   component('work-city', WORK_ADR, 'ADR;TYPE=WORK', 3),
@@ -428,6 +463,15 @@ export function validateMapping(rows: MappingRow[]): string[] {
       }
     }
     if (row.write.trim() === '') errors.push(`Property "${key}" has no write key.`);
+    if (row.kind !== 'relation') {
+      const v3 = row.writeV3?.trim() ?? '';
+      if (v3 !== '' && v3.split(';')[0].trim() === '') {
+        errors.push(`Property "${key}" has an invalid vCard 3.0 write key.`);
+      }
+    }
+    if (row.kind === 'component' && !(Number.isInteger(row.index) && row.index >= 0)) {
+      errors.push(`Property "${key}" has an invalid part.`);
+    }
   }
   return errors;
 }

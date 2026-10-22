@@ -99,9 +99,10 @@ describe('convertFrontmatter technical keys', () => {
     );
   });
 
-  it('keeps a name prefix or suffix that has a value', () => {
+  it('moves a name prefix or suffix that has a value to its friendly property', () => {
     const result = convertFrontmatter({ FN: 'Jan', 'N.PREFIX': 'Dr.', 'N.SUFFIX': 'jr' }, DEFAULT_MAPPING);
-    expect(result.remove).toEqual(['FN']);
+    expect(result.set).toEqual({ name: 'Jan', 'name-prefix': 'Dr.', 'name-suffix': 'jr' });
+    expect(result.remove).toEqual(['FN', 'N.PREFIX', 'N.SUFFIX']);
   });
 
   it('cleans technical keys from an otherwise friendly note', () => {

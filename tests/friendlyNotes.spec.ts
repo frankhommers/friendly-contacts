@@ -111,7 +111,8 @@ describe('hasVCardValues', () => {
 
   it('ignores vCard keys without a friendly property: they stay local-only', () => {
     expect(hasVCardValues({ name: 'Jan', 'X-CREATED': '2019' })).toBe(false);
-    expect(hasVCardValues({ name: 'Jan', 'X-ABLABEL': 'x', 'TEL[WORK,FAX]': '1', 'N.PREFIX': 'Dr.' })).toBe(false);
+    expect(hasVCardValues({ name: 'Jan', 'X-ABLABEL': 'x', 'TEL[WORK,FAX]': '1', 'N.PREFIX': '' })).toBe(false);
+    expect(hasVCardValues({ name: 'Jan', 'N.PREFIX': 'Dr.' })).toBe(true);
     expect(hasVCardValues({ 'TEL[CELL]': '06', name: 'Jan' })).toBe(true);
   });
 

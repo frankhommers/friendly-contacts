@@ -15,6 +15,7 @@ import {
   rowForProperty,
   renameRow,
   validateMapping,
+  writeKeyFor,
   writeLabel,
 } from 'src/contacts/friendly/mapping';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -46,6 +47,8 @@ describe('friendly mapping', () => {
 
   it('structured rows', () => {
     expect(rowsFor('ADR;type=HOME;type=pref:;;Dorpsstraat 1;Utrecht;;1234 AB;Nederland')).toEqual([
+      'po-box',
+      'address-extra',
       'street',
       'postcode',
       'city',
@@ -53,14 +56,18 @@ describe('friendly mapping', () => {
       'country',
     ]);
     expect(rowsFor('ADR;TYPE=WORK:;;a;b;c;d;e')).toEqual([
+      'work-po-box',
+      'work-address-extra',
       'work-street',
       'work-postcode',
       'work-city',
       'work-region',
       'work-country',
     ]);
-    expect(rowsFor('N:Vries;Jan;;;')).toEqual(['firstname', 'middlename', 'lastname']);
-    expect(rowsFor('ORG:Acme;Sales')).toEqual(['company']);
+    expect(rowsFor('N:Vries;Jan;;;')).toEqual([
+      'name-prefix', 'firstname', 'middlename', 'lastname', 'name-suffix',
+    ]);
+    expect(rowsFor('ORG:Acme;Sales')).toEqual(['company', 'department']);
   });
 
   it('has the specified component indexes and write keys', () => {
@@ -450,5 +457,73 @@ describe('labelled date rows in a mapping', () => {
     ]);
     expect(mappingRenames(DEFAULT_MAPPING, withDating)).toEqual([]);
     expect(mappingRenames(withDating, DEFAULT_MAPPING)).toEqual([]);
+  });
+});
+
+describe('parts and the vCard 3.0 write key', () => {
+  const row = (property: string) => DEFAULT_MAPPING.find((r) => r.property === property)!;
+  const order = names(DEFAULT_MAPPING);
+  const containsSequence = (sequence: string[]) => {
+    const at = order.indexOf(sequence[0]);
+    return at >= 0 && sequence.every((p, i) => order[at + i] === p);
+  };
+
+  it('writeKeyFor picks the 3.0 key only for versions other than 4.0', () => {
+    const gender = row('gender') as Exclude<MappingRow, { kind: 'relation' }>;
+    expect(writeKeyFor(gender, '3.0')).toBe('X-GENDER');
+    expect(writeKeyFor(gender, '4.0')).toBe('GENDER');
+    expect(writeKeyFor(gender, ' 4.0 ')).toBe('GENDER');
+    expect(writeKeyFor({ ...gender, writeV3: '  ' }, '3.0')).toBe('GENDER');
+  });
+
+  it('has the new rows in place', () => {
+    expect(containsSequence(['name', 'name-prefix', 'firstname', 'middlename', 'lastname', 'name-suffix'])).toBe(true);
+    expect(containsSequence(['company', 'department'])).toBe(true);
+    expect(containsSequence(['role', 'gender', 'gender-identity'])).toBe(true);
+    expect(containsSequence(['po-box', 'address-extra', 'street'])).toBe(true);
+    expect(containsSequence(['work-po-box', 'work-address-extra', 'work-street'])).toBe(true);
+  });
+
+  it('gives the new rows their part and read/write keys', () => {
+    expect(row('name-prefix')).toMatchObject({ kind: 'component', read: ['N'], write: 'N', index: 3 });
+    expect(row('name-suffix')).toMatchObject({ kind: 'component', read: ['N'], write: 'N', index: 4 });
+    expect(row('department')).toMatchObject({ kind: 'component', read: ['ORG'], write: 'ORG', index: 1 });
+    expect(row('gender')).toMatchObject({
+      read: ['GENDER', 'X-GENDER'], write: 'GENDER', writeV3: 'X-GENDER', index: 0,
+    });
+    expect(row('gender-identity')).toMatchObject({
+      read: ['GENDER', 'X-GENDER'], write: 'GENDER', writeV3: 'X-GENDER', index: 1,
+    });
+    expect(row('po-box')).toMatchObject({ write: 'ADR;TYPE=HOME', index: 0 });
+    expect(row('address-extra')).toMatchObject({ write: 'ADR;TYPE=HOME', index: 1 });
+    expect(row('work-po-box')).toMatchObject({ write: 'ADR;TYPE=WORK', index: 0 });
+    expect(row('work-address-extra')).toMatchObject({ write: 'ADR;TYPE=WORK', index: 1 });
+  });
+
+  it('marks only the new rows with sinceReader 3', () => {
+    const added = [
+      'name-prefix', 'name-suffix', 'department', 'gender', 'gender-identity',
+      'po-box', 'address-extra', 'work-po-box', 'work-address-extra',
+    ];
+    for (const r of DEFAULT_MAPPING) {
+      const since = (r as { sinceReader?: number }).sinceReader;
+      if (added.includes(r.property)) expect(since, r.property).toBe(3);
+      else expect(since, r.property).toBeUndefined();
+    }
+  });
+
+  it('validates the defaults and the new fields', () => {
+    expect(validateMapping(DEFAULT_MAPPING)).toEqual([]);
+    const dept = (index: number) =>
+      validateMapping(DEFAULT_MAPPING.map((r) => (r.property === 'department' ? { ...r, index } : r)) as MappingRow[]);
+    expect(dept(-1)).toContain('Property "department" has an invalid part.');
+    expect(dept(1.5)).toContain('Property "department" has an invalid part.');
+    expect(dept(0)).toEqual([]);
+    const gender = (writeV3: string) =>
+      validateMapping(DEFAULT_MAPPING.map((r) => (r.property === 'gender' ? { ...r, writeV3 } : r)) as MappingRow[]);
+    expect(gender(';TYPE=X')).toContain('Property "gender" has an invalid vCard 3.0 write key.');
+    expect(gender('')).toEqual([]);
+    expect(gender('  ')).toEqual([]);
+    expect(gender('X-FOO;TYPE=X')).toEqual([]);
   });
 });
