@@ -1,12 +1,7 @@
-## Friendly Contacts 3.0.0-alpha.11
+## Friendly Contacts 3.0.0-alpha.12
 
-**Every part of a card field is visible.** Name prefix and suffix, department, gender and gender identity, PO box and extra address line (home and work) are now properties in your notes. Values already on your cards arrive in your notes at the next Sync; nothing is removed from a card.
+**Removals on your phone stick, also with several desktops.** After the update to alpha.11 a desktop that had not yet synced a contact could put back a part (a department, a prefix, a date with a label) that you had removed on your phone, because another desktop had already filled it into your note. Sync now sees that your note already held the card's old value and takes the removal from the phone.
 
-- The property names table in the settings has a **Part** column (which part of a field made of parts, counting from 1: `ORG` part 2 is the department) and two write columns: **Write as (vCard 4.0)** and **Write as (vCard 3.0)**. Leave the 3.0 column empty to use the 4.0 field. Gender is written as `GENDER` on 4.0 cards and `X-GENDER` on 3.0 cards.
-- The new rows are added once to your existing table, next to the rows they belong to.
-- `gender` is one letter (`M`, `F`, `O`, `N`, `U`); `gender-identity` is free text. Phones do not show the gender.
-- Radicale stores `GENDER:O;non-binary` with the `;` escaped; the plugin reads both the same way.
-- Changing **Read from** or **Part** only changes how cards are read from now on; it does not refill your notes.
-- Update the plugin on every desktop before you sync from it: an older version would offer to remove the new parts from your cards.
+Everything from 3.0.0-alpha.11 still applies: every part of a card field (name prefix and suffix, department, gender and gender identity, PO box and extra address line) is a property in your notes, and the property names table has Part and vCard 4.0 / 3.0 write columns.
 
-Back up your vault before installing.
+Update the plugin on every desktop before you sync from it. Back up your vault before installing.
