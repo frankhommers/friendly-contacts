@@ -416,6 +416,29 @@ describe('prepareSync', () => {
       const t = setup({ server: PARTS, base: PARTS, reader: 3, local: note() });
       expect((await reviewOf(t)).nameBase).toBeUndefined();
     });
+
+    it('an X-GENDER on a 3.0 card arrives in the note, the card stays as it is', async () => {
+      const V3 = ['BEGIN:VCARD', 'VERSION:3.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;;', 'ORG:Acme', 'X-GENDER:M', 'END:VCARD', ''].join('\r\n');
+      const t = setup({ server: V3, base: V3, reader: 2, local: note() });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(V3);
+      expect(t.note.frontmatter).toMatchObject({ gender: 'M' });
+      expect(t.entries.get(UID)).toMatchObject({ raw: V3, reader: 3 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
+
+    it('a PO box and an extra address line arrive in the note, the card stays as it is', async () => {
+      const ADR = ['BEGIN:VCARD', 'VERSION:4.0', `UID:${UID}`, 'FN:Jan Jansen', 'N:Jansen;Jan;;;', 'ORG:Acme', 'ADR;TYPE=HOME:PO 12;Unit 3;Main St 1;Utrecht;;3542 AA;NL', 'END:VCARD', ''].join('\r\n');
+      const home = { street: 'Main St 1', city: 'Utrecht', postcode: '3542 AA', country: 'NL' };
+      const t = setup({ server: ADR, base: ADR, reader: 2, local: { ...note(), ...home } });
+      expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+      expect(t.pushes).toEqual([]);
+      expect(t.cards.get(HREF)!.raw).toBe(ADR);
+      expect(t.note.frontmatter).toMatchObject({ ...home, 'po-box': 'PO 12', 'address-extra': 'Unit 3' });
+      expect(t.entries.get(UID)).toMatchObject({ raw: ADR, reader: 3 });
+      expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    });
   });
 
   it('no base and different makes conflicts', async () => {

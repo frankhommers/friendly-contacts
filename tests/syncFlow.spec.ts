@@ -865,6 +865,16 @@ describe('syncFlow: also changes and rename', () => {
       expect(t.radicale.entries.get(UID)?.reader).toBe(3);
     });
 
+    it('a reader-2 base: a prefix changed on the phone offers the rename', async () => {
+      const t = setup({ local: JANSEN });
+      t.deps.name = 'Jan Jansen';
+      const href = t.radicale.seed(DR);
+      t.radicale.entries.set(UID, { ...t.radicale.entries.get(UID)!, reader: 2 });
+      t.radicale.put(href, DR.replace('N:Jansen;Jan;;Dr;', 'N:Jansen;Jan;;Prof;'));
+      expect(await offeredFor(t)).toEqual({ to: 'Prof Jan Jansen' });
+      expect(t.note.frontmatter['name-prefix']).toBe('Prof');
+    });
+
     it('a later change of the prefix in the note offers the rename', async () => {
       const t = setup({ local: { ...JANSEN, 'name-prefix': 'Prof' } });
       t.deps.name = 'Jan Jansen';
