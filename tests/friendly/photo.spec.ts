@@ -40,6 +40,10 @@ describe('isPhotoProperty', () => {
     expect(['photo', 'photo-2', 'photo-12'].every(isPhotoProperty)).toBe(true);
     expect(['photos', 'photo-', 'myphoto', 'title', undefined].some(isPhotoProperty)).toBe(false);
   });
+
+  it('photo-0 and photo-1 are no photo: numbering starts at photo-2, as for every numbered property', () => {
+    expect(['photo-0', 'photo-1'].some(isPhotoProperty)).toBe(false);
+  });
 });
 
 describe('notePhotoLines', () => {
@@ -48,6 +52,10 @@ describe('notePhotoLines', () => {
     const v3 = parseCard('BEGIN:VCARD\r\nVERSION:3.0\r\nEND:VCARD');
     expect(texts(notePhotoLines({ photo: A }, v3))).toEqual(['PHOTO;ENCODING=b;TYPE=PNG:AAAA']);
     expect(notePhotoLines({ title: 'x' }, v4())).toEqual([]);
+  });
+
+  it('photo-0 and photo-1 are ignored: neither replaces photo', () => {
+    expect(texts(notePhotoLines({ photo: A, 'photo-1': B, 'photo-0': B }, v4()))).toEqual([`PHOTO:${A}`]);
   });
 });
 
@@ -113,6 +121,10 @@ describe('repairNotePhotos', () => {
     expect(repairNotePhotos({ photo: D, 'photo-2': A }, v4(`PHOTO:${A}`)).props).toEqual({ photo: A });
     expect(repairNotePhotos({ photo: D, 'photo-2': A }, v4(`PHOTO:${A}`, `PHOTO:${B}`)).props).toEqual({ photo: B, 'photo-2': A });
     expect(repairNotePhotos({ photo: A, 'photo-3': D, 'photo-2': D }, []).props).toEqual({ photo: A });
+  });
+
+  it('photo-0 and photo-1 are no photos and are left alone', () => {
+    expect(repairNotePhotos({ 'photo-1': B, photo: D }, v4(`PHOTO:${A}`)).props).toEqual({ 'photo-1': B, photo: A });
   });
 });
 

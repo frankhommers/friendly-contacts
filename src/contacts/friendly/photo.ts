@@ -16,8 +16,19 @@ export function isDamagedPhoto(value: unknown): boolean {
   return typeof value === 'string' && EMPTY_DATA_URI.test(value.trim());
 }
 
+/**
+ * `photo` -> 1, `photo-2` -> 2, ...; undefined for anything else. Numbering starts at `photo-2`, as for every
+ * numbered property (`rowForProperty`): `photo-0` and `photo-1` are no photo.
+ */
+function photoOrdinal(property: string | undefined): number | undefined {
+  if (property === 'photo') return 1;
+  const m = property === undefined ? null : /^photo-(\d+)$/.exec(property);
+  const ordinal = m ? Number(m[1]) : 0;
+  return ordinal >= 2 ? ordinal : undefined;
+}
+
 /** `photo`, `photo-2`, ...: the friendly properties that hold a photo (the fixed name, see FIXED_PROPERTIES). */
-export const isPhotoProperty = (property: string | undefined): boolean => property !== undefined && /^photo(-\d+)?$/.test(property);
+export const isPhotoProperty = (property: string | undefined): boolean => photoOrdinal(property) !== undefined;
 
 const isPhotoLine = (line: VCardLine): boolean => line.name === 'PHOTO';
 const isDamagedLine = (line: VCardLine): boolean => isPhotoLine(line) && isDamagedPhoto(line.value);
@@ -27,7 +38,8 @@ const versionOf = (lines: VCardLine[]): string => lines.find((line) => !line.gro
 export function notePhotoLines(props: Record<string, unknown>, card: VCardLine[]): VCardLine[] {
   const values: string[] = [];
   for (const [key, value] of Object.entries(props)) {
-    if (isPhotoProperty(key) && typeof value === 'string') values[key === 'photo' ? 0 : Number(key.slice('photo-'.length)) - 1] = value;
+    const ordinal = photoOrdinal(key);
+    if (ordinal !== undefined && typeof value === 'string') values[ordinal - 1] = value;
   }
   const version = versionOf(card);
   return values.flatMap((value) => {
@@ -98,7 +110,7 @@ export function restoreDroppedPhotos(lines: VCardLine[], fallback: VCardLine[]):
 export function repairNotePhotos<T>(props: Record<string, T>, fallback: VCardLine[]): { props: Record<string, T>; repaired: boolean } {
   const photos = Object.keys(props)
     .filter(isPhotoProperty)
-    .sort((a, b) => photoIndex(a) - photoIndex(b));
+    .sort((a, b) => (photoOrdinal(a) ?? 0) - (photoOrdinal(b) ?? 0));
   if (!photos.some((key) => isDamagedPhoto(props[key]))) return { props, repaired: false };
   const kept = photos.filter((key) => !isDamagedPhoto(props[key]));
   const seen = new Set(kept.map((key) => props[key]).filter((v) => typeof v === 'string').map((v) => photoKey(v as string)));
@@ -119,8 +131,6 @@ export function repairNotePhotos<T>(props: Record<string, T>, fallback: VCardLin
   values.forEach((value, i) => (result[i === 0 ? 'photo' : `photo-${i + 1}`] = value));
   return { props: result, repaired: true };
 }
-
-const photoIndex = (key: string): number => (key === 'photo' ? 1 : Number(key.slice('photo-'.length)));
 
 /** The image data as compared by the merge: a data URI and the bare base64 of the same image are equal. */
 export function photoKey(value: string): string {
