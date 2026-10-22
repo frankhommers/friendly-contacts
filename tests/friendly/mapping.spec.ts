@@ -1,8 +1,10 @@
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard } from 'src/contacts/friendly/lines';
 import {
+  addDefaultRows,
   APPLE_BUILTIN_LABELS,
   DEFAULT_MAPPING,
+  DEFAULT_ROWS_SET,
   FIXED_PROPERTIES,
   isFixedProperty,
   isMappedProperty,
@@ -18,6 +20,8 @@ import {
   writeKeyFor,
   writeLabel,
 } from 'src/contacts/friendly/mapping';
+import { RelationContext } from 'src/contacts/friendly/relations';
+import { newCard } from 'src/contacts/friendly/translate';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
 import { describe, expect, it } from 'vitest';
 
@@ -525,5 +529,96 @@ describe('parts and the vCard 3.0 write key', () => {
     expect(gender('')).toEqual([]);
     expect(gender('  ')).toEqual([]);
     expect(gender('X-FOO;TYPE=X')).toEqual([]);
+  });
+});
+
+describe('adding the new default rows', () => {
+  /** A mapping stored before the part rows existed. */
+  const withoutNew = (): MappingRow[] => DEFAULT_MAPPING.filter((r) => (r as { sinceReader?: number }).sinceReader === undefined);
+  const find = (rows: MappingRow[], property: string) => rows.find((r) => r.property === property);
+  const after = (rows: MappingRow[], property: string) => names(rows)[names(rows).indexOf(property) + 1];
+  const ctx: RelationContext = { uidToName: () => undefined, displayName: () => undefined, resolveLink: (name) => ({ text: name }) };
+
+  it('adds the new rows to an old default mapping, in the default order', () => {
+    const { rows, seen } = addDefaultRows(withoutNew(), 0);
+    expect(DEFAULT_ROWS_SET).toBe(1);
+    expect(rows).toStrictEqual(DEFAULT_MAPPING);
+    expect(seen).toBe(1);
+    expect(validateMapping(rows)).toEqual([]);
+  });
+
+  it('adds nothing once the set has been seen: a removed row does not come back', () => {
+    const stored = withoutNew();
+    const { rows, seen } = addDefaultRows(stored, 1);
+    expect(rows).toEqual(withoutNew());
+    expect(seen).toBe(1);
+    expect(addDefaultRows(stored, 2).seen).toBe(2);
+  });
+
+  it('changes nothing the second time', () => {
+    const once = addDefaultRows(withoutNew(), 0);
+    expect(addDefaultRows(once.rows, once.seen)).toEqual(once);
+    // Even when the record was lost: every new row is there by name.
+    expect(addDefaultRows(once.rows, 0)).toEqual(once);
+    expect(addDefaultRows(DEFAULT_MAPPING, 0)).toEqual({ rows: DEFAULT_MAPPING, seen: 1 });
+  });
+
+  it('a new address part follows the edited keys of its stored sibling, so the address stays one line', () => {
+    const home = ['street', 'postcode', 'city', 'region', 'country'];
+    const stored = withoutNew().map((r) =>
+      home.includes(r.property) ? ({ ...r, write: 'ADR;TYPE=home', read: ['ADR[HOME]'] } as MappingRow) : r,
+    );
+    const { rows } = addDefaultRows(stored, 0);
+    expect(find(rows, 'po-box')).toMatchObject({ kind: 'component', write: 'ADR;TYPE=home', read: ['ADR[HOME]'], index: 0, sinceReader: 3 });
+    expect(find(rows, 'address-extra')).toMatchObject({ write: 'ADR;TYPE=home', read: ['ADR[HOME]'], index: 1 });
+    expect((find(rows, 'po-box') as { read: string[] }).read).not.toBe((find(stored, 'street') as { read: string[] }).read);
+    expect(find(rows, 'work-po-box')).toMatchObject({ write: 'ADR;TYPE=WORK', read: ['ADR[WORK]'], index: 0 });
+    const card = newCard({ uid: 'a', name: 'Anna', 'po-box': 'PO 1', street: 'Main 1' }, rows, ctx);
+    expect(card.lines.filter((l) => l.name === 'ADR')).toHaveLength(1);
+  });
+
+  it('a renamed sibling is found by its identity, an edited one by its default name', () => {
+    const renamed = withoutNew().map((r) =>
+      r.property === 'company' ? ({ ...r, property: 'firm', read: ['ORG', 'ORG[WORK]'], writeV3: 'X-ORG' } as MappingRow) : r,
+    );
+    const { rows } = addDefaultRows(renamed, 0);
+    expect(after(rows, 'firm')).toBe('department');
+    expect(find(rows, 'department')).toMatchObject({ read: ['ORG', 'ORG[WORK]'], write: 'ORG', writeV3: 'X-ORG', index: 1, sinceReader: 3 });
+
+    const edited = withoutNew().map((r) => (r.property === 'company' ? ({ ...r, write: 'ORG;TYPE=WORK' } as MappingRow) : r));
+    const fromName = addDefaultRows(edited, 0).rows;
+    expect(after(fromName, 'company')).toBe('department');
+    expect(find(fromName, 'department')).toMatchObject({ write: 'ORG;TYPE=WORK', index: 1 });
+    expect(find(fromName, 'department')).not.toHaveProperty('writeV3');
+  });
+
+  it('does not add a row whose name or part the stored mapping already has', () => {
+    const named: MappingRow = { kind: 'field', property: 'department', read: ['X-DEPARTMENT'], write: 'X-DEPARTMENT' };
+    const byName = addDefaultRows([...withoutNew(), named], 0).rows;
+    expect(names(byName).filter((n) => n === 'department')).toHaveLength(1);
+    expect(find(byName, 'department')).toBe(named);
+
+    const part: MappingRow = { kind: 'component', property: 'afdeling', read: ['ORG'], write: 'org', index: 1 };
+    const byPart = addDefaultRows([...withoutNew(), part], 0).rows;
+    expect(names(byPart)).not.toContain('department');
+    expect(names(byPart)).toContain('name-prefix');
+  });
+
+  it('adds neither gender row when a stored row already reads GENDER or X-GENDER', () => {
+    const xGender: MappingRow = { kind: 'field', property: 'sekse', read: ['X-GENDER'], write: 'X-GENDER' };
+    const rows = addDefaultRows([...withoutNew(), xGender], 0).rows;
+    expect(names(rows)).not.toContain('gender');
+    expect(names(rows)).not.toContain('gender-identity');
+    expect(names(rows)).toContain('department');
+
+    const anyGender: MappingRow = { kind: 'component', property: 'sekse', read: ['gender[*]'], write: 'GENDER', index: 0 };
+    expect(names(addDefaultRows([...withoutNew(), anyGender], 0).rows)).not.toContain('gender-identity');
+  });
+
+  it('leaves the relation rows and the anniversary row as they are', () => {
+    const stored = withoutNew();
+    const { rows } = addDefaultRows(stored, 0);
+    expect(rows.filter((r) => r.kind === 'relation')).toEqual(stored.filter((r) => r.kind === 'relation'));
+    expect(find(rows, 'anniversary')).toEqual(find(stored, 'anniversary'));
   });
 });

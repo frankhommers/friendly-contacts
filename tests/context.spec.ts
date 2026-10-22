@@ -112,7 +112,7 @@ describe('sharedSettingsContext', () => {
   it('keeps a stored mapping and drops a stored mirrorRelations (it is per device now)', async () => {
     const mapping = [{ kind: 'field', property: 'uid', read: ['UID'], write: 'UID' }];
     await initSettings(async () => ({ ...mockSettings, friendly: { mapping, mirrorRelations: true } }), saveData);
-    expect(Object.keys(getSettings().friendly)).toEqual(['mapping']);
+    expect(Object.keys(getSettings().friendly)).toEqual(['mapping', 'defaultRowsSeen']);
     expect(getSettings().friendly.mapping.slice(0, 1)).toEqual(mapping);
   });
 
@@ -130,6 +130,22 @@ describe('sharedSettingsContext', () => {
     expect(mapping.map((r) => r.property)).not.toContain('children');
     expect(mapping.find((r) => r.property === 'kinderen')).toMatchObject({ labels: ['Child'] });
     expect(mapping.find((r) => r.property === 'anniversary')).toMatchObject({ appleDateLabel: 'Anniversary' });
+  });
+
+  it('adds the new default rows to a stored mapping once and records it', async () => {
+    const old = DEFAULT_MAPPING.filter((r) => (r as { sinceReader?: number }).sinceReader === undefined);
+    await initSettings(async () => ({ ...mockSettings, friendly: { mapping: old } }), saveData);
+    const saved = saveData.mock.calls[0][0] as ContactsPluginSettings;
+    expect(saved.friendly.mapping.map((r) => r.property)).toContain('department');
+    expect(saved.friendly.defaultRowsSeen).toBe(1);
+  });
+
+  it('does not bring back a new default row once the set was seen', async () => {
+    const old = DEFAULT_MAPPING.filter((r) => (r as { sinceReader?: number }).sinceReader === undefined);
+    await initSettings(async () => ({ ...mockSettings, friendly: { mapping: old, defaultRowsSeen: 1 } }), saveData);
+    const saved = saveData.mock.calls[0][0] as ContactsPluginSettings;
+    expect(saved.friendly.mapping.map((r) => r.property)).not.toContain('department');
+    expect(saved.friendly.defaultRowsSeen).toBe(1);
   });
 
   it('links to Obsidian notes default to off, and a stored setting is kept', async () => {

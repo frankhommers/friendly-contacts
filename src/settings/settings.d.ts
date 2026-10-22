@@ -25,6 +25,8 @@ export interface ContactsPluginSettings {
 
 export interface FriendlySettings {
   mapping: MappingRow[];
+  /** The set of default rows the stored mapping has had added (`DEFAULT_ROWS_SET`); absent: 0. */
+  defaultRowsSeen?: number;
 }
 
 

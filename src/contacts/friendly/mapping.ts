@@ -367,6 +367,70 @@ export function migrateMapping(stored: MappingRow[]): MappingRow[] {
   return rows;
 }
 
+/** The set of default rows a stored mapping has had added (`friendly.defaultRowsSeen`); set 1: the part rows. */
+export const DEFAULT_ROWS_SET = 1;
+
+type KeyedRow = FieldRow | ComponentRow;
+
+/** A default row of set 1 (it is added once by `addDefaultRows`). */
+const isNewInSet = (row: MappingRow): row is KeyedRow => row.kind !== 'relation' && row.sinceReader === PARTS_READER;
+
+/** The same row by `rowIdentity`, write keys compared ignoring case. */
+const sameIdentity = (a: MappingRow, b: MappingRow): boolean =>
+  rowIdentity(a).toUpperCase() === rowIdentity(b).toUpperCase();
+
+/** Two default rows on the same vCard field: same write key and read patterns. */
+const sameField = (a: KeyedRow, b: KeyedRow): boolean =>
+  a.write === b.write && a.read.length === b.read.length && a.read.every((p, i) => p === b.read[i]);
+
+/**
+ * Adds the default rows of set `DEFAULT_ROWS_SET` (marked `sinceReader`) to a stored mapping, once: with `seen` at or
+ * above the set nothing changes, so a row the owner removed does not come back. A new row
+ * - is skipped when a row has its name, or (after copying, below) its identity; and when no older default row reads
+ *   its field (it maps a field new to the mapping, e.g. gender) while a stored row reads one of its field names;
+ * - copies read patterns and both write keys from its sibling, the first older default row on the same field (else
+ *   the nearest new one before it, e.g. `gender` for `gender-identity`), as stored: the row with the sibling's
+ *   identity, else with its name. So a part follows an edited write key and the field stays one line;
+ * - goes right after the stored counterpart of the nearest default row before it, else at the end.
+ */
+export function addDefaultRows(stored: MappingRow[], seen: number): { rows: MappingRow[]; seen: number } {
+  if (seen >= DEFAULT_ROWS_SET) return { rows: stored, seen };
+  const rows = [...stored];
+  const storedReads = (pattern: Pattern): boolean => {
+    const name = parsePattern(pattern)?.name;
+    return (
+      name !== undefined && stored.some((r) => r.kind !== 'relation' && r.read.some((p) => parsePattern(p)?.name === name))
+    );
+  };
+  const added = new Map<MappingRow, MappingRow>(); // default row -> the row added for it
+  const counterpart = (row: MappingRow): MappingRow | undefined =>
+    added.get(row) ?? rows.find((r) => sameIdentity(r, row)) ?? rows.find((r) => r.property === row.property);
+  DEFAULT_MAPPING.forEach((row, d) => {
+    if (!isNewInSet(row) || rows.some((r) => r.property === row.property)) return;
+    const onField = DEFAULT_MAPPING.filter((r, i): r is KeyedRow => i !== d && r.kind !== 'relation' && sameField(r, row));
+    const older = onField.find((r) => !isNewInSet(r));
+    if (!older && row.read.some(storedReads)) return;
+    const sibling = older ?? onField.filter((r) => DEFAULT_MAPPING.indexOf(r) < d).pop();
+    const found = sibling && counterpart(sibling);
+    const keys = found && found.kind !== 'relation' ? found : row;
+    const next: KeyedRow = { ...row, read: [...keys.read], write: keys.write };
+    if (keys.writeV3 !== undefined) next.writeV3 = keys.writeV3;
+    else delete next.writeV3;
+    if (rows.some((r) => sameIdentity(r, next))) return;
+    let insertAt = rows.length;
+    for (let i = d - 1; i >= 0; i--) {
+      const before = counterpart(DEFAULT_MAPPING[i]);
+      if (before) {
+        insertAt = rows.indexOf(before) + 1;
+        break;
+      }
+    }
+    rows.splice(insertAt, 0, next);
+    added.set(row, next);
+  });
+  return { rows, seen: DEFAULT_ROWS_SET };
+}
+
 /**
  * Rows whose names the code relies on (sync identity, card name, avatar): they cannot be renamed or removed.
  * Renaming `uid` would make Sync assign a new UID and create a duplicate card.

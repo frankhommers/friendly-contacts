@@ -1,5 +1,5 @@
 import { signal } from "@preact/signals-core";
-import { migrateMapping } from "src/contacts/friendly/mapping";
+import { addDefaultRows, migrateMapping } from "src/contacts/friendly/mapping";
 import { normalizeNoteLinks } from "src/contacts/friendly/noteLinks";
 import { normalizeLayout } from "src/contacts/layout";
 import { insightService } from "src/insights/insightService";
@@ -27,6 +27,11 @@ function normalizeLoaded(loaded: any): { settings: ContactsPluginSettings; migra
 
   const { CardDAV: _cardDAV, syncSelected: _syncSelected, syncEnabled: _syncEnabled, ...rest } = loaded;
   const { sources, defaultSource, migratedFrom } = migrateSources(loaded);
+  const seen = loaded.friendly?.defaultRowsSeen;
+  const { rows: mapping, seen: defaultRowsSeen } = addDefaultRows(
+    migrateMapping(loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping),
+    typeof seen === "number" ? seen : 0
+  );
   const settings = {
     ...DEFAULT_SETTINGS,
     ...rest,
@@ -40,10 +45,8 @@ function normalizeLoaded(loaded: any): { settings: ContactsPluginSettings; migra
       ? DEFAULT_SETTINGS.createFieldsKeys
       : (loaded.createFieldsKeys ?? DEFAULT_SETTINGS.createFieldsKeys),
     // Only the mapping lives here; "mirror relationships" is per device (src/settings/deviceSettings.ts),
-    // so an old mirrorRelations value in data.json is dropped.
-    friendly: {
-      mapping: migrateMapping(loaded.friendly?.mapping ?? DEFAULT_SETTINGS.friendly.mapping)
-    },
+    // so an old mirrorRelations value in data.json is dropped. The new default rows are added once (defaultRowsSeen).
+    friendly: { mapping, defaultRowsSeen },
     layout: normalizeLayout(loaded.layout),
     meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid,
     noteLinks: normalizeNoteLinks(loaded.noteLinks)
