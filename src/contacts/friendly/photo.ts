@@ -65,6 +65,40 @@ export function repairDamagedPhotos(lines: VCardLine[], fallback: VCardLine[]): 
   return { lines: result, repaired: true };
 }
 
+/**
+ * The note's photos with every damaged one (`isDamagedPhoto`) put back, as `repairDamagedPhotos` does for a card. An
+ * earlier version wrote a damaged photo from the server into the note; such a value says nothing about the photo
+ * either. Each one, in order, becomes the next photo of `fallback` (the card as last synced) that the note does not
+ * already hold, and is left out when there is none. The photos are then numbered again (`photo`, `photo-2`, ...).
+ * `repaired` is false, and `props` the same object, when the note holds no damaged photo.
+ */
+export function repairNotePhotos<T>(props: Record<string, T>, fallback: VCardLine[]): { props: Record<string, T>; repaired: boolean } {
+  const photos = Object.keys(props)
+    .filter(isPhotoProperty)
+    .sort((a, b) => photoIndex(a) - photoIndex(b));
+  if (!photos.some((key) => isDamagedPhoto(props[key]))) return { props, repaired: false };
+  const kept = photos.filter((key) => !isDamagedPhoto(props[key]));
+  const seen = new Set(kept.map((key) => props[key]).filter((v) => typeof v === 'string').map((v) => photoKey(v as string)));
+  const spare = fallback.filter((l) => {
+    if (!isPhotoLine(l) || isDamagedLine(l) || seen.has(photoKey(l.value))) return false;
+    seen.add(photoKey(l.value));
+    return true;
+  });
+  const values: T[] = [];
+  for (const key of photos) {
+    if (!isDamagedPhoto(props[key])) values.push(props[key]);
+    else {
+      const next = spare.shift();
+      if (next) values.push(next.value as T);
+    }
+  }
+  const result: Record<string, T> = Object.fromEntries(Object.entries(props).filter(([key]) => !isPhotoProperty(key)));
+  values.forEach((value, i) => (result[i === 0 ? 'photo' : `photo-${i + 1}`] = value));
+  return { props: result, repaired: true };
+}
+
+const photoIndex = (key: string): number => (key === 'photo' ? 1 : Number(key.slice('photo-'.length)));
+
 /** The image data as compared by the merge: a data URI and the bare base64 of the same image are equal. */
 export function photoKey(value: string): string {
   const m = DATA_URI.exec(value.trim());

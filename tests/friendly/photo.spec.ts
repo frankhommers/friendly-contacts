@@ -1,6 +1,6 @@
 import { parseCard, serializeLine } from 'src/contacts/friendly/lines';
 import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
-import { isDamagedPhoto, isPhotoProperty, notePhotoLines, repairDamagedPhotos } from 'src/contacts/friendly/photo';
+import { isDamagedPhoto, isPhotoProperty, notePhotoLines, repairDamagedPhotos, repairNotePhotos } from 'src/contacts/friendly/photo';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { toFriendly } from 'src/contacts/friendly/translate';
 import { describe, expect, it } from 'vitest';
@@ -78,5 +78,32 @@ describe('repairDamagedPhotos', () => {
   it('a grouped damaged line keeps its group', () => {
     const { lines } = repairDamagedPhotos(v4('item2.PHOTO:data:image/png\\;base64'), v4(`PHOTO:${A}`));
     expect(photos(lines)).toEqual([`item2.PHOTO:${A}`]);
+  });
+});
+
+describe('repairNotePhotos', () => {
+  const D = String.raw`data:image/png\;base64`;
+
+  it('a note without a damaged photo is returned as it is', () => {
+    const props = { name: 'Jan', photo: A };
+    expect(repairNotePhotos(props, v4(`PHOTO:${B}`))).toEqual({ props, repaired: false });
+  });
+
+  it('a damaged photo becomes the photo of the fallback (the base); every other property stays', () => {
+    expect(repairNotePhotos({ name: 'Jan', photo: D }, v4(`PHOTO:${A}`, 'TITLE:Baker'))).toEqual({
+      props: { name: 'Jan', photo: A },
+      repaired: true,
+    });
+  });
+
+  it('without a usable fallback the damaged photo is left out', () => {
+    expect(repairNotePhotos({ name: 'Jan', photo: D }, []).props).toEqual({ name: 'Jan' });
+    expect(repairNotePhotos({ name: 'Jan', photo: D }, v4(DAMAGED)).props).toEqual({ name: 'Jan' });
+  });
+
+  it('the photos are numbered again, and an image the note already holds is not used twice', () => {
+    expect(repairNotePhotos({ photo: D, 'photo-2': A }, v4(`PHOTO:${A}`)).props).toEqual({ photo: A });
+    expect(repairNotePhotos({ photo: D, 'photo-2': A }, v4(`PHOTO:${A}`, `PHOTO:${B}`)).props).toEqual({ photo: B, 'photo-2': A });
+    expect(repairNotePhotos({ photo: A, 'photo-3': D, 'photo-2': D }, []).props).toEqual({ photo: A });
   });
 });

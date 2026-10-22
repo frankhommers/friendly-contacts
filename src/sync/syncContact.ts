@@ -15,7 +15,7 @@ import { rowsForBase, withFilledLeftOut, withUnfilledDates } from 'src/contacts/
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { NoteLink, NoteLinkOptions, noteLinksDiffer, noteLinkUrl, wantedNoteLinks } from 'src/contacts/friendly/noteLinks';
-import { notePhotoLines, repairDamagedPhotos } from 'src/contacts/friendly/photo';
+import { notePhotoLines, repairDamagedPhotos, repairNotePhotos } from 'src/contacts/friendly/photo';
 import { linkTarget, RelationContext, toLink, uuidTarget } from 'src/contacts/friendly/relations';
 import {
   CURRENT_READER,
@@ -99,6 +99,11 @@ export interface PreparedSync {
   rewriteRelations: boolean;
   /** The card's own links to Obsidian notes differ from the links wanted for the note; Apply puts them right. */
   rewriteLinks: boolean;
+  /**
+   * The note holds a damaged photo (`isDamagedPhoto`, written by an earlier version). `local` holds it put back from
+   * the base, or not at all (`repairNotePhotos`); Apply writes the note with the result, which puts it right.
+   */
+  damagedNotePhoto: boolean;
   /** Where the card will live. */
   target: { sourceId: string };
   /** The card is currently in another source (Part 1 'move'); Apply moves it to the target. */
@@ -156,7 +161,7 @@ export async function prepareSync(
     const noteSnapshot = snapshotOf(frontmatter, deps.rows);
     const { props: coerced, warnings } = coerceNoteProps(frontmatter, deps.rows);
     for (const warning of warnings) deps.notify(warning);
-    const local = representable(coerced, deps.rows);
+    let local = representable(coerced, deps.rows);
 
     let uid = typeof local.uid === 'string' ? local.uid.trim() : '';
     const lookup = uid !== '';
@@ -172,9 +177,13 @@ export async function prepareSync(
     // so the review, the result, the note and the stored base all see the same photos (see repairDamagedPhotos):
     // - in a base an earlier version stored: left out. The note's photo never stands in for it, or a photo put back
     //   in the note would look as if the server already had it.
+    // - in the note (an earlier version wrote the server's damage into it): the base's photo, or none. It is never
+    //   pushed; Apply writes the note with the result, which removes it.
     // - on the server card: the base's photo, or none; without a base (never synced) the note's photo. With a base,
     //   the note's photo never stands in for it: a photo new in the note must still be pushed.
     const baseLines = baseEntry ? repairDamagedPhotos(parseCard(baseEntry.raw), []).lines : undefined;
+    const notePhotos = repairNotePhotos(local, baseLines ?? []);
+    local = notePhotos.props;
     const repair = (lines: VCardLine[]) => repairDamagedPhotos(lines, baseLines ?? notePhotoLines(local, lines));
 
     let server: PreparedSync['server'];
@@ -233,7 +242,7 @@ export async function prepareSync(
       server !== undefined &&
       deps.noteLinks !== undefined &&
       noteLinksDiffer(server.lines, wantedLinks(L, uid, deps), deps.noteLinks.ownVaults);
-    if (server && !where.move && isUpToDate(rows, rewriteRelations || rewriteLinks)) {
+    if (server && !where.move && isUpToDate(rows, rewriteRelations || rewriteLinks || notePhotos.repaired)) {
       // The only writes before Apply (spec): when both sides agree, the card is stored as the base on a first Sync,
       // and over a base read without some of the rows (a date with a label added after it was stored, a part of an
       // older reader), so those rows count for this contact from now on.
@@ -252,6 +261,7 @@ export async function prepareSync(
       rows,
       rewriteRelations,
       rewriteLinks,
+      damagedNotePhoto: notePhotos.repaired,
       target: { sourceId: where.sourceId },
     };
     if (nameBase) prepared.nameBase = nameBase;

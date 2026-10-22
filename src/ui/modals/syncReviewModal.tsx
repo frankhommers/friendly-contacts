@@ -27,6 +27,8 @@ export interface SyncReviewInput {
   rewriteLine?: string;
   /** The info line "Links to Obsidian notes on this card are updated."; like `rewriteLine`, it may be all there is. */
   linksLine?: string;
+  /** The info line for a damaged photo in the note that Apply puts right; like `rewriteLine`, it may be all there is. */
+  photoLine?: string;
   /** The address book whose card the server column shows (its column, pick buttons and "All from" use the name). */
   serverName: string;
   /** Warning lines above the table. */
@@ -91,7 +93,10 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
   const setAll = (side: Side) => set(rows.filter((r) => r.changed).map((r) => [r.property, side]));
 
   const { visible, hidden: hiddenCount } = shownRows(rows, showAll);
-  const rewriteOnly = isRewriteOnly(rows, input.rewriteLine !== undefined || input.linksLine !== undefined);
+  const rewriteOnly = isRewriteOnly(
+    rows,
+    input.rewriteLine !== undefined || input.linksLine !== undefined || input.photoLine !== undefined,
+  );
   const ok = canApply(rows, choices) && !importing;
   const hint = applyHint(undecidedCount(rows, choices));
   // Both follow the current picks.
@@ -203,6 +208,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
       {input.moveLine ? <p className="friendly-review-move">{input.moveLine}</p> : null}
       {input.rewriteLine ? <p className="friendly-review-rewrite">{input.rewriteLine}</p> : null}
       {input.linksLine ? <p className="friendly-review-rewrite">{input.linksLine}</p> : null}
+      {input.photoLine ? <p className="friendly-review-rewrite">{input.photoLine}</p> : null}
       {rewriteOnly ? null : (
         <>
           <div className="friendly-review-toolbar">
