@@ -7,7 +7,7 @@ import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
 import { getSettings, initSettings, reloadSettings, settings } from "src/context/sharedSettingsContext";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
-import { CONTACTS_VIEW_CONFIG, PEOPLE_GRAPH_VIEW } from "src/util/constants";
+import { CONTACTS_VIEW_CONFIG, PEOPLE_GRAPH_VIEW, SYNC_ALL_VIEW } from "src/util/constants";
 import myScrollTo from "src/util/myScrollTo";
 
 import {updateFrontMatter} from "./contacts";
@@ -28,6 +28,7 @@ import { ContactsPluginSettings } from  './settings/settings.d';
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { graphCentre } from "src/graph/vaultGraph";
 import { openPeopleGraph, PeopleGraphView } from "src/ui/graph/peopleGraphView";
+import { openSyncAll, SyncAllView } from "src/ui/syncAll/syncAllView";
 
 export default class ContactsPlugin extends Plugin {
 	settings!: ContactsPluginSettings;
@@ -51,6 +52,7 @@ export default class ContactsPlugin extends Plugin {
 		);
 
 		this.registerView(PEOPLE_GRAPH_VIEW.type, (leaf) => new PeopleGraphView(leaf));
+		this.registerView(SYNC_ALL_VIEW.type, (leaf) => new SyncAllView(leaf));
 
 		this.addRibbonIcon('contact', 'Contacts', () => {
 			this.activateSidebarView();
@@ -165,6 +167,16 @@ export default class ContactsPlugin extends Plugin {
         const ok = isContactNoteFile(this.app, file) && isSyncAvailable();
         if (!ok || checking) return ok;
         return syncContactNote(this, file);
+      },
+    });
+
+    this.addCommand({
+      id: "friendly-contacts-sync-all",
+      name: "Sync all contacts",
+      checkCallback: (checking) => {
+        const ok = isSyncAvailable();
+        if (ok && !checking) void openSyncAll(this.app);
+        return ok;
       },
     });
 

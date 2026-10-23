@@ -12,6 +12,8 @@ type HeaderProps = {
   importVCF: () => void;
   /** Present when an address book is active: opens the "Import contact from server" picker. */
   importFromServer?: () => void;
+  /** Present when an address book is active: opens the "Sync all contacts" tab. */
+  syncAll?: () => void;
   exportAllVCF: () => void;
   setDisplayImportView: Dispatch<SetStateAction<boolean>>;
 }
@@ -23,7 +25,7 @@ export const HeaderView = (props: HeaderProps) => {
 
 	useEffect(() => {
 		buttons.current.forEach(setIconForButton);
-	}, [buttons, props.importFromServer !== undefined]);
+	}, [buttons, props.importFromServer !== undefined, props.syncAll !== undefined]);
 
   useEffect(() => {
     const unsubscribe = insightQueueStore.insightQueItemCount.subscribe((newValue) => {
@@ -65,6 +67,15 @@ export const HeaderView = (props: HeaderProps) => {
           aria-label="Import contact from server"
           ref={(element) => (buttons.current[9] = element)}
           onClick={props.importFromServer}/>
+      )}
+      {props.syncAll && (
+        <div
+          id="sync-all-btn"
+          data-icon="refresh-cw"
+          className={"clickable-icon nav-action-button "}
+          aria-label="Sync all contacts"
+          ref={(element) => (buttons.current[10] = element)}
+          onClick={props.syncAll}/>
       )}
       <div
         id="import-vcf-btn"

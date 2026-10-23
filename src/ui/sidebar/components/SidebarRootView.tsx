@@ -19,6 +19,7 @@ import { ContactsPluginSettings } from "src/settings/settings";
 import { useSettings } from "src/ui/hooks/settingsHook";
 import { isSyncAvailable } from "src/sync/adapters";
 import { openImportContactModal } from "src/ui/modals/importContactModal";
+import { openSyncAll } from "src/ui/syncAll/syncAllView";
 import { ContactsListView } from "src/ui/sidebar/components/ContactsListView";
 import { HeaderView } from "src/ui/sidebar/components/HeaderView";
 import { ImportView } from "src/ui/sidebar/components/ImportView";
@@ -171,6 +172,7 @@ export const SidebarRootView = (props: SidebarRootViewProps) => {
                   })
                 }}
                 importFromServer={isSyncAvailable() ? () => { void openImportContactModal(app); } : undefined}
+                syncAll={isSyncAvailable() ? () => { void openSyncAll(app); } : undefined}
                 exportAllVCF={async() => {
                   const allContactFiles = contacts.map((contact)=> contact.file)
                   const {vcards, errors} = await vcard.toString(allContactFiles);

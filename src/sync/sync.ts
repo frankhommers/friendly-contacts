@@ -16,6 +16,7 @@ import {
   syncRelationContexts,
 } from "src/contacts/obsidianNotes";
 import {contactNameFor, renameBlocked, renamesFolder} from "src/contacts/layoutNotes";
+import {syncTurnedOff} from "src/contacts/friendly/mapping";
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -26,6 +27,7 @@ import {VCardMeta, VCardRaw} from "src/sync/adapters/adapter";
 import {BaseHolder, CardVersion, followsBook, newCardVersion, noteSourceId} from "src/sync/sources";
 import {ReviewRow} from "src/sync/review";
 import {FlowResult, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps} from "src/sync/syncFlow";
+import type {SyncAllDeps} from "src/sync/syncAll";
 import {SyncReviewModal} from "src/ui/modals/syncReviewModal";
 import {AppHttpResponse} from "src/util/platformHttpClient";
 import {cleanUid} from "src/util/vcard";
@@ -151,27 +153,55 @@ export async function deleteOnRemote(contact: Contact): Promise<boolean> {
 /** Notes with a Sync in progress; a second Sync of the same note would merge against a stale read. */
 const running = new Set<string>();
 
+/** Takes the one-Sync-per-note lock: a release function, or undefined when a Sync of the note is running. */
+export function tryLockSync(path: string): (() => void) | undefined {
+  if (running.has(path)) return undefined;
+  running.add(path);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    running.delete(path);
+  };
+}
+
 /** One Sync of a contact note with its card on the server, through the review screen (see src/sync/syncFlow.ts). */
 export async function syncContact(file: TFile): Promise<FlowResult | undefined> {
-  const key = file.path;
-  if (running.has(key)) {
+  const release = tryLockSync(file.path);
+  if (!release) {
     new Notice(`Sync already running for ${file.basename}.`);
     return undefined;
   }
-  running.add(key);
   try {
     return await runSync(file);
   } catch (error) {
     new Notice(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
     return { kind: 'failed', message: error instanceof Error ? error.message : String(error) };
   } finally {
-    running.delete(key);
+    release();
   }
 }
 
 /** Obsidian wiring around syncFlow: the note, the address books, the review modal and Notices. */
 async function runSync(file: TFile): Promise<FlowResult | undefined> {
   const app = getApp();
+  const deps = await flowDepsFor(app, file);
+  if ('refused' in deps) {
+    new Notice(deps.refused);
+    return undefined;
+  }
+  return syncFlow(deps);
+}
+
+/**
+ * The deps a Sync of this note runs with: the review modal and Notices unless overridden. Refused (with the
+ * text to show) while the note still has vCard properties.
+ */
+export async function flowDepsFor(
+  app: App,
+  file: TFile,
+  over: Partial<Pick<SyncFlowDeps, 'notify' | 'review'>> = {},
+): Promise<SyncFlowDeps | { refused: string }> {
   const settings = getSettings();
   const rows = settings.friendly.mapping;
   const note = noteIO(app, file);
@@ -179,10 +209,9 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
   const name = contactNameFor(app, file);
   if (hasVCardValues(await note.readFrontmatter(), rows)) {
     // Sync reads only friendly properties: a UID kept in `UID` is not seen, and syncing would create a second card.
-    new Notice(`${name} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.`);
-    return undefined;
+    return { refused: `${name} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.` };
   }
-  const deps: SyncFlowDeps = {
+  return {
     note,
     path: file.path,
     name,
@@ -196,15 +225,34 @@ async function runSync(file: TFile): Promise<FlowResult | undefined> {
       const { ctx, readOnlyCtx, unreadable } = await syncRelationContexts(app, file.path);
       return { ctx, readOnlyCtx, settle: () => ctx.settle(), unreadable };
     },
-    review: (request) => openReview(app, file, request),
-    notify: (message) => new Notice(message),
+    review: over.review ?? ((request) => openReview(app, file, request)),
+    notify: over.notify ?? ((message) => new Notice(message)),
     mirror: mirrorLookup(app, file),
     renameBlocked: (newName) => renameBlocked(app, file, newName),
     renamesFolder: renamesFolder(app, file),
     newCardVersion: newCardVersionIn,
     noteLinks: noteLinkOptions(settings.noteLinks),
   };
-  return syncFlow(deps);
+}
+
+/** Sync all against the vault: the contact notes (`sync: false` left out), their flow deps and the Sync lock. */
+export function syncAllDeps(app: App): SyncAllDeps {
+  return {
+    notes: () =>
+      contactNotes(app)
+        .filter(({ file }) => !syncTurnedOff(app.metadataCache.getFileCache(file)?.frontmatter ?? {}))
+        .map(({ file }) => ({ path: file.path, name: contactNameFor(app, file) })),
+    flowDeps: async (path, over) => {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return { refused: 'The note is gone.' };
+      return flowDepsFor(app, file, {
+        notify: over.notify,
+        // Sync all never opens the review screen: it prepares and commits rounds itself.
+        review: () => Promise.reject(new Error('Sync all shows its own review')),
+      });
+    },
+    lock: tryLockSync,
+  };
 }
 
 /**
@@ -265,7 +313,7 @@ function mirrorLookup(app: App, file: TFile): SyncFlowDeps['mirror'] {
  * The relationship targets of a row that exist only on the server: a link that resolves to no note but to
  * exactly one card (by name) whose UID has no note yet. `import` makes that card a note.
  */
-async function serverOnlyLookup(app: App, file: TFile): Promise<(row: ReviewRow) => { name: string; import(): Promise<void> }[]> {
+export async function serverOnlyLookup(app: App, file: TFile): Promise<(row: ReviewRow) => { name: string; import(): Promise<void> }[]> {
   const remote = await remoteContacts();
   const known = new Set(contactNotes(app).flatMap(({ uid }) => (uid === undefined ? [] : [cleanUid(uid)])));
   return (row) => {

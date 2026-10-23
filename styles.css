@@ -846,3 +846,177 @@ textarea.friendly-review-edit {
   border-radius: var(--radius-s);
   padding: 0 var(--size-4-1);
 }
+
+/* Sync all: the worklist tab (list left, the review of the selected contact right). */
+.friendly-sync-all-view.view-content {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.friendly-sync-all {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.friendly-sync-all-top,
+.friendly-sync-all-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-3);
+}
+
+.friendly-sync-all-top {
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.friendly-sync-all-bottom {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.friendly-sync-all-status,
+.friendly-sync-all-progress {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.friendly-sync-all-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.friendly-sync-all-list {
+  flex: 0 0 260px;
+  overflow-y: auto;
+  border-right: 1px solid var(--background-modifier-border);
+  padding: var(--size-4-2) 0;
+}
+
+.friendly-sync-all-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.friendly-sync-all-list ul[role="listbox"]:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.friendly-sync-all-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--size-4-1);
+  padding: var(--size-4-1) var(--size-4-3);
+  color: var(--nav-item-color);
+  cursor: pointer;
+}
+
+.friendly-sync-all-row:hover {
+  background: var(--nav-item-background-hover);
+  color: var(--nav-item-color-hover);
+}
+
+.friendly-sync-all-row.is-selected {
+  background: var(--nav-item-background-active);
+  color: var(--nav-item-color-active);
+}
+
+.friendly-sync-all-row.is-done .friendly-sync-all-name {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.friendly-sync-all-name {
+  margin-right: auto;
+}
+
+.friendly-sync-all-badge {
+  font-size: var(--font-ui-smaller);
+  border-radius: var(--radius-s);
+  padding: 0 var(--size-4-1);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+}
+
+.friendly-sync-all-badge.is-conflict {
+  color: var(--color-red);
+}
+
+.friendly-sync-all-badge.is-newCard {
+  color: var(--interactive-accent);
+}
+
+.friendly-sync-all-blocked {
+  margin-top: var(--size-4-3);
+  padding: 0 var(--size-4-3);
+}
+
+.friendly-sync-all-blocked h4 {
+  margin: 0 0 var(--size-4-1);
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.friendly-sync-all-blocked li {
+  display: flex;
+  flex-direction: column;
+  padding: var(--size-4-1) 0;
+}
+
+.friendly-sync-all-reason {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.friendly-sync-all-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--size-4-2) var(--size-4-4);
+}
+
+.friendly-sync-all-title {
+  margin: 0;
+}
+
+.friendly-sync-all-subtitle,
+.friendly-sync-all-empty {
+  color: var(--text-muted);
+}
+
+.friendly-sync-all-messages p {
+  margin: var(--size-4-1) 0;
+  color: var(--text-muted);
+}
+
+/* The review scrolls with the tab, not in a box of its own. */
+.friendly-sync-all-detail .friendly-review-scroll {
+  max-height: none;
+}
+
+@media (max-width: 700px) {
+  .friendly-sync-all-main {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .friendly-sync-all-list {
+    flex: 0 0 auto;
+    max-height: 40vh;
+    border-right: none;
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .friendly-sync-all-detail {
+    overflow-y: visible;
+  }
+}

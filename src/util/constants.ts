@@ -11,6 +11,12 @@ export const PEOPLE_GRAPH_VIEW = {
 	icon: "network",
 };
 
+export const SYNC_ALL_VIEW = {
+	type: "friendly-contacts-sync-all",
+	name: "Sync all contacts",
+	icon: "refresh-cw",
+};
+
 export enum Sort {
 	NAME,
 	BIRTHDAY,
