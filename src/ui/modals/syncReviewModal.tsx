@@ -65,24 +65,58 @@ const Value: React.FC<{ value: DisplayValue }> = ({ value }) => {
   return <span className={classes.join(' ')}>{value.text}</span>;
 };
 
-interface ContentProps {
+export interface ContentProps {
   input: SyncReviewInput;
   linkName: (link: string) => string;
   onApply: (choices: Map<string, Choice>, rename: boolean) => void;
-  onCancel: () => void;
   onImported: () => void;
+  /** Controlled when given (the caller holds the picks); otherwise the content keeps them itself. */
+  choices?: Map<string, Choice>;
+  onChoicesChange?(choices: Map<string, Choice>): void;
+  /** Controlled when given; otherwise the content keeps it itself (starts true). */
+  rename?: boolean;
+  onRenameChange?(rename: boolean): void;
+  /** No Cancel button when absent. */
+  onCancel?: () => void;
+  /** Rendered after Apply and Cancel, before the hint. */
+  extraButtons?: React.ReactNode;
+  /** Every control that changes something is disabled ("Show all" stays enabled). */
+  disabled?: boolean;
 }
 
-const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, onCancel, onImported }) => {
+export const SyncReviewContent: React.FC<ContentProps> = ({
+  input,
+  linkName,
+  onApply,
+  onImported,
+  choices: choicesProp,
+  onChoicesChange,
+  rename: renameProp,
+  onRenameChange,
+  onCancel,
+  extraButtons,
+  disabled = false,
+}) => {
   const rows = input.prepared.rows;
   const { serverName } = input;
   // A new card has no server side to pick: choosing it would empty the note.
   const newCard = input.prepared.server === undefined;
   const sides = pickSides(newCard);
-  const [choices, setChoices] = useState<Map<string, Choice>>(new Map());
+  const [ownChoices, setOwnChoices] = useState<Map<string, Choice>>(new Map());
   const [showAll, setShowAll] = useState(false);
-  const [rename, setRename] = useState(true);
+  const [ownRename, setOwnRename] = useState(true);
   const [importing, setImporting] = useState(false);
+
+  const choices = choicesProp ?? ownChoices;
+  const rename = renameProp ?? ownRename;
+  const setChoices = (next: Map<string, Choice>) => {
+    if (choicesProp === undefined) setOwnChoices(next);
+    onChoicesChange?.(next);
+  };
+  const setRename = (next: boolean) => {
+    if (renameProp === undefined) setOwnRename(next);
+    onRenameChange?.(next);
+  };
 
   const effective = (row: ReviewRow): Choice | undefined => choices.get(row.property) ?? row.preselect;
   const set = (updates: [string, Choice][]) => {
@@ -140,6 +174,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
     const editProps = {
       className: 'friendly-review-edit',
       'aria-label': `Custom value for ${row.property}`,
+      disabled,
       placeholder: 'Edit result',
       value: editText,
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set([[row.property, { custom: e.target.value }]]),
@@ -156,7 +191,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
           {entries.map((entry, i) => (
             <div key={i} className="friendly-review-import">
               {entry.name} is not in Obsidian yet.{' '}
-              <button disabled={importing} onClick={() => void runImport(entry)}>
+              <button disabled={importing || disabled} onClick={() => void runImport(entry)}>
                 Import
               </button>
             </div>
@@ -174,6 +209,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
                     key={side}
                     role="radio"
                     aria-checked={choice === side}
+                    disabled={disabled}
                     className={choice === side ? 'is-selected mod-cta' : undefined}
                     onClick={() => set([[row.property, side]])}
                   >
@@ -213,7 +249,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
         <>
           <div className="friendly-review-toolbar">
             {sides.map((side) => (
-              <button key={side} onClick={() => setAll(side)}>
+              <button key={side} disabled={disabled} onClick={() => setAll(side)}>
                 All from {sideLabel(side, serverName)}
               </button>
             ))}
@@ -253,7 +289,7 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
             <input
               type="checkbox"
               checked={canRename && rename}
-              disabled={!canRename}
+              disabled={!canRename || disabled}
               onChange={(e) => setRename(e.target.checked)}
             />{' '}
             {renameTo.folder ? 'Rename folder and note to' : 'Rename note to'} {renameTo.to}
@@ -262,10 +298,11 @@ const SyncReviewContent: React.FC<ContentProps> = ({ input, linkName, onApply, o
         </div>
       ) : null}
       <div className="friendly-review-buttons">
-        <button className="mod-cta" disabled={!ok} onClick={() => onApply(choices, canRename && rename)}>
+        <button className="mod-cta" disabled={!ok || disabled} onClick={() => onApply(choices, canRename && rename)}>
           Apply
         </button>
-        <button onClick={onCancel}>Cancel</button>
+        {onCancel ? <button onClick={onCancel}>Cancel</button> : null}
+        {extraButtons}
         {hint ? <span className="friendly-review-hint">{hint}</span> : null}
       </div>
     </div>
