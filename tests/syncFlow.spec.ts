@@ -6,7 +6,7 @@ import type { Source } from 'src/settings/settings.d';
 import { PushOptions, VCardMeta, VCardRaw } from 'src/sync/adapters/adapter';
 import { AdapterInterface } from 'src/sync/adapters/adapterInterface';
 import { Choice } from 'src/sync/review';
-import { LINKS_LINE, MAX_REOPENS, PHOTO_LINE, REWRITE_LINE, ReviewDecision, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
+import { LINKS_LINE, MAX_REOPENS, PHOTO_LINE, REWRITE_LINE, ReviewDecision, prepareRound, ReviewRequest, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
 import { SyncState, SyncStateEntry } from 'src/sync/syncState';
 import { AppHttpResponse } from 'src/util/platformHttpClient';
 import { cleanUid } from 'src/util/vcard';
@@ -961,5 +961,90 @@ describe('syncFlow: a damaged photo in the note', () => {
     await t.run();
     expect(t.requests).toHaveLength(1);
     expect(t.requests[0].photoLine).toBeUndefined();
+  });
+});
+
+describe('prepareRound / commit', () => {
+  const apply = { kind: 'apply', choices: new Map<string, Choice>(), rename: true } as const;
+
+  it('an up-to-date note ends the round at prepare and writes nothing', async () => {
+    const t = setup({ local: { ...JAN, source: 'Radicale' } });
+    t.radicale.seed(card());
+    const round = await prepareRound(t.deps);
+    expect(round).toEqual({ kind: 'end', result: { kind: 'upToDate', plan: { kind: 'sync', sourceId: 'radicale' } } });
+    expect(t.requests).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(pushCount(t)).toBe(0);
+    expect(t.settles).toHaveLength(1);
+  });
+
+  it('a changed mobile gives a review request; nothing is written until commit', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    const round = await prepareRound(t.deps);
+    if (round.kind !== 'review') throw new Error(`expected a review, got ${round.kind}`);
+    expect(round.request.title).toBe('Jan de Vries');
+    expect(t.requests).toEqual([]); // prepareRound does not show the screen itself
+    expect(pushCount(t)).toBe(0);
+    expect(t.note.writes).toEqual([]);
+    expect(t.settles).toHaveLength(0);
+    await round.discard();
+  });
+
+  it('commit applies, returns the result and settles once', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    const href = t.radicale.seed(card());
+    const round = await prepareRound(t.deps);
+    if (round.kind !== 'review') throw new Error('expected a review');
+    expect(await round.commit(apply)).toEqual({ kind: 'end', result: { kind: 'done', plan: { kind: 'sync', sourceId: 'radicale' }, outcome: 'pushed' } });
+    expect(t.radicale.cards.get(href)!.raw).toContain('TEL;TYPE=CELL:06-2');
+    expect(t.settles).toHaveLength(1);
+    expect(t.notices).toEqual(['Jan de Vries: sent to the server (Radicale).']);
+  });
+
+  it('a note edited between prepare and commit is stale; nothing is pushed', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    const round = await prepareRound(t.deps);
+    if (round.kind !== 'review') throw new Error('expected a review');
+    t.note.frontmatter.mobile = '06-3';
+    expect(await round.commit(apply)).toEqual({ kind: 'stale', reason: 'note' });
+    expect(pushCount(t)).toBe(0);
+    expect(t.settles).toHaveLength(1);
+  });
+
+  it('discard settles once however often it is called, and writes nothing', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    const round = await prepareRound(t.deps);
+    if (round.kind !== 'review') throw new Error('expected a review');
+    await round.discard();
+    await round.discard();
+    expect(t.settles).toHaveLength(1);
+    expect(pushCount(t)).toBe(0);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('commit after discard (or twice) is a no-op that settles nothing more', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    const round = await prepareRound(t.deps);
+    if (round.kind !== 'review') throw new Error('expected a review');
+    await round.discard();
+    await round.commit(apply);
+    expect(t.settles).toHaveLength(1);
+    expect(pushCount(t)).toBe(0);
+  });
+
+  it('an exception while preparing still settles before it propagates', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
+    t.radicale.seed(card());
+    Object.defineProperty(t.deps, 'noteLinks', {
+      get() {
+        throw new Error('boom'); // read after the lookups are open, inside prepare
+      },
+    });
+    await expect(prepareRound(t.deps)).rejects.toThrow('boom');
+    expect(t.settles).toHaveLength(1);
   });
 });

@@ -123,18 +123,46 @@ const OUTCOME_TEXT: Record<Exclude<SyncOutcome, 'failed'>, string> = {
   created: 'created on the server',
 };
 
-type Round =
+export type CommitResult = { kind: 'end'; result: FlowResult } | { kind: 'stale'; reason: 'note' | 'server' };
+
+export type PreparedRound =
   | { kind: 'end'; result: FlowResult }
-  | { kind: 'stale'; reason: 'note' | 'server' }
-  | { kind: 'reopen' };
+  | {
+      kind: 'review';
+      request: ReviewRequest;
+      /** Apply with these choices: the move re-check, applySync, Notices; settles the lookups. */
+      commit(decision: Extract<ReviewDecision, { kind: 'apply' }>): Promise<CommitResult>;
+      /** Settles the lookups without writing (Cancel, Import, or a scan that only looks). */
+      discard(): Promise<void>;
+    };
+
+/** A prepared round that also knows the plan, so a cancelled `syncFlow` can report it. */
+type OpenRound = Exclude<PreparedRound, { kind: 'end' }> & { plan: SyncPlan };
 
 export async function syncFlow(deps: SyncFlowDeps): Promise<FlowResult> {
   let stale = 0;
   for (;;) {
-    const round = await syncRound(deps);
+    const round = await openRound(deps);
     if (round.kind === 'end') return round.result;
-    if (round.kind === 'reopen') continue;
-    deps.notify(round.reason === 'server' ? `${deps.name} changed on the server meanwhile` : `${deps.name} changed while reviewing`);
+    const { request } = round;
+    let decision: ReviewDecision;
+    try {
+      decision = await deps.review(request);
+    } catch (error) {
+      await round.discard();
+      throw error;
+    }
+    if (decision.kind === 'cancel') {
+      await round.discard();
+      return { kind: 'cancelled', plan: round.plan };
+    }
+    if (decision.kind === 'reopen') {
+      await round.discard();
+      continue;
+    }
+    const committed = await round.commit(decision);
+    if (committed.kind === 'end') return committed.result;
+    deps.notify(committed.reason === 'server' ? `${deps.name} changed on the server meanwhile` : `${deps.name} changed while reviewing`);
     if (++stale > MAX_REOPENS) {
       deps.notify(`${deps.name} keeps changing; nothing was synced. Try again later.`);
       return { kind: 'gaveUp' };
@@ -214,8 +242,20 @@ async function chooseSource(
   }
 }
 
-async function syncRound(deps: SyncFlowDeps): Promise<Round> {
-  const end = (result: FlowResult): Round => ({ kind: 'end', result });
+/**
+ * The first half of a round: the book choice, prepare, and the review request. Ends the round itself when there
+ * is nothing to review (refused, failed, up to date). Otherwise the caller shows the request and then calls
+ * `commit` (Apply) or `discard`; either settles the relation lookups, once.
+ */
+export async function prepareRound(deps: SyncFlowDeps): Promise<PreparedRound> {
+  const round = await openRound(deps);
+  if (round.kind === 'end') return round;
+  const { commit, discard, request } = round;
+  return { kind: 'review', request, commit, discard };
+}
+
+async function openRound(deps: SyncFlowDeps): Promise<{ kind: 'end'; result: FlowResult } | OpenRound> {
+  const end = (result: FlowResult): { kind: 'end'; result: FlowResult } => ({ kind: 'end', result });
   // Read once: prepare works from the same frontmatter the book was chosen with, so a change in between (say a
   // new `source:`) is seen by Apply's staleness check instead of being synced to the wrong book.
   const frontmatter = await deps.note.readFrontmatter();
@@ -231,8 +271,13 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
   const { target, plan, move } = where;
 
   const contexts = await deps.contexts();
+  // UIDs given to linked contact notes while Apply built the card are written (or reported) before going on.
+  let settling: Promise<void> | undefined;
+  const settle = () => (settling ??= contexts.settle());
+  let prepared: Awaited<ReturnType<typeof prepareSync>>;
+  let syncDeps: SyncDeps;
   try {
-    const syncDeps: SyncDeps = {
+    syncDeps = {
       adapter: deps.adapterFor(target),
       state: deps.stateFor(target.id),
       rows: deps.rows,
@@ -244,50 +289,57 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
     if (newCardVersion) syncDeps.newCardVersion = () => newCardVersion(target);
     if (noteLinks) syncDeps.noteLinks = noteLinks;
     const moveFrom = move && { from: move.location, adapter: deps.adapterFor(move.from), state: deps.stateFor(move.from.id) };
-    const prepared = await prepareSync(deps.note, syncDeps, { sourceId: target.id, move: moveFrom, frontmatter });
+    prepared = await prepareSync(deps.note, syncDeps, { sourceId: target.id, move: moveFrom, frontmatter });
     if (prepared.kind === 'failed') {
       deps.notify(`Sync failed: ${prepared.message}`);
+      await settle();
       return end({ kind: 'failed', message: prepared.message });
     }
     if (prepared.kind === 'upToDate') {
       deps.notify('Up to date');
+      await settle();
       return end({ kind: 'upToDate', plan });
     }
+  } catch (error) {
+    await settle();
+    throw error;
+  }
 
-    const review = prepared.prepared;
-    const server = review.server?.friendly.props ?? {};
-    const result = (choices: Map<string, Choice>) => resultProps(review.rows, choices, server);
-    // While conflicts are open, "Also changes" and the rename preview keep the note's value for them.
-    const preview = (choices: Map<string, Choice>) => result(previewChoices(review.rows, choices));
-    const renameTo = (choices: Map<string, Choice>): RenameOffer | undefined => {
-      // A name changed since the last Sync on either side (against the base; without one, the note's values)
-      // renames; a note renamed by hand with unchanged names is left alone, and a declined rename is not offered
-      // again (the base then holds the new name). A part the base was read without (a prefix that only became
-      // visible) counts with its value in the base: no change, so no rename (`nameBase`).
-      const to = renameTarget(review.nameBase ?? review.base ?? review.local, preview(choices), deps.rows);
-      if (to === undefined || to === deps.name) return undefined;
-      const offer: RenameOffer = deps.renamesFolder ? { to, folder: true } : { to };
-      const blocked = deps.renameBlocked(to);
-      return blocked === undefined ? offer : { ...offer, blocked };
-    };
-    const { mirror } = deps;
-    const sourceName = sourceNameIn(deps.sources);
-    const decision = await deps.review({
-      title: review.server ? deps.name : `New card in ${target.name}`,
-      moveLine: move ? `Address book: ${move.from.name} -> ${target.name}` : undefined,
-      rewriteLine: review.rewriteRelations ? REWRITE_LINE : undefined,
-      linksLine: review.rewriteLinks ? LINKS_LINE : undefined,
-      photoLine: review.damagedNotePhoto ? PHOTO_LINE : undefined,
-      serverName: (move?.from ?? target).name,
-      warnings: (contexts.unreadable ?? []).map(
-        (id) => `Could not read ${sourceName(id)}; relationships to people only in that address book may show as changed.`,
-      ),
-      prepared: review,
-      also: (choices) => (mirror ? alsoChanges(deps.path, review.local, preview(choices), deps.rows, mirror, mirror.nameOf) : []),
-      rename: renameTo,
-    });
-    if (decision.kind === 'cancel') return end({ kind: 'cancelled', plan });
-    if (decision.kind === 'reopen') return { kind: 'reopen' };
+  const review = prepared.prepared;
+  const server = review.server?.friendly.props ?? {};
+  const result = (choices: Map<string, Choice>) => resultProps(review.rows, choices, server);
+  // While conflicts are open, "Also changes" and the rename preview keep the note's value for them.
+  const preview = (choices: Map<string, Choice>) => result(previewChoices(review.rows, choices));
+  const renameTo = (choices: Map<string, Choice>): RenameOffer | undefined => {
+    // A name changed since the last Sync on either side (against the base; without one, the note's values)
+    // renames; a note renamed by hand with unchanged names is left alone, and a declined rename is not offered
+    // again (the base then holds the new name). A part the base was read without (a prefix that only became
+    // visible) counts with its value in the base: no change, so no rename (`nameBase`).
+    const to = renameTarget(review.nameBase ?? review.base ?? review.local, preview(choices), deps.rows);
+    if (to === undefined || to === deps.name) return undefined;
+    const offer: RenameOffer = deps.renamesFolder ? { to, folder: true } : { to };
+    const blocked = deps.renameBlocked(to);
+    return blocked === undefined ? offer : { ...offer, blocked };
+  };
+  const { mirror } = deps;
+  const sourceName = sourceNameIn(deps.sources);
+  const request: ReviewRequest = {
+    title: review.server ? deps.name : `New card in ${target.name}`,
+    moveLine: move ? `Address book: ${move.from.name} -> ${target.name}` : undefined,
+    rewriteLine: review.rewriteRelations ? REWRITE_LINE : undefined,
+    linksLine: review.rewriteLinks ? LINKS_LINE : undefined,
+    photoLine: review.damagedNotePhoto ? PHOTO_LINE : undefined,
+    serverName: (move?.from ?? target).name,
+    warnings: (contexts.unreadable ?? []).map(
+      (id) => `Could not read ${sourceName(id)}; relationships to people only in that address book may show as changed.`,
+    ),
+    prepared: review,
+    also: (choices) => (mirror ? alsoChanges(deps.path, review.local, preview(choices), deps.rows, mirror, mirror.nameOf) : []),
+    rename: renameTo,
+  };
+
+  const commitNow = async (decision: Extract<ReviewDecision, { kind: 'apply' }>): Promise<CommitResult> => {
+    const end = (result: FlowResult): CommitResult => ({ kind: 'end', result });
     if (!canApply(review.rows, decision.choices)) {
       // The screen keeps Apply disabled until every conflict is decided; getting here is a bug.
       const message = 'a conflict was not decided (a bug in the review screen); nothing was written';
@@ -344,8 +396,23 @@ async function syncRound(deps: SyncFlowDeps): Promise<Round> {
             : { kind: 'done', plan, outcome: applied.outcome, oldKept: applied.oldKept },
         );
     }
-  } finally {
-    // UIDs given to linked contact notes while Apply built the card are written (or reported) before going on.
-    await contexts.settle();
-  }
+  };
+
+  // The first of commit and discard wins; later calls resolve without doing anything more.
+  let committing: Promise<CommitResult> | undefined;
+  let discarded = false;
+  const commit = (decision: Extract<ReviewDecision, { kind: 'apply' }>): Promise<CommitResult> => {
+    if (discarded) return Promise.resolve({ kind: 'end', result: { kind: 'cancelled', plan } });
+    committing ??= commitNow(decision).finally(settle);
+    return committing;
+  };
+  const discard = async (): Promise<void> => {
+    if (committing) {
+      await committing.catch(() => undefined);
+      return;
+    }
+    discarded = true;
+    await settle();
+  };
+  return { kind: 'review', request, commit, discard, plan };
 }
