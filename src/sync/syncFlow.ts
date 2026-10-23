@@ -4,7 +4,7 @@
  * address books, the review screen and the Notices come in through `SyncFlowDeps` (wired in src/sync/sync.ts).
  */
 
-import { MappingRow } from '../contacts/friendly/mapping';
+import { MappingRow, syncTurnedOff } from '../contacts/friendly/mapping';
 import { coerceNoteProps } from '../contacts/friendly/merge';
 import type { NoteLinkOptions } from '../contacts/friendly/noteLinks';
 import { RelationContext } from '../contacts/friendly/relations';
@@ -167,6 +167,7 @@ async function chooseSource(
 ): Promise<Where | { refused: string } | { failed: string }> {
   const { active, sources } = deps;
   if (active.length === 0) return { refused: 'Sync is not set up' };
+  if (syncTurnedOff(frontmatter)) return { refused: 'sync: false is set in this note' };
   const uidValue = coerceNoteProps(frontmatter, deps.rows).props.uid;
   const uid = typeof uidValue === 'string' ? uidValue.trim() : '';
   const named = sourceProperty(frontmatter);

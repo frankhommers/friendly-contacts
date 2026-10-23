@@ -175,6 +175,16 @@ function setup(opts: { local?: Record<string, unknown>; books?: Book[]; defaultS
 const pushCount = (t: ReturnType<typeof setup>) => t.books.reduce((n, b) => n + b.pushes.length, 0);
 
 describe('syncFlow: which address book', () => {
+  it('sync: false refuses before anything is looked up or written', async () => {
+    const t = setup({ local: { ...JAN, mobile: '06-2', sync: false } });
+    t.radicale.seed(card());
+    const result = await t.run();
+    expect(result).toEqual({ kind: 'refused', message: 'sync: false is set in this note' });
+    expect(t.notices).toEqual(['Not syncing Jan de Vries: sync: false is set in this note.']);
+    expect(t.requests).toEqual([]);
+    expect(pushCount(t)).toBe(0);
+  });
+
   it('sync: the card is in the note\'s book; Apply writes the card, then the note with source:', async () => {
     const t = setup({ local: { ...JAN, mobile: '06-2', source: 'Radicale' } });
     const href = t.radicale.seed(card());

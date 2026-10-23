@@ -16,6 +16,7 @@ import {
   rowForLine,
   rowForProperty,
   renameRow,
+  syncTurnedOff,
   validateMapping,
   writeKeyFor,
   writeLabel,
@@ -141,6 +142,22 @@ describe('friendly mapping', () => {
     expect(errors.some((e) => e.includes('TEL') && e.includes('vCard'))).toBe(true);
     expect(errors.some((e) => e.includes('TEL[CELL'))).toBe(true);
   });
+
+  it.each([
+    [false, true],
+    ['False', true],
+    [' false ', true],
+    [true, false],
+    [undefined, false],
+    ['no', false],
+  ])('syncTurnedOff(sync: %j) is %s', (value, off) =>
+    expect(syncTurnedOff(value === undefined ? {} : { sync: value })).toBe(off),
+  );
+
+  it('a row named sync is refused', () =>
+    expect(
+      validateMapping([...DEFAULT_MAPPING, { kind: 'field', property: 'sync', read: ['X-SYNC'], write: 'X-SYNC' }]),
+    ).toContain('`sync` is reserved for turning Sync off for a note.'));
 
   it('source is reserved', () => {
     const rows: MappingRow[] = [

@@ -441,6 +441,15 @@ export const FIXED_PROPERTIES = ['uid', 'name', 'photo'] as const;
 /** The note property that names the address book; set by the plugin, never read from or written to a card. */
 export const RESERVED_PROPERTY = 'source';
 
+/** The note property that turns Sync off for a note: `sync: false`. Reserved like `source`. */
+export const SYNC_OFF_PROPERTY = 'sync';
+
+/** True when the note says `sync: false` (a boolean, or the text "false" in any case). */
+export function syncTurnedOff(frontmatter: Record<string, unknown>): boolean {
+  const value = frontmatter[SYNC_OFF_PROPERTY];
+  return value === false || (typeof value === 'string' && value.trim().toLowerCase() === 'false');
+}
+
 export function isFixedProperty(property: string): boolean {
   return (FIXED_PROPERTIES as readonly string[]).includes(property);
 }
@@ -498,6 +507,7 @@ export function validateMapping(rows: MappingRow[]): string[] {
     const key = row.property.trim();
     if (key === '') errors.push('A property name is empty.');
     if (key === RESERVED_PROPERTY) errors.push('`source` is reserved for the address book.');
+    if (key === SYNC_OFF_PROPERTY) errors.push('`sync` is reserved for turning Sync off for a note.');
     if (seen.has(key)) errors.push(`Duplicate property name: ${key}`);
     seen.add(key);
     // Friendly names are lower-case; only the upper-case spelling collides with a vCard key in old-style notes.
