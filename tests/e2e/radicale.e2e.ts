@@ -31,7 +31,8 @@ import { moveCard } from 'src/sync/moveCard';
 import { canApply, Choice } from 'src/sync/review';
 import { importCandidates, newCardVersion, SyncPlan } from 'src/sync/sources';
 import { NoteIO, SyncOutcome } from 'src/sync/syncContact';
-import { FlowResult, LINKS_LINE, syncFlow } from 'src/sync/syncFlow';
+import { FlowResult, LINKS_LINE, syncFlow, SyncFlowDeps } from 'src/sync/syncFlow';
+import { CHANGED_SINCE_SCAN, SyncAll } from 'src/sync/syncAll';
 import { createSyncState, FileStore, SyncState } from 'src/sync/syncState';
 import { cleanUid } from 'src/util/vcard';
 import { readVcfFixture } from 'tests/fixtures/fixtures';
@@ -298,9 +299,19 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   /** The rows Sync and import read with; a test that changes the settings puts them back. */
   let mapping: MappingRow[] = DEFAULT_MAPPING;
 
-  /** The real adapter, counting PUTs. */
+  /** Every UID asked of a book through `getMetaByUid` (a request to the server each). */
+  const uidLookups: string[] = [];
+  const countedLookups = (inner: AdapterInterface): AdapterInterface => ({
+    ...inner,
+    getMetaByUid: (uid) => {
+      uidLookups.push(uid);
+      return inner.getMetaByUid(uid);
+    },
+  });
+
+  /** The real adapter, counting PUTs and UID lookups. */
   const counting: AdapterInterface = {
-    ...adapter,
+    ...countedLookups(adapter),
     push: (vcard, opts) => {
       pushes.push(vcard.raw);
       return adapter.push(vcard, opts);
@@ -325,9 +336,35 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     notices.length = 0;
     rewriteLine = undefined;
     linksLine = undefined;
+    const sources = bookList.map((b) => b.source);
+    return syncFlow(
+      await flowDepsFor(note, {
+        notify: (msg) => void notices.push(msg),
+        review: async (request) => {
+          const { rows } = request.prepared;
+          rewriteLine = request.rewriteLine;
+          linksLine = request.linksLine;
+          // The server column is labelled with an address book's name, never a fixed server name.
+          expect(sources.map((s) => s.name)).toContain(request.serverName);
+          const picked =
+            typeof choices === 'string'
+              ? new Map(rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, choices as Choice]))
+              : new Map(Object.entries(choices));
+          expect(canApply(rows, picked), `undecided: ${rows.filter((r) => r.changed && r.preselect === undefined).map((r) => r.property)}`).toBe(true);
+          return { kind: 'apply', choices: picked, rename: false };
+        },
+      }),
+    );
+  }
+
+  /** The flow deps for one note, as src/sync/sync.ts builds them; `over` is what differs per caller. */
+  async function flowDepsFor(
+    note: Note,
+    over: { notify(message: string): void; review?: SyncFlowDeps['review'] },
+  ): Promise<SyncFlowDeps> {
     const lookups = await relationContext(adapter, notes, paths);
     const sources = bookList.map((b) => b.source);
-    return syncFlow({
+    return {
       note: note.io,
       path: `Contacts/${String(note.frontmatter.name)}.md`,
       name: String(note.frontmatter.name),
@@ -335,24 +372,12 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       sources,
       active: sources,
       defaultSource: 'radicale',
-      adapterFor: (source) => (source.id === 'radicale' ? counting : bookOf(source.id).adapter),
+      adapterFor: (source) => (source.id === 'radicale' ? counting : countedLookups(bookOf(source.id).adapter)),
       stateFor: (id) => bookOf(id).state,
       contexts: async () => ({ ctx: lookups, readOnlyCtx: lookups, settle: async () => {} }), // these lookups never write
-      review: async (request) => {
-        const { rows } = request.prepared;
-        rewriteLine = request.rewriteLine;
-        linksLine = request.linksLine;
-        // The server column is labelled with an address book's name, never a fixed server name.
-        expect(sources.map((s) => s.name)).toContain(request.serverName);
-        const picked =
-          typeof choices === 'string'
-            ? new Map(rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, choices as Choice]))
-            : new Map(Object.entries(choices));
-        expect(canApply(rows, picked), `undecided: ${rows.filter((r) => r.changed && r.preselect === undefined).map((r) => r.property)}`).toBe(true);
-        return { kind: 'apply', choices: picked, rename: false };
-      },
+      review: over.review ?? (async () => ({ kind: 'cancel' })),
       ...(noteLinks ? { noteLinks } : {}),
-      notify: (msg) => void notices.push(msg),
+      notify: over.notify,
       renameBlocked: () => undefined,
       // As src/sync/sync.ts: the setting, else what most cards in the book's listing are.
       newCardVersion: async (source) => {
@@ -360,7 +385,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
         if (!Array.isArray(metas)) throw new Error(`getMetaList failed: ${metas.errorMessage}`);
         return newCardVersion(source, metas.map((meta) => meta.version));
       },
-    });
+    };
   }
 
   /** The outcome of one Sync; 'unchanged' when the note is up to date. */
@@ -1341,5 +1366,96 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(pushes[0].replace(/\r\n[ \t]/g, '').match(/^PHOTO.*$/gm)).toEqual([`PHOTO:${other}`]);
     expect(await sync(note)).toBe('unchanged');
     expect(note.frontmatter.photo).toBe(other);
+  });
+
+  it('26. Sync all: scan, apply all that are ready, a new card only on its own, a note changed after the scan', async () => {
+    const cardOf = (uid: string, first: string, extra = '') =>
+      SEM_CARD.replace(SEM_UID, uid).replace(/Sem/g, first).replace('END:VCARD', `${extra}END:VCARD`);
+    const tel = (value: string) => `TEL;TYPE=CELL:${value}\r\n`;
+    const uidOf = (n: number) => `C0FFEE00-0000-4000-8000-0000000002${n}0`;
+
+    // Jos: changed on the server. Pim: up to date. Ans: her note is changed (and again after the scan).
+    const josHref = `${BOOK}scan-jos.vcf`;
+    await putCard(josHref, cardOf(uidOf(60), 'Jos'));
+    await putCard(`${BOOK}scan-pim.vcf`, cardOf(uidOf(61), 'Pim'));
+    await putCard(`${BOOK}scan-ans.vcf`, cardOf(uidOf(62), 'Ans'));
+    const jos = await importCard(josHref);
+    const pim = await importCard(`${BOOK}scan-pim.vcf`);
+    const ans = await importCard(`${BOOK}scan-ans.vcf`);
+    for (const n of [jos, pim, ans]) expect(await sync(n)).toBe('unchanged');
+    await putCard(josHref, cardOf(uidOf(60), 'Jos', tel('06-11111111')));
+    ans.frontmatter.mobile = '06-33333333';
+    // Nieuw: no card yet.
+    const nieuw = memoryNote({ name: 'Nieuw de Vries', firstname: 'Nieuw', lastname: 'de Vries', mobile: '06-22222222' });
+    // Ada: no source:, no base on this device, her card is only in the second book, and it changed.
+    const adaUid = uidOf(63);
+    const adaCard = cardOf(adaUid, 'Ada');
+    await putCard(`${FAMILY}scan-ada.vcf`, adaCard);
+    const ada = memoryNote(toFriendly(parseCard(adaCard), mapping, await relationContext(adapter, notes, paths)).props);
+    expect(ada.frontmatter.source).toBeUndefined();
+    expect(await family.state.get(adaUid)).toBeUndefined();
+    expect(await state.get(adaUid)).toBeUndefined();
+    await putCard(`${FAMILY}scan-ada.vcf`, cardOf(adaUid, 'Ada', tel('06-44444444')));
+
+    const all = [jos, pim, ans, nieuw, ada];
+    const pathOf = (n: Note) => `Contacts/${String(n.frontmatter.name)}.md`;
+    const syncAll = new SyncAll({
+      notes: () => all.map((n) => ({ path: pathOf(n), name: String(n.frontmatter.name) })),
+      flowDeps: async (path, over) => flowDepsFor(all.find((n) => pathOf(n) === path)!, over),
+      lock: () => () => {},
+    });
+    const item = (n: Note) => syncAll.state.items.find((i) => i.path === pathOf(n))!;
+    const cards = await cardCount();
+    const pietBase = await state.get(uidOf(61));
+
+    uidLookups.length = 0;
+    await syncAll.scan();
+    // The scan reads each book's listing once; it asks the server for no single UID.
+    expect(uidLookups).toEqual([]);
+    expect(item(jos)).toMatchObject({ kind: 'review', badges: ['server'] });
+    expect(item(nieuw)).toMatchObject({ kind: 'review', badges: ['newCard'] });
+    expect(item(pim)).toMatchObject({ kind: 'upToDate' });
+    expect(item(ans)).toMatchObject({ kind: 'review', badges: ['obsidian'] });
+    // Ada has no base to compare with, so her phone number is a conflict to decide: not ready for Apply all.
+    expect(item(ada)).toMatchObject({ kind: 'review', badges: ['conflict'] });
+    // Nothing was written by the scan.
+    expect(await cardCount()).toBe(cards);
+    expect(jos.frontmatter.mobile).toBeUndefined();
+    expect(await state.get(uidOf(61))).toEqual(pietBase);
+
+    // The owner changes Ans again after the scan.
+    ans.frontmatter.mobile = '06-55555555';
+    const ansCard = await serverCard(`${BOOK}scan-ans.vcf`);
+    expect(syncAll.readyPaths()).toEqual([pathOf(ans), pathOf(jos)].sort());
+    const counts = await syncAll.applyAllReady();
+    expect(counts).toEqual({ applied: 1, changed: 1, failed: 0 });
+    expect(jos.frontmatter.mobile).toBe('06-11111111');
+    expect(item(jos).kind).toBe('done');
+    expect(await cardCount()).toBe(cards);
+    expect(item(nieuw).kind).toBe('review');
+    expect(nieuw.frontmatter.uid).toBeUndefined();
+    expect(item(ans)).toMatchObject({ kind: 'review', messages: [CHANGED_SINCE_SCAN] });
+    expect(await serverCard(`${BOOK}scan-ans.vcf`)).toBe(ansCard);
+
+    // A new card is created only on its own Apply.
+    await syncAll.apply(pathOf(nieuw));
+    expect(item(nieuw).kind).toBe('done');
+    expect(await cardCount()).toBe(cards + 1);
+    expect(typeof nieuw.frontmatter.uid).toBe('string');
+    expect(await state.get(String(nieuw.frontmatter.uid))).toBeDefined();
+
+    // Ada's card is in the second book: the listing and the real lookup agree, so her Apply goes through.
+    const adaItem = item(ada);
+    if (adaItem.kind !== 'review') throw new Error('Ada is not listed');
+    syncAll.setChoices(pathOf(ada), new Map(adaItem.request.prepared.rows.filter((r) => r.changed && r.preselect === undefined).map((r) => [r.property, 'server' as Choice])));
+    await syncAll.apply(pathOf(ada));
+    expect(item(ada).kind).toBe('done');
+    expect(ada.frontmatter.mobile).toBe('06-44444444');
+    expect((await family.state.get(adaUid))?.href).toBe(`${FAMILY}scan-ada.vcf`);
+    expect(await state.get(adaUid)).toBeUndefined();
+
+    // A fresh scan lists nothing but Ans, whose note changed after the scan.
+    await syncAll.scan();
+    expect(syncAll.state.items.filter((i) => i.kind !== 'upToDate').map((i) => i.path)).toEqual([pathOf(ans)]);
   });
 });

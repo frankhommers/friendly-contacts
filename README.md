@@ -681,6 +681,24 @@ Some things come with a choice:
 
 If the card changed on the server since the screen opened, Apply tells you and the screen opens again with the new values.
 
+#### Sync all contacts
+
+To see every contact that differs from its card at once, run the command **Sync all contacts** or click the **Sync all contacts** icon (two arrows in a circle) in the sidebar's top bar. A tab opens and looks at all your contact notes. Nothing is written while it looks; it only reads the address books.
+
+The list on the left holds the contacts that differ, the review of the selected one is on the right, the same screen as **Sync this contact**. A badge on each contact says what Apply would do: **Conflict** (you still have to choose), **From <address book>** (values come from the server), **From Obsidian** (values go to the server) and **New card** (the contact has no card yet). Contacts that are the same on both sides are not listed; the top of the tab says how many there are. **Previous** and **Next** (or the arrow keys in the list) move through the contacts.
+
+- **Apply** applies the selected contact with the choices you made, just like Apply in the review of **Sync this contact**.
+- **Apply all that are ready** applies every contact that has no open conflict, one after another, with the choices the review preselected. The number in the button is how many that are. Contacts with a conflict you did not decide, and **New card** contacts, are skipped: a new card is only created when you click **Apply** on that contact itself.
+- If a note or its card changed after the scan, Apply does not write anything. The contact stays in the list with the line "Changed since the scan; check it again." and the new values, so you decide again.
+- **Scan again** reads everything anew.
+- Contacts that cannot be synced now (for example a note that still needs **Convert**, or a Sync of that contact that is open) are listed under **Cannot be synced**, with the reason.
+
+Cards that are only on the server are not listed here; bring them in with the Import panel.
+
+#### Turning Sync off for a note: `sync: false`
+
+Put `sync: false` in a note's properties and that note is never synced. **Sync all contacts** leaves it out, and **Sync this contact** says "Not syncing <name>: sync: false is set in this note." The text `false` in any case works too. Remove the property (or set it to `true`) to sync the note again.
+
 ---
 
 ## 🔧 Development
