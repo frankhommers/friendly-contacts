@@ -23,7 +23,9 @@ in the contacts sidebar. Layout B:
 - Under the right side: **Apply** (this contact), **Previous**, **Next**.
 - At the bottom: "<n> of <m> done" and **Apply all that are ready**: applies every listed contact whose choices are all
   made (no open conflict), each with the choices currently shown for it (preselections plus anything the owner changed)
-  and its rename offer as currently ticked. Contacts with an open conflict are skipped and stay in the list.
+  and its rename offer as currently ticked. Contacts with an open conflict are skipped and stay in the list. **New
+  cards are skipped too**: a note that was never synced is only sent with its own Apply (owner agreed: creating many
+  cards on the phone in one click is the one thing that is hard to undo). The count on the button excludes them.
 - A contact that was applied is ticked off (greyed, struck through) and stays in the list until the next scan.
 - Everything is shown, including differences Sync is sure about (owner: "Alles").
 
