@@ -24,6 +24,7 @@ async function bundleOf(entry: string): Promise<{ inputs: string[]; external: st
 describe('the sync core, the layout model and relationship editing load without Obsidian', () => {
   for (const entry of [
     'src/sync/syncFlow.ts',
+    'src/sync/syncAll.ts',
     'src/sync/reviewExtras.ts',
     'src/sync/review.ts',
     'src/sync/reviewDisplay.ts',
