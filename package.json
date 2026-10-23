@@ -1,6 +1,6 @@
 {
 	"name": "friendly-contacts",
-	"version": "3.0.0-alpha.13",
+	"version": "3.0.0-alpha.14",
 	"description": "Effortlessly manage, organize, and interact with your contacts inside Obsidian. Import, export, and structure vCard (VCF) files seamlessly while keeping all contact details accessible in your knowledge base. Includes click-to-call, right-click copy, structured metadata, and more!",
 	"main": "main.js",
 	"scripts": {
