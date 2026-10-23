@@ -683,14 +683,15 @@ If the card changed on the server since the screen opened, Apply tells you and t
 
 #### Sync all contacts
 
-To see every contact that differs from its card at once, run the command **Sync all contacts** or click the **Sync all contacts** icon (two arrows in a circle) in the sidebar's top bar. A tab opens and looks at all your contact notes. Nothing is written while it looks; it only reads the address books.
+To see every contact that differs from its card at once, run the command **Sync all contacts** or click the **Sync all contacts** icon (two arrows in a circle) in the sidebar's top bar. The button is only there when an address book is set up. A tab opens and looks at all your contact notes. It does not change any note or card. (Like **Sync this contact**, it does remember the card when the note and the card already agree.)
 
 The list on the left holds the contacts that differ, the review of the selected one is on the right, the same screen as **Sync this contact**. A badge on each contact says what Apply would do: **Conflict** (you still have to choose), **From <address book>** (values come from the server), **From Obsidian** (values go to the server) and **New card** (the contact has no card yet). Contacts that are the same on both sides are not listed; the top of the tab says how many there are. **Previous** and **Next** (or the arrow keys in the list) move through the contacts.
 
 - **Apply** applies the selected contact with the choices you made, just like Apply in the review of **Sync this contact**.
-- **Apply all that are ready** applies every contact that has no open conflict, one after another, with the choices the review preselected. The number in the button is how many that are. Contacts with a conflict you did not decide, and **New card** contacts, are skipped: a new card is only created when you click **Apply** on that contact itself.
+- **Apply all that are ready** applies every ready contact, one after another, with the choices shown for each one: the preselected values plus any you changed, and the rename box as it is ticked (ticked by default). It does all that Apply does in **Sync this contact**: it renames the note or folder when that is offered, writes the "Also changes" into the related notes, and moves cards to another address book. The number in the button is how many contacts are ready. It skips contacts with a conflict you did not decide, **New card** contacts, and contacts with a warning (badge **Check warning**, for example an address book that could not be read). Apply those one by one with **Apply**; a new card is only created that way.
 - If a note or its card changed after the scan, Apply does not write anything. The contact stays in the list with the line "Changed since the scan; check it again." and the new values, so you decide again.
-- **Scan again** reads everything anew.
+- **Scan again** reads everything anew. Running the command or clicking the button again while the tab is open also scans again. Closing the tab stops the scan.
+- If Apply cannot be done (for example the server cannot be reached), the contact stays in the list with your choices and a line "Not applied: <reason>".
 - Contacts that cannot be synced now (for example a note that still needs **Convert**, or a Sync of that contact that is open) are listed under **Cannot be synced**, with the reason.
 
 Cards that are only on the server are not listed here; bring them in with the Import panel.

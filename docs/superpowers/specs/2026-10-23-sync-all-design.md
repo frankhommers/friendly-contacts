@@ -25,7 +25,10 @@ in the contacts sidebar. Layout B:
   made (no open conflict), each with the choices currently shown for it (preselections plus anything the owner changed)
   and its rename offer as currently ticked. Contacts with an open conflict are skipped and stay in the list. **New
   cards are skipped too**: a note that was never synced is only sent with its own Apply (owner agreed: creating many
-  cards on the phone in one click is the one thing that is hard to undo). The count on the button excludes them.
+  cards on the phone in one click is the one thing that is hard to undo). Contacts whose review carries a warning (an
+  address book that could not be read) are skipped as well and get a "Check warning" badge; they are applied one by
+  one. The count on the button excludes them. A contact whose Apply fails before writing stays listed with its choices
+  and a "Not applied: <reason>" line.
 - A contact that was applied is ticked off (greyed, struck through) and stays in the list until the next scan.
 - Everything is shown, including differences Sync is sure about (owner: "Alles").
 
