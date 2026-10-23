@@ -2,11 +2,11 @@ import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue } from 'src/contacts/friendly/translate';
 import { ReviewRow } from 'src/sync/review';
-import { badgesOf, listedAdapter, SyncAll, SyncAllDeps } from 'src/sync/syncAll';
-import { REWRITE_LINE, ReviewRequest, SyncFlowDeps } from 'src/sync/syncFlow';
+import { badgesOf, CHANGED_SINCE_SCAN, listedAdapter, sameReview, SyncAll, SyncAllDeps } from 'src/sync/syncAll';
+import { prepareRound, REWRITE_LINE, ReviewRequest, SyncFlowDeps } from 'src/sync/syncFlow';
 import { PreparedSync } from 'src/sync/syncContact';
 import { Book, card, fakeBook, JAN, UID } from 'tests/fakes/syncBooks';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const row = (property: string, preselect: ReviewRow['preselect'], changed = true): ReviewRow => ({
   property,
@@ -77,6 +77,18 @@ describe('listedAdapter', () => {
     expect(book.calls).toEqual({ getMetaList: 1, getMetaByUid: 0 });
   });
 
+  it('an empty uid finds nothing, and a card without a uid is never found', async () => {
+    const book = fakeBook('radicale', 'Radicale');
+    const href = book.seed(card());
+    const listed = listedAdapter({
+      ...book.adapter,
+      getMetaList: async () => [{ href: '/radicale/no-uid.vcf', etag: 'e', lastModified: new Date(), uid: undefined, fn: undefined, n: undefined }],
+    });
+    expect(await listed.getMetaByUid('')).toBeUndefined();
+    expect(await listed.getMetaByUid('  urn:uuid: ')).toBeUndefined();
+    expect(href).toBeDefined();
+  });
+
   it('passes the other methods through', async () => {
     const book = fakeBook('radicale', 'Radicale');
     const href = book.seed(card());
@@ -89,16 +101,10 @@ describe('listedAdapter', () => {
 
 const PIET_UID = '1234ABCD-0000-4000-8000-000000000002';
 const PIET = { name: 'Piet Jansen', firstname: 'Piet', lastname: 'Jansen', mobile: '06-9', uid: PIET_UID };
-const pietCard = [
-  'BEGIN:VCARD',
-  'VERSION:4.0',
-  `UID:${PIET_UID}`,
-  'FN:Piet Jansen',
-  'N:Jansen;Piet;;;',
-  'TEL;TYPE=CELL:06-9',
-  'END:VCARD',
-  '',
-].join('\r\n');
+const pietCard = (mobile = '06-9') =>
+  ['BEGIN:VCARD', 'VERSION:4.0', `UID:${PIET_UID}`, 'FN:Piet Jansen', 'N:Jansen;Piet;;;', `TEL;TYPE=CELL:${mobile}`, 'END:VCARD', ''].join(
+    '\r\n',
+  );
 
 const noRelations: RelationContext = {
   uidToName: () => undefined,
@@ -129,7 +135,11 @@ function setup(opts: { books?: Book[] } = {}) {
       const flow: SyncFlowDeps = {
         note: {
           readFrontmatter: async () => ({ ...frontmatter }),
-          writeProps: async (set: Record<string, FriendlyValue>) => void writes.push(`${path} ${Object.keys(set).join(',')}`),
+          writeProps: async (set: Record<string, FriendlyValue>, remove: string[]) => {
+            writes.push(`${path} ${Object.keys(set).join(',')}`);
+            Object.assign(frontmatter, set);
+            for (const key of remove) delete frontmatter[key];
+          },
           rename: async (to) => {
             writes.push(`${path} -> ${to}`);
             return 'renamed';
@@ -141,7 +151,7 @@ function setup(opts: { books?: Book[] } = {}) {
         sources: books.map((b) => b.source),
         active: books.map((b) => b.source),
         defaultSource: books[0].id,
-        adapterFor: over.adapterFor ?? ((source) => books.find((b) => b.id === source.id)!.adapter),
+        adapterFor: (source) => books.find((b) => b.id === source.id)!.adapter,
         stateFor: (id) => books.find((b) => b.id === id)!.state,
         contexts: async () => ({ ctx: noRelations, readOnlyCtx: noRelations, settle: async () => {} }),
         review: async () => {
@@ -164,7 +174,7 @@ function setup(opts: { books?: Book[] } = {}) {
   };
   radicale.seed(card('06-2'), false);
   radicale.entries.set(UID, { raw: card(), etag: 'old', href: `/radicale/${UID}.vcf` });
-  radicale.seed(pietCard, true, PIET_UID);
+  radicale.seed(pietCard(), true, PIET_UID);
   return { radicale, books, notes, writes, reviews, locks, deps };
 }
 
@@ -286,5 +296,258 @@ describe('SyncAll.scan', () => {
     };
     await new SyncAll(t.deps).scan();
     expect(most).toBe(2);
+  });
+});
+
+describe('SyncAll listeners', () => {
+  it('a listener that throws does not break a scan', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let calls = 0;
+    all.subscribe(() => {
+      calls++;
+      throw new Error('render failed');
+    });
+    await all.scan();
+    expect(all.state).toMatchObject({ scanned: 4, total: 4 });
+    expect(all.state.busy).toBeUndefined();
+    expect(calls).toBe(6);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+});
+
+const JAN_PATH = 'People/Jan de Vries.md';
+const PIET_PATH = 'People/Piet Jansen.md';
+const NIEUW_PATH = 'People/Nieuw.md';
+const ANNA_PATH = 'People/Anna Smit.md';
+const ANNA_UID = '1234ABCD-0000-4000-8000-000000000003';
+const annaCard = (mobile: string) =>
+  ['BEGIN:VCARD', 'VERSION:4.0', `UID:${ANNA_UID}`, 'FN:Anna Smit', 'N:Smit;Anna;;;', `TEL;TYPE=CELL:${mobile}`, 'END:VCARD', ''].join('\r\n');
+
+const itemOf = (all: SyncAll, path: string) => all.state.items.find((i) => i.path === path)!;
+
+/** The flow deps of the setup, for preparing a note directly. */
+async function flowOf(t: ReturnType<typeof setup>, path: string): Promise<SyncFlowDeps> {
+  const deps = await t.deps.flowDeps(path, { notify: () => {} });
+  if ('refused' in deps) throw new Error(deps.refused);
+  return deps;
+}
+
+async function requestOf(t: ReturnType<typeof setup>, path: string): Promise<ReviewRequest> {
+  const round = await prepareRound(await flowOf(t, path));
+  if (round.kind !== 'review') throw new Error(`no review for ${path}`);
+  await round.discard();
+  return round.request;
+}
+
+describe('sameReview', () => {
+  it('two prepares of an unchanged note are the same, also for a new card', async () => {
+    const t = setup();
+    expect(sameReview(await requestOf(t, JAN_PATH), await requestOf(t, JAN_PATH))).toBe(true);
+    expect(sameReview(await requestOf(t, NIEUW_PATH), await requestOf(t, NIEUW_PATH))).toBe(true);
+  });
+
+  it('differs after the note changes', async () => {
+    const t = setup();
+    const before = await requestOf(t, JAN_PATH);
+    t.notes[JAN_PATH].frontmatter.mobile = '06-7';
+    expect(sameReview(before, await requestOf(t, JAN_PATH))).toBe(false);
+  });
+});
+
+describe('SyncAll.apply', () => {
+  it('applies the preselections: the note gets the server value, the item is done with the outcome Notice', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    await all.apply(JAN_PATH);
+    expect(t.notes[JAN_PATH].frontmatter.mobile).toBe('06-2');
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan.kind).toBe('done');
+    expect(jan.kind === 'done' && jan.messages).toContain('Jan de Vries: updated from the server.');
+    expect(t.locks.taken).toBe(t.locks.released);
+    expect(all.state.busy).toBeUndefined();
+  });
+
+  it('applies the choices made: the server keeps the note value', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    all.setChoices(JAN_PATH, new Map([['mobile', 'local']]));
+    await all.apply(JAN_PATH);
+    expect(t.notes[JAN_PATH].frontmatter.mobile).toBe('06-1');
+    expect(t.radicale.cards.get(`/radicale/${UID}.vcf`)!.raw).toContain('TEL;TYPE=CELL:06-1');
+    expect(itemOf(all, JAN_PATH).kind).toBe('done');
+  });
+
+  it('a note edited after the scan is shown again with fresh data, choices reset; nothing written', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    all.setChoices(JAN_PATH, new Map([['mobile', 'server']]));
+    all.setRename(JAN_PATH, false);
+    t.notes[JAN_PATH].frontmatter.mobile = '06-7';
+    await all.apply(JAN_PATH);
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan.kind).toBe('review');
+    if (jan.kind !== 'review') return;
+    expect(jan.messages).toContain(CHANGED_SINCE_SCAN);
+    expect(jan.choices.size).toBe(0);
+    expect(jan.rename).toBe(true);
+    expect(jan.request.prepared.rows.find((r) => r.property === 'mobile')).toMatchObject({ local: '06-7' });
+    expect(t.radicale.pushes).toEqual([]);
+    expect(t.writes).toEqual([]);
+  });
+
+  it('a card changed on the server after the scan is shown again; nothing written', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    t.radicale.put(`/radicale/${UID}.vcf`, card('06-3'));
+    await all.apply(JAN_PATH);
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan.kind === 'review' && jan.messages).toContain(CHANGED_SINCE_SCAN);
+    expect(jan.kind === 'review' && jan.request.prepared.server?.raw).toContain('06-3');
+    expect(t.radicale.pushes).toEqual([]);
+    expect(t.writes).toEqual([]);
+  });
+
+  it('a note that changes between the check and the write is prepared again', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    const { flowDeps } = t.deps;
+    t.deps.flowDeps = async (path, over) => {
+      const flow = await flowDeps(path, over);
+      if ('refused' in flow) return flow;
+      const read = flow.note.readFrontmatter;
+      let reads = 0;
+      const readFrontmatter = async () => {
+        const fm = await read();
+        if (++reads === 1) t.notes[JAN_PATH].frontmatter.mobile = '06-7';
+        return fm;
+      };
+      t.deps.flowDeps = flowDeps;
+      return { ...flow, note: { ...flow.note, readFrontmatter } };
+    };
+    await all.apply(JAN_PATH);
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan.kind === 'review' && jan.messages).toContain(CHANGED_SINCE_SCAN);
+    expect(jan.kind === 'review' && jan.request.prepared.rows.find((r) => r.property === 'mobile')?.local).toBe('06-7');
+    expect(t.writes).toEqual([]);
+    expect(t.locks.taken).toBe(t.locks.released);
+  });
+
+  it('a note already in sync becomes done', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    t.notes[JAN_PATH].frontmatter.mobile = '06-2';
+    t.radicale.entries.set(UID, { raw: card('06-2'), etag: t.radicale.cards.get(`/radicale/${UID}.vcf`)!.etag, href: `/radicale/${UID}.vcf` });
+    await all.apply(JAN_PATH);
+    expect(itemOf(all, JAN_PATH)).toMatchObject({ kind: 'done', messages: ['Already in sync.'] });
+  });
+
+  it('a prepare that throws blocks the item and releases the lock', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    const { flowDeps } = t.deps;
+    t.deps.flowDeps = async (path, over) => {
+      const flow = await flowDeps(path, over);
+      if ('refused' in flow) return flow;
+      return {
+        ...flow,
+        contexts: async () => {
+          throw new Error('lookups failed');
+        },
+      };
+    };
+    await all.apply(JAN_PATH);
+    expect(itemOf(all, JAN_PATH)).toMatchObject({ kind: 'blocked', reason: 'lookups failed' });
+    expect(t.locks.taken).toBe(t.locks.released);
+  });
+
+  it('a note whose Sync is open keeps its item with a message', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    t.deps.lock = () => undefined;
+    await all.apply(JAN_PATH);
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan.kind === 'review' && jan.messages).toContain('A Sync of this contact is already open.');
+    expect(t.writes).toEqual([]);
+  });
+
+  it('a new card applied on its own is created and done', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    const cards = t.radicale.cards.size;
+    await all.apply(NIEUW_PATH);
+    expect(itemOf(all, NIEUW_PATH)).toMatchObject({ kind: 'done', messages: ['Nieuw: created on the server.'] });
+    expect(t.radicale.cards.size).toBe(cards + 1);
+  });
+
+  it('is busy while it runs; a scan then does nothing', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    const applying = all.apply(JAN_PATH);
+    expect(all.state.busy).toBe('apply');
+    await all.scan();
+    await all.apply(JAN_PATH);
+    expect(all.state.busy).toBe('apply');
+    await applying;
+    expect(all.state.busy).toBeUndefined();
+    expect(t.radicale.calls.getMetaList).toBe(1);
+    expect(itemOf(all, JAN_PATH).kind).toBe('done');
+  });
+});
+
+describe('SyncAll.refresh', () => {
+  it('prepares the note again and replaces its item', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    all.setChoices(JAN_PATH, new Map([['mobile', 'local']]));
+    t.radicale.put(`/radicale/${UID}.vcf`, card('06-3'));
+    await all.refresh(JAN_PATH);
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan.kind).toBe('review');
+    if (jan.kind !== 'review') return;
+    expect(jan.request.prepared.server?.raw).toContain('06-3');
+    expect(jan.choices.size).toBe(0);
+    expect(jan.messages).not.toContain(CHANGED_SINCE_SCAN);
+    expect(t.writes).toEqual([]);
+  });
+});
+
+describe('SyncAll.applyAllReady', () => {
+  it('applies only the contacts that are ready, one after another', async () => {
+    const t = setup();
+    t.notes[ANNA_PATH] = {
+      name: 'Anna Smit',
+      frontmatter: { name: 'Anna Smit', firstname: 'Anna', lastname: 'Smit', mobile: '06-A1', uid: ANNA_UID },
+    };
+    t.radicale.seed(annaCard('06-A0'), true, ANNA_UID);
+    t.radicale.put(`/radicale/${ANNA_UID}.vcf`, annaCard('06-A2'));
+    t.radicale.put(`/radicale/${PIET_UID}.vcf`, pietCard('06-8'));
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    expect(itemOf(all, ANNA_PATH)).toMatchObject({ kind: 'review', badges: ['conflict'] });
+    expect(all.readyPaths()).toEqual([JAN_PATH, PIET_PATH]);
+    t.notes[PIET_PATH].frontmatter.mobile = '06-7';
+    const cards = t.radicale.cards.size;
+    expect(await all.applyAllReady()).toEqual({ applied: 1, changed: 1, failed: 0 });
+    expect(itemOf(all, JAN_PATH).kind).toBe('done');
+    const piet = itemOf(all, PIET_PATH);
+    expect(piet.kind === 'review' && piet.messages).toContain(CHANGED_SINCE_SCAN);
+    expect(itemOf(all, ANNA_PATH).kind).toBe('review');
+    expect(itemOf(all, NIEUW_PATH).kind).toBe('review');
+    expect(t.radicale.cards.size).toBe(cards);
+    expect(all.state.busy).toBeUndefined();
   });
 });
