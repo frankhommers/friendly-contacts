@@ -1406,7 +1406,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     });
     const item = (n: Note) => syncAll.state.items.find((i) => i.path === pathOf(n))!;
     const cards = await cardCount();
-    const pietBase = await state.get(uidOf(61));
+    const pimBase = await state.get(uidOf(61));
 
     uidLookups.length = 0;
     await syncAll.scan();
@@ -1421,11 +1421,14 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     // Nothing was written by the scan.
     expect(await cardCount()).toBe(cards);
     expect(jos.frontmatter.mobile).toBeUndefined();
-    expect(await state.get(uidOf(61))).toEqual(pietBase);
+    expect(await state.get(uidOf(61))).toEqual(pimBase);
 
     // The owner changes Ans again after the scan.
     ans.frontmatter.mobile = '06-55555555';
     const ansCard = await serverCard(`${BOOK}scan-ans.vcf`);
+    const ansNote = structuredClone(ans.frontmatter);
+    const ansBase = await state.get(uidOf(62));
+    expect(ansBase).toBeDefined();
     expect(syncAll.readyPaths()).toEqual([pathOf(ans), pathOf(jos)].sort());
     const counts = await syncAll.applyAllReady();
     expect(counts).toEqual({ applied: 1, changed: 1, failed: 0 });
@@ -1436,6 +1439,8 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     expect(nieuw.frontmatter.uid).toBeUndefined();
     expect(item(ans)).toMatchObject({ kind: 'review', messages: [CHANGED_SINCE_SCAN] });
     expect(await serverCard(`${BOOK}scan-ans.vcf`)).toBe(ansCard);
+    expect(ans.frontmatter).toEqual(ansNote);
+    expect(await state.get(uidOf(62))).toEqual(ansBase);
 
     // A new card is created only on its own Apply.
     await syncAll.apply(pathOf(nieuw));

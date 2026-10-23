@@ -120,6 +120,12 @@ describe('the list', () => {
     expect(rows().map((r) => r.textContent?.includes('Eva'))).not.toContain(true);
   });
 
+  it('shows a review with a warning as "Check warning"', () => {
+    render(stubModel([review('Ann.md', ['server', 'warning'])]));
+    expect(row('Ann').textContent).toContain('Check warning');
+    expect(row('Ann').querySelector('.friendly-sync-all-badge.is-warning')).not.toBeNull();
+  });
+
   it('counts the contacts that are up to date', () => {
     render(stubModel([upToDate('A.md'), upToDate('B.md'), review('Ann.md', ['server'])]));
     expect(text()).toContain('2 up to date');
@@ -144,6 +150,15 @@ describe('selection', () => {
     const serverOnly = render(stubModel(items()));
     expect(title()).toBe('Ann');
     expect(serverOnly).toHaveBeenCalledWith('Ann.md');
+  });
+
+  it('keeps the first contact shown while the scan adds others above it', () => {
+    const model = stubModel([review('Bob.md', ['server'])], { busy: 'scan', scanned: 1, total: 3 });
+    render(model);
+    expect(title()).toBe('Bob');
+    act(() => model.set({ items: [review('Ann.md', ['server']), model.state.items[0]], scanned: 2 }));
+    expect(title()).toBe('Bob');
+    expect(row('Bob').getAttribute('aria-selected')).toBe('true');
   });
 
   it('selects a row when it is clicked', () => {

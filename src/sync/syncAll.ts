@@ -28,8 +28,11 @@ export interface SyncAllDeps {
   concurrency?: number;
 }
 
-/** What a review would change: a conflict to decide, values from the server, from Obsidian, or a new card. */
-export type Badge = 'conflict' | 'server' | 'obsidian' | 'newCard';
+/**
+ * What a review would change: a conflict to decide, values from the server, from Obsidian, or a new card; and
+ * `warning` when the review carries a warning to check first (say an address book that could not be read).
+ */
+export type Badge = 'conflict' | 'server' | 'obsidian' | 'newCard' | 'warning';
 
 type Base = { path: string; name: string };
 
@@ -83,6 +86,12 @@ export function sameReview(a: ReviewRequest, b: ReviewRequest): boolean {
 }
 
 export function badgesOf(request: ReviewRequest): Badge[] {
+  const badges = changeBadges(request);
+  if (request.warnings.length > 0) badges.push('warning');
+  return badges;
+}
+
+function changeBadges(request: ReviewRequest): Badge[] {
   const { prepared } = request;
   if (prepared.server === undefined) return ['newCard'];
   const changed = prepared.rows.filter((r) => r.changed);
@@ -122,6 +131,8 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
 export class SyncAll {
   private current: SyncAllState = { items: [], scanned: 0, total: 0 };
   private readonly listeners = new Set<() => void>();
+  /** Set by `stop` (the tab closed): a running scan takes no next note, and no new scan starts. */
+  private stopped = false;
 
   constructor(private readonly deps: SyncAllDeps) {}
 
@@ -136,14 +147,14 @@ export class SyncAll {
 
   /** Prepares every note (at most `concurrency` at once) and lists what a Sync of it would do. */
   async scan(): Promise<void> {
-    if (this.current.busy) return;
+    if (this.current.busy || this.stopped) return;
     const notes = this.deps.notes();
     this.update({ items: [], scanned: 0, total: notes.length, busy: 'scan' });
     // One listed wrapper per address book for this scan, so a rescan reads fresh listings.
     const wrappers = new Map<string, AdapterInterface>();
     let next = 0;
     const worker = async () => {
-      while (next < notes.length) {
+      while (!this.stopped && next < notes.length) {
         const note = notes[next++];
         const item = await this.scanNote(note, wrappers);
         const items = [...this.current.items, item].sort((a, b) => a.name.localeCompare(b.name));
@@ -158,6 +169,11 @@ export class SyncAll {
     }
   }
 
+  /** Stops for good (the tab closed): a running scan ends after the notes it is preparing now. */
+  stop(): void {
+    this.stopped = true;
+  }
+
   setChoices(path: string, choices: Map<string, Choice>): void {
     const item = this.find(path);
     if (item?.kind === 'review') this.put({ ...item, choices: new Map(choices) });
@@ -168,7 +184,7 @@ export class SyncAll {
     if (item?.kind === 'review') this.put({ ...item, rename });
   }
 
-  /** Prepare again (after an Import in the review), replacing the item. */
+  /** Prepare again (after an Import in the review), replacing the item; busy while it runs. */
   async refresh(path: string): Promise<void> {
     if (this.current.busy) return;
     const item = this.find(path);
@@ -178,10 +194,12 @@ export class SyncAll {
       this.put(withMessage(item, LOCKED_REASON));
       return;
     }
+    this.setBusy('apply');
     try {
       this.put(await this.prepareItem(item));
     } finally {
       release();
+      this.setBusy(undefined);
     }
   }
 
@@ -196,10 +214,19 @@ export class SyncAll {
     }
   }
 
-  /** Paths "Apply all that are ready" would apply now. */
+  /**
+   * Paths "Apply all that are ready" would apply now: no new card, no open conflict, and no warning (those are
+   * applied one by one, after a look).
+   */
   readyPaths(): string[] {
     return this.current.items
-      .filter((item) => item.kind === 'review' && !item.badges.includes('newCard') && canApply(item.request.prepared.rows, item.choices))
+      .filter(
+        (item) =>
+          item.kind === 'review' &&
+          !item.badges.includes('newCard') &&
+          item.request.warnings.length === 0 &&
+          canApply(item.request.prepared.rows, item.choices),
+      )
       .map((item) => item.path);
   }
 
@@ -217,7 +244,10 @@ export class SyncAll {
     return counts;
   }
 
-  /** One Apply, without the busy guard: `applied` (done), `changed` (shown again), or `failed`. */
+  /**
+   * One Apply, without the busy guard: `applied` (done), `changed` (shown again), or `failed`. A prepare that
+   * fails keeps the item as listed (request and choices) with a "Not applied" message.
+   */
   private async applyOne(path: string): Promise<'applied' | 'changed' | 'failed'> {
     const item = this.find(path);
     if (item?.kind !== 'review') return 'failed';
@@ -242,7 +272,7 @@ export class SyncAll {
           this.put({ ...base, kind: 'done', messages: ['Already in sync.'] });
           return 'applied';
         }
-        this.put({ ...base, kind: 'blocked', reason: 'message' in result ? result.message : result.kind });
+        this.put(withMessage(item, `Not applied: ${'message' in result ? result.message : result.kind}`));
         return 'failed';
       }
       const fresh = round.request;
@@ -264,7 +294,7 @@ export class SyncAll {
       this.put({ ...item, request: fresh, badges: badgesOf(fresh), messages });
       return 'failed';
     } catch (error) {
-      this.put({ ...base, kind: 'blocked', reason: errorText(error) });
+      this.put(withMessage(item, `Not applied: ${errorText(error)}`));
       return 'failed';
     } finally {
       release?.();
@@ -351,7 +381,12 @@ function reviewItem(base: Base, request: ReviewRequest, messages: string[]): Syn
   return { ...base, kind: 'review', request, badges: badgesOf(request), choices: new Map(), rename: true, messages };
 }
 
-/** The item with this message added; items without messages (up to date, blocked) are kept as they are. */
+/**
+ * The item with this message added, unless it is already the last one; items without messages (up to date,
+ * blocked) are kept as they are.
+ */
 function withMessage(item: SyncAllItem, message: string): SyncAllItem {
-  return item.kind === 'review' || item.kind === 'done' ? { ...item, messages: [...item.messages, message] } : item;
+  if (item.kind !== 'review' && item.kind !== 'done') return item;
+  if (item.messages[item.messages.length - 1] === message) return item;
+  return { ...item, messages: [...item.messages, message] };
 }

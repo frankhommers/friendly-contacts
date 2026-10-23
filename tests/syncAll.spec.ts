@@ -50,6 +50,12 @@ describe('badgesOf', () => {
     expect(badgesOf(request({ prepared: { damagedNotePhoto: true } }))).toEqual(['server']);
   });
 
+  it('a review with a warning also carries the warning badge', () => {
+    const warnings = ['Could not read Family; relationships to people only in that address book may show as changed.'];
+    expect(badgesOf(request({ rows: [row('mobile', 'server')], extra: { warnings } }))).toEqual(['server', 'warning']);
+    expect(badgesOf(request({ server: false, extra: { warnings } }))).toEqual(['newCard', 'warning']);
+  });
+
   it('a move or a row preselected from the note: obsidian', () => {
     expect(badgesOf(request({ extra: { moveLine: 'Address book: Radicale -> Family' } }))).toEqual(['obsidian']);
     expect(badgesOf(request({ rows: [row('mobile', 'local')] }))).toEqual(['obsidian']);
@@ -281,6 +287,22 @@ describe('SyncAll.scan', () => {
     expect(t.radicale.calls.getMetaList).toBe(1);
   });
 
+  it('stop ends the scan before the next note; a scan after stop does nothing', async () => {
+    const t = setup();
+    t.deps.concurrency = 1;
+    const all = new SyncAll(t.deps);
+    all.subscribe(() => {
+      if (all.state.scanned === 1) all.stop();
+    });
+    await all.scan();
+    expect(all.state).toMatchObject({ scanned: 1, total: 4 });
+    expect(all.state.busy).toBeUndefined();
+    expect(t.locks).toEqual({ taken: 1, released: 1 });
+    await all.scan();
+    expect(all.state).toMatchObject({ scanned: 1, total: 4 });
+    expect(t.locks.taken).toBe(1);
+  });
+
   it('prepares at most `concurrency` notes at once', async () => {
     const t = setup();
     const { flowDeps } = t.deps;
@@ -450,7 +472,7 @@ describe('SyncAll.apply', () => {
     expect(itemOf(all, JAN_PATH)).toMatchObject({ kind: 'done', messages: ['Already in sync.'] });
   });
 
-  it('a prepare that throws blocks the item and releases the lock', async () => {
+  it('a prepare that throws keeps the item and its choices with a message, and releases the lock', async () => {
     const t = setup();
     const all = new SyncAll(t.deps);
     await all.scan();
@@ -465,9 +487,33 @@ describe('SyncAll.apply', () => {
         },
       };
     };
+    all.setChoices(JAN_PATH, new Map([['mobile', 'local']]));
+    const before = itemOf(all, JAN_PATH);
     await all.apply(JAN_PATH);
-    expect(itemOf(all, JAN_PATH)).toMatchObject({ kind: 'blocked', reason: 'lookups failed' });
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan).toMatchObject({ kind: 'review', messages: ['Not applied: lookups failed'] });
+    expect(jan.kind === 'review' && jan.request).toBe(before.kind === 'review' && before.request);
+    expect(jan.kind === 'review' && jan.choices).toEqual(new Map([['mobile', 'local']]));
     expect(t.locks.taken).toBe(t.locks.released);
+  });
+
+  it('a prepare that ends failed keeps the item, its request and choices, with a message', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    all.setChoices(JAN_PATH, new Map([['mobile', 'local']]));
+    const before = itemOf(all, JAN_PATH);
+    t.radicale.options.searchFails = true;
+    await all.apply(JAN_PATH);
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan).toMatchObject({
+      kind: 'review',
+      messages: ['Not applied: could not search Radicale (HTTP 503), and the card could be there'],
+    });
+    expect(jan.kind === 'review' && jan.request).toBe(before.kind === 'review' && before.request);
+    expect(jan.kind === 'review' && jan.choices).toEqual(new Map([['mobile', 'local']]));
+    expect(t.writes).toEqual([]);
+    expect(t.radicale.pushes).toEqual([]);
   });
 
   it('a note whose Sync is open keeps its item with a message', async () => {
@@ -476,8 +522,10 @@ describe('SyncAll.apply', () => {
     await all.scan();
     t.deps.lock = () => undefined;
     await all.apply(JAN_PATH);
+    await all.apply(JAN_PATH);
     const jan = itemOf(all, JAN_PATH);
-    expect(jan.kind === 'review' && jan.messages).toContain('A Sync of this contact is already open.');
+    // The same message is not added twice in a row.
+    expect(jan.kind === 'review' && jan.messages).toEqual(['A Sync of this contact is already open.']);
     expect(t.writes).toEqual([]);
   });
 
@@ -523,6 +571,21 @@ describe('SyncAll.refresh', () => {
     expect(jan.messages).not.toContain(CHANGED_SINCE_SCAN);
     expect(t.writes).toEqual([]);
   });
+
+  it('is busy while it runs; a scan or an Apply then does nothing', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    const refreshing = all.refresh(JAN_PATH);
+    expect(all.state.busy).toBe('apply');
+    await all.scan();
+    await all.apply(JAN_PATH);
+    await refreshing;
+    expect(all.state.busy).toBeUndefined();
+    expect(t.radicale.calls.getMetaList).toBe(1);
+    expect(itemOf(all, JAN_PATH).kind).toBe('review');
+    expect(t.writes).toEqual([]);
+  });
 });
 
 describe('SyncAll.applyAllReady', () => {
@@ -549,5 +612,34 @@ describe('SyncAll.applyAllReady', () => {
     expect(itemOf(all, NIEUW_PATH).kind).toBe('review');
     expect(t.radicale.cards.size).toBe(cards);
     expect(all.state.busy).toBeUndefined();
+  });
+
+  it('skips a review with a warning; it can still be applied on its own', async () => {
+    const t = setup();
+    const { flowDeps } = t.deps;
+    t.deps.flowDeps = async (path, over) => {
+      const flow = await flowDeps(path, over);
+      if ('refused' in flow || path !== JAN_PATH) return flow;
+      return { ...flow, contexts: async () => ({ ...(await flow.contexts()), unreadable: ['radicale'] }) };
+    };
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    const jan = itemOf(all, JAN_PATH);
+    expect(jan).toMatchObject({ kind: 'review', badges: ['server', 'warning'] });
+    expect(jan.kind === 'review' && jan.request.warnings).toHaveLength(1);
+    expect(all.readyPaths()).toEqual([]);
+    expect(await all.applyAllReady()).toEqual({ applied: 0, changed: 0, failed: 0 });
+    expect(t.writes).toEqual([]);
+    await all.apply(JAN_PATH);
+    expect(itemOf(all, JAN_PATH).kind).toBe('done');
+  });
+
+  it('counts a prepare that fails as failed and keeps the item listed', async () => {
+    const t = setup();
+    const all = new SyncAll(t.deps);
+    await all.scan();
+    t.radicale.options.searchFails = true;
+    expect(await all.applyAllReady()).toEqual({ applied: 0, changed: 0, failed: 1 });
+    expect(itemOf(all, JAN_PATH)).toMatchObject({ kind: 'review', messages: [expect.stringMatching(/^Not applied: /)] });
   });
 });

@@ -38,6 +38,8 @@ function badgeText(badge: Badge, serverName: string): string {
       return 'From Obsidian';
     case 'newCard':
       return 'New card';
+    case 'warning':
+      return 'Check warning';
   }
 }
 
@@ -76,9 +78,14 @@ export const SyncAllPanel: React.FC<SyncAllPanelProps> = ({ model, linkName, ser
   const next = position < 0 ? undefined : listed.slice(position + 1).find(isReview);
   const request = current?.kind === 'review' ? current.request : undefined;
 
+  // Pin the row shown, so it does not jump while the scan adds rows above it (or the selected one leaves the list).
+  const currentPath = current?.path;
+  useEffect(() => {
+    if (currentPath !== undefined && currentPath !== selected) setSelected(currentPath);
+  }, [currentPath, selected]);
+
   // The server-only lookup of the selected review, loaded again when its data changes (say after an Import).
   const [lookup, setLookup] = useState<{ request: object; serverOnly: ServerOnly }>();
-  const currentPath = current?.path;
   useEffect(() => {
     if (currentPath === undefined || request === undefined) return;
     let live = true;
