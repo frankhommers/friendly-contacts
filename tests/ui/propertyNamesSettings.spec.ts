@@ -114,6 +114,22 @@ describe('Reset to defaults', () => {
     expect(saves).toHaveLength(1);
     expect(getSettings().friendly.mapping).toEqual(insertLabelledDateRow(DEFAULT_MAPPING, dating));
   });
+
+  it('turns a row with Sync off back on with syncSince, so a stale sync base is read without it', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(9999);
+    const mapping = DEFAULT_MAPPING.map((r) =>
+      r.property === 'friends' ? { ...r, sync: false as const } : r.property === 'email' ? { ...r, syncSince: 1000 } : r,
+    );
+    await render(mapping);
+    await act(async () => {
+      button('Reset to defaults').click();
+    });
+    expect(saves).toHaveLength(1);
+    const stored = (property: string) => getSettings().friendly.mapping.find((r) => r.property === property)!;
+    expect(stored('friends')).toMatchObject({ syncSince: 9999 });
+    expect('sync' in stored('friends')).toBe(false);
+    expect(stored('email')).toMatchObject({ syncSince: 1000 });
+  });
 });
 
 describe('adding a date with a label', () => {

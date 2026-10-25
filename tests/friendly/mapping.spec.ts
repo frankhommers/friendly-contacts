@@ -18,6 +18,7 @@ import {
   rowForProperty,
   renameRow,
   syncRows,
+  syncSafeReset,
   syncTurnedOff,
   validateMapping,
   withSync,
@@ -776,5 +777,39 @@ describe('withSync', () => {
       expect(withSync(DEFAULT_MAPPING, index, false, 5000)).toEqual(DEFAULT_MAPPING);
       expect(withSync(DEFAULT_MAPPING, index, true, 5000)).toEqual(DEFAULT_MAPPING);
     }
+  });
+});
+
+describe('syncSafeReset', () => {
+  const find = (rows: MappingRow[], property: string) => rows.find((row) => row.property === property)!;
+  const off = (rows: MappingRow[], property: string) =>
+    rows.map((r) => (r.property === property ? { ...r, sync: false as const } : r));
+
+  it('turns a row with Sync off on with syncSince now, also when it was renamed', () => {
+    const saved = off(renameRow(DEFAULT_MAPPING, 'friends', 'pals'), 'pals');
+    const next = syncSafeReset(DEFAULT_MAPPING, saved, 5000);
+    expect(find(next, 'friends')).toEqual({ ...find(DEFAULT_MAPPING, 'friends'), syncSince: 5000 });
+    expect(next.filter((r) => r.property !== 'friends')).toEqual(DEFAULT_MAPPING.filter((r) => r.property !== 'friends'));
+    expect(next.some((r) => 'sync' in r)).toBe(false);
+  });
+
+  it('keeps the syncSince of a row that was on', () => {
+    const saved = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, syncSince: 1000 } : r));
+    expect(find(syncSafeReset(DEFAULT_MAPPING, saved, 5000), 'friends')).toMatchObject({ syncSince: 1000 });
+  });
+
+  it('turns a date with a label that had Sync off on with syncSince now, keeping since', () => {
+    const dating = { ...labelledDateRow('Verkering', 'dating', 1000), sync: false as const };
+    const next = syncSafeReset(insertLabelledDateRow(DEFAULT_MAPPING, dating), insertLabelledDateRow(DEFAULT_MAPPING, dating), 5000);
+    expect(find(next, 'dating')).toEqual({ ...labelledDateRow('Verkering', 'dating', 1000), syncSince: 5000 });
+  });
+
+  it('gives a fixed row no syncSince', () => {
+    const next = syncSafeReset(DEFAULT_MAPPING, off(DEFAULT_MAPPING, 'uid'), 5000);
+    expect(next).toEqual(DEFAULT_MAPPING);
+  });
+
+  it('changes nothing when every row was on without syncSince', () => {
+    expect(syncSafeReset(DEFAULT_MAPPING, renameRow(DEFAULT_MAPPING, 'email', 'mail'), 5000)).toEqual(DEFAULT_MAPPING);
   });
 });

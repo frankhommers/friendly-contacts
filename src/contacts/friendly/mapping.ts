@@ -521,6 +521,17 @@ function rowIdentity(row: MappingRow): string {
  * sides. The settings never add, remove or reorder rows, but a migrated mapping may differ in order from the defaults.
  */
 export function mappingRenames(before: MappingRow[], after: MappingRow[]): { from: string; to: string }[] {
+  const pairs = pairRows(before, after);
+  const renames: { from: string; to: string }[] = [];
+  after.forEach((row, i) => {
+    const from = pairs.get(i)?.property;
+    if (from !== undefined && from !== row.property) renames.push({ from, to: row.property });
+  });
+  return renames;
+}
+
+/** The row of `before` each row of `after` is (by index of `after`), paired as `mappingRenames` describes. */
+function pairRows(before: MappingRow[], after: MappingRow[]): Map<number, MappingRow> {
   const count = (rows: MappingRow[], key: string) => rows.filter((r) => rowIdentity(r) === key).length;
   const pairs = new Map<number, MappingRow>(); // after index -> before row
   const usedBefore = new Set<number>();
@@ -534,12 +545,25 @@ export function mappingRenames(before: MappingRow[], after: MappingRow[]): { fro
   const restAfter = after.map((_, i) => i).filter((i) => !pairs.has(i));
   const restBefore = before.map((_, j) => j).filter((j) => !usedBefore.has(j));
   if (restAfter.length === restBefore.length) restAfter.forEach((i, k) => pairs.set(i, before[restBefore[k]]));
-  const renames: { from: string; to: string }[] = [];
-  after.forEach((row, i) => {
-    const from = pairs.get(i)?.property;
-    if (from !== undefined && from !== row.property) renames.push({ from, to: row.property });
+  return pairs;
+}
+
+/**
+ * `defaults` (the rows Reset to defaults saves) with Sync on for every row, made safe against the `saved` rows they
+ * replace. A row whose saved counterpart (paired as in `mappingRenames`) had Sync off gets `syncSince: now`, as
+ * ticking Sync again does (see `withSync`): a sync base stored before then may still hold the row's old lines while
+ * the card was cleaned, so it is read without the row (see `rowsForBase`). A row whose counterpart was on keeps that
+ * row's `syncSince`, for the same reason. Fixed rows are always synced and get none.
+ */
+export function syncSafeReset(defaults: MappingRow[], saved: MappingRow[], now: number): MappingRow[] {
+  const pairs = pairRows(saved, defaults);
+  return defaults.map((row, i) => {
+    const { sync: _sync, syncSince: _since, ...rest } = row;
+    const was = pairs.get(i);
+    if (isFixedProperty(row.property) || was === undefined) return rest as MappingRow;
+    if (was.sync === false) return { ...rest, syncSince: now } as MappingRow;
+    return (was.syncSince === undefined ? rest : { ...rest, syncSince: was.syncSince }) as MappingRow;
   });
-  return renames;
 }
 
 /** Human-readable problems with a mapping; empty when valid. */

@@ -8,7 +8,7 @@ import {
   readableLabel,
   withLabelledDateRows,
 } from "src/contacts/friendly/dateLabels";
-import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, validateMapping, withSync } from "src/contacts/friendly/mapping";
+import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, syncSafeReset, validateMapping, withSync } from "src/contacts/friendly/mapping";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
@@ -133,10 +133,11 @@ export function PropertyNamesSettings({ app }: { app: App }) {
 
   /**
    * Restores the default property names; the dates with a label are the owner's own and stay. When one of them has
-   * a name a default row takes back, nothing is saved and the errors show, as for an edit.
+   * a name a default row takes back, nothing is saved and the errors show, as for an edit. Sync is on for every row;
+   * a row that had Sync off gets `syncSince` as ticking it again does (see `syncSafeReset`).
    */
   const reset = async () => {
-    const defaults = withLabelledDateRows(DEFAULT_MAPPING, saved.current);
+    const defaults = syncSafeReset(withLabelledDateRows(DEFAULT_MAPPING, saved.current), saved.current, Date.now());
     setRows(defaults);
     const problems = validateMapping(defaults);
     setErrors(problems);
