@@ -8,6 +8,7 @@ import {
   FIXED_PROPERTIES,
   isFixedProperty,
   isMappedProperty,
+  lineIsSkipped,
   labelText,
   mappingRenames,
   migrateMapping,
@@ -16,6 +17,7 @@ import {
   rowForLine,
   rowForProperty,
   renameRow,
+  syncRows,
   syncTurnedOff,
   validateMapping,
   writeKeyFor,
@@ -670,5 +672,79 @@ describe('adding the new default rows', () => {
     const { rows } = addDefaultRows(stored, 0);
     expect(rows.filter((r) => r.kind === 'relation')).toEqual(stored.filter((r) => r.kind === 'relation'));
     expect(find(rows, 'anniversary')).toEqual(find(stored, 'anniversary'));
+  });
+});
+
+describe('Sync off', () => {
+  const off = (rows: MappingRow[], ...properties: string[]): MappingRow[] =>
+    rows.map((row) => (properties.includes(row.property) ? { ...row, sync: false as const } : row));
+  const names = (found: MappingRow[]) => found.map((row) => row.property);
+
+  it('syncRows marks rows with Sync off, never the fixed ones, and does not mutate its input', () => {
+    const stored = off(DEFAULT_MAPPING, 'friends', 'uid', 'name', 'photo');
+    const before = JSON.stringify(stored);
+    const rows = syncRows(stored);
+    expect(JSON.stringify(stored)).toBe(before);
+    expect(rows).toHaveLength(stored.length);
+    expect(rows.map((row) => row.property)).toEqual(stored.map((row) => row.property));
+    expect(rows.filter((row) => row.skip).map((row) => row.property)).toEqual(['friends']);
+    expect(rows.find((row) => row.property === 'friends')).toEqual({
+      ...stored.find((row) => row.property === 'friends'),
+      skip: true,
+    });
+    for (const property of ['uid', 'name', 'photo']) expect(rows.find((row) => row.property === property)?.skip).toBeUndefined();
+    expect(rows.find((row) => row.property === 'colleagues')).toEqual(DEFAULT_MAPPING.find((row) => row.property === 'colleagues'));
+  });
+
+  it('a 4.0 RELATED line of a skipped row does not fall through to another row', () => {
+    const related = line('RELATED;TYPE=friend,colleague:urn:uuid:abc');
+    expect(names(rowForLine(related, DEFAULT_MAPPING))).toEqual(['friends']);
+    expect(rowForLine(related, syncRows(off(DEFAULT_MAPPING, 'friends')))).toEqual([]);
+    expect(lineIsSkipped(related, syncRows(off(DEFAULT_MAPPING, 'friends')))).toBe(true);
+    expect(lineIsSkipped(related, DEFAULT_MAPPING)).toBe(false);
+  });
+
+  it('a 3.0 X-ABRELATEDNAMES line of a skipped row is skipped', () => {
+    const friend = line('item1.X-ABRELATEDNAMES:Ann');
+    const rows = syncRows(off(DEFAULT_MAPPING, 'friends'));
+    expect(names(rowForLine(friend, DEFAULT_MAPPING, '_$!<Friend>!$_'))).toEqual(['friends']);
+    expect(rowForLine(friend, rows, '_$!<Friend>!$_')).toEqual([]);
+    expect(lineIsSkipped(friend, rows, '_$!<Friend>!$_')).toBe(true);
+    expect(lineIsSkipped(friend, rows, '_$!<Colleague>!$_')).toBe(false);
+  });
+
+  it('an ORG line keeps only the parts that sync', () => {
+    const org = line('ORG:Acme;Sales');
+    expect(names(rowForLine(org, syncRows(off(DEFAULT_MAPPING, 'department'))))).toEqual(['company']);
+    expect(lineIsSkipped(org, syncRows(off(DEFAULT_MAPPING, 'department')))).toBe(false);
+    const both = syncRows(off(DEFAULT_MAPPING, 'company', 'department'));
+    expect(rowForLine(org, both)).toEqual([]);
+    expect(lineIsSkipped(org, both)).toBe(true);
+  });
+
+  it('rowForProperty finds a row with Sync off in the stored rows, not in the sync rows', () => {
+    const stored = off(DEFAULT_MAPPING, 'friends');
+    expect(rowForProperty('friends', syncRows(stored))).toBeUndefined();
+    expect(rowForProperty('friends-2', syncRows(stored))).toBeUndefined();
+    expect(rowForProperty('friends', stored)?.row.property).toBe('friends');
+    expect(rowForProperty('friends', stored)?.row.skip).toBeUndefined();
+  });
+
+  it('validateMapping still checks rows with Sync off; migrate and rename keep the fields', () => {
+    const stored = off(DEFAULT_MAPPING, 'friends').map((row) =>
+      row.property === 'friends' ? { ...row, syncSince: 1234 } : row,
+    );
+    const clash = stored.map((row) => (row.property === 'met' ? { ...row, property: 'friends' } : row));
+    expect(validateMapping(clash)).toContain('Duplicate property name: friends');
+    expect(validateMapping(stored)).toEqual([]);
+    const friends = (rows: MappingRow[]) => rows.find((row) => row.property === 'friends');
+    expect(friends(migrateMapping(stored))).toMatchObject({ sync: false, syncSince: 1234 });
+    expect(friends(renameRow(stored, 'colleagues', 'coworkers'))).toMatchObject({ sync: false, syncSince: 1234 });
+    expect(friends(renameRow(stored, 'friends', 'pals'))).toBeUndefined();
+    expect(renameRow(stored, 'friends', 'pals').find((row) => row.property === 'pals')).toMatchObject({
+      sync: false,
+      syncSince: 1234,
+    });
+    expect(friends(addDefaultRows(stored, 0).rows)).toMatchObject({ sync: false, syncSince: 1234 });
   });
 });

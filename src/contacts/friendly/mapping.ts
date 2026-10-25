@@ -21,6 +21,12 @@ export type FieldRow = {
   format?: 'date' | 'list';
   /** vCard 3.0 date written as `itemN.X-ABDATE` with this label (`Anniversary`); read with it too. */
   appleDateLabel?: string;
+  /** Sync turned off for this row: its card lines are neither read nor written. Absent: on. Stored. */
+  sync?: false;
+  /** When Sync was last turned on (ms since epoch); a sync base stored before then is read without the row. Absent: always on. Stored. */
+  syncSince?: number;
+  /** Set by `syncRows` on a row with Sync off, never stored: the row's card lines are skipped. */
+  skip?: true;
 };
 export type ComponentRow = {
   kind: 'component';
@@ -33,6 +39,12 @@ export type ComponentRow = {
   sinceReader?: number;
   /** 0-based position of the part in the structured value. */
   index: number;
+  /** Sync turned off for this row: its card lines are neither read nor written. Absent: on. Stored. */
+  sync?: false;
+  /** When Sync was last turned on (ms since epoch); a sync base stored before then is read without the row. Absent: always on. Stored. */
+  syncSince?: number;
+  /** Set by `syncRows` on a row with Sync off, never stored: the row's card lines are skipped. */
+  skip?: true;
 };
 export type RelationRow = {
   kind: 'relation';
@@ -43,6 +55,12 @@ export type RelationRow = {
   labels: string[];
   mirror?: string;
   single?: boolean;
+  /** Sync turned off for this row: its card lines are neither read nor written. Absent: on. Stored. */
+  sync?: false;
+  /** When Sync was last turned on (ms since epoch); a sync base stored before then is read without the row. Absent: always on. Stored. */
+  syncSince?: number;
+  /** Set by `syncRows` on a row with Sync off, never stored: the row's card lines are skipped. */
+  skip?: true;
 };
 export type MappingRow = FieldRow | ComponentRow | RelationRow;
 
@@ -251,11 +269,8 @@ function rowMatchesLine(row: MappingRow, line: VCardLine, labels: string[]): boo
   return row.read.some((p) => matchesPattern(line, p));
 }
 
-/**
- * Rows for a line: all matching component rows for a structured line, else the first matching row (if any).
- * `label` is the raw `X-ABLabel` value of the line's group, if it has one.
- */
-export function rowForLine(line: VCardLine, rows: MappingRow[], label?: string): MappingRow[] {
+/** The rows matching a line, before `skip` is looked at: all component rows of a structured line, else the first. */
+function matchingRows(line: VCardLine, rows: MappingRow[], label?: string): MappingRow[] {
   const labels = label === undefined ? [] : labelText(label);
   const matching = rows.filter((row) => rowMatchesLine(row, line, labels));
   if (matching.length === 0) return [];
@@ -263,19 +278,43 @@ export function rowForLine(line: VCardLine, rows: MappingRow[], label?: string):
   return [matching[0]];
 }
 
-/** `mobile` -> ordinal 1, `mobile-2` -> ordinal 2. */
+/**
+ * Rows for a line: all matching component rows for a structured line, else the first matching row (if any).
+ * Rows with `skip` (see `syncRows`) still match, so their lines do not fall through to another row; they are left out
+ * of the result.
+ * `label` is the raw `X-ABLabel` value of the line's group, if it has one.
+ */
+export function rowForLine(line: VCardLine, rows: MappingRow[], label?: string): MappingRow[] {
+  return matchingRows(line, rows, label).filter((row) => !row.skip);
+}
+
+/** True when rows with `skip` decide the line: the first matching row is skipped, or every matching part row is. */
+export function lineIsSkipped(line: VCardLine, rows: MappingRow[], label?: string): boolean {
+  const matching = matchingRows(line, rows, label);
+  return matching.length > 0 && matching.every((row) => row.skip);
+}
+
+/**
+ * A copy of the stored rows where each row with Sync off (except the fixed rows) has `skip`. The sync works on these
+ * rows; the stored ones never carry `skip`.
+ */
+export function syncRows(rows: MappingRow[]): MappingRow[] {
+  return rows.map((row) => (row.sync === false && !isFixedProperty(row.property) ? { ...row, skip: true as const } : row));
+}
+
+/** `mobile` -> ordinal 1, `mobile-2` -> ordinal 2. A row with `skip` is not found. */
 export function rowForProperty(
   property: string,
   rows: MappingRow[],
 ): { row: MappingRow; ordinal: number } | undefined {
   const exact = rows.find((r) => r.property === property);
-  if (exact) return { row: exact, ordinal: 1 };
+  if (exact) return exact.skip ? undefined : { row: exact, ordinal: 1 };
   const m = /^(.+)-(\d+)$/.exec(property);
   if (!m) return undefined;
   const ordinal = Number(m[2]);
   if (ordinal < 2) return undefined;
   const row = rows.find((r) => r.property === m[1]);
-  return row ? { row, ordinal } : undefined;
+  return row && !row.skip ? { row, ordinal } : undefined;
 }
 
 export function isMappedProperty(property: string, rows: MappingRow[]): boolean {
