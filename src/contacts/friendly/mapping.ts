@@ -477,6 +477,19 @@ export function addDefaultRows(stored: MappingRow[], seen: number): { rows: Mapp
  */
 export const FIXED_PROPERTIES = ['uid', 'name', 'photo'] as const;
 
+/**
+ * The rows with Sync set for row `index`: off stores `sync: false` and drops `syncSince`; on drops `sync` and stores
+ * `syncSince: now` (a sync base stored before then is read without the row, see `rowsForBase`). A fixed row, or an
+ * index outside the rows, is left as it is.
+ */
+export function withSync(rows: MappingRow[], index: number, on: boolean, now: number): MappingRow[] {
+  const row = rows[index];
+  if (!row || isFixedProperty(row.property)) return rows;
+  const { sync: _sync, syncSince: _since, ...rest } = row;
+  const next = (on ? { ...rest, syncSince: now } : { ...rest, sync: false }) as MappingRow;
+  return rows.map((r, i) => (i === index ? next : r));
+}
+
 /** The note property that names the address book; set by the plugin, never read from or written to a card. */
 export const RESERVED_PROPERTY = 'source';
 

@@ -20,6 +20,7 @@ import {
   syncRows,
   syncTurnedOff,
   validateMapping,
+  withSync,
   writeKeyFor,
   writeLabel,
 } from 'src/contacts/friendly/mapping';
@@ -746,5 +747,34 @@ describe('Sync off', () => {
       syncSince: 1234,
     });
     expect(friends(addDefaultRows(stored, 0).rows)).toMatchObject({ sync: false, syncSince: 1234 });
+  });
+});
+
+describe('withSync', () => {
+  const friends = (rows: MappingRow[]) => rows.find((row) => row.property === 'friends')!;
+
+  it('off sets sync: false and removes syncSince', () => {
+    const on = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, syncSince: 1000 } : r));
+    const index = on.findIndex((r) => r.property === 'friends');
+    const next = withSync(on, index, false, 5000);
+    expect(friends(next)).toMatchObject({ sync: false });
+    expect('syncSince' in friends(next)).toBe(false);
+    expect(next.filter((_, i) => i !== index)).toEqual(on.filter((_, i) => i !== index));
+    expect(on[index]).toMatchObject({ syncSince: 1000 });
+  });
+
+  it('on removes sync and sets syncSince to now', () => {
+    const off = withSync(DEFAULT_MAPPING, DEFAULT_MAPPING.findIndex((r) => r.property === 'friends'), false, 1);
+    const next = withSync(off, off.findIndex((r) => r.property === 'friends'), true, 5000);
+    expect('sync' in friends(next)).toBe(false);
+    expect(friends(next)).toMatchObject({ syncSince: 5000 });
+  });
+
+  it('leaves a fixed row unchanged', () => {
+    for (const property of FIXED_PROPERTIES) {
+      const index = DEFAULT_MAPPING.findIndex((r) => r.property === property);
+      expect(withSync(DEFAULT_MAPPING, index, false, 5000)).toEqual(DEFAULT_MAPPING);
+      expect(withSync(DEFAULT_MAPPING, index, true, 5000)).toEqual(DEFAULT_MAPPING);
+    }
   });
 });

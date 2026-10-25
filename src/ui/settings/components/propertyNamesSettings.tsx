@@ -8,7 +8,7 @@ import {
   readableLabel,
   withLabelledDateRows,
 } from "src/contacts/friendly/dateLabels";
-import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, validateMapping } from "src/contacts/friendly/mapping";
+import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, validateMapping, withSync } from "src/contacts/friendly/mapping";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
@@ -320,6 +320,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
             <th>Part</th>
             <th>Write as (vCard 4.0)</th>
             <th>Write as (vCard 3.0)</th>
+            <th>Sync</th>
           </tr>
         </thead>
         <tbody>
@@ -389,10 +390,23 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                   />
                 )}
               </td>
+              <td>
+                <input
+                  type="checkbox"
+                  aria-label={`Sync ${row.property}`}
+                  checked={row.sync !== false || isFixedProperty(row.property)}
+                  disabled={isFixedProperty(row.property)}
+                  onChange={(e) => { void commit(withSync(rows, i, e.target.checked, Date.now())); }}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      <div className="setting-item-description">
+        Sync off: the property stays in your notes, but Sync and Import no longer read it from cards or write it to them.
+        Lines already on a card stay there; remove them yourself if you want them gone.
+      </div>
 
       <DateLabelsSettings
         app={app}

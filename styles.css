@@ -522,6 +522,10 @@
   width: 100%;
 }
 
+.vcf-mapping-table input[type="checkbox"] {
+  width: auto;
+}
+
 .vcf-mapping-readonly {
   color: var(--text-muted);
 }

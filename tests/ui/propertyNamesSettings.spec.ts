@@ -250,8 +250,76 @@ describe('the table', () => {
   it('has exactly these headers', async () => {
     await render(DEFAULT_MAPPING);
     expect([...propertyTable().querySelectorAll('th')].map((th) => th.textContent)).toEqual([
-      'Name', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)',
+      'Name', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'Sync',
     ]);
+  });
+
+  describe('the Sync column', () => {
+    const box = (property: string) => input(property, `Sync ${property}`);
+    const click = async (element: HTMLInputElement) => {
+      await act(async () => {
+        element.click();
+      });
+    };
+
+    it('is the last column, with a checkbox per row ticked unless Sync is off', async () => {
+      const mapping = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r));
+      await render(mapping);
+      const headers = [...propertyTable().querySelectorAll('th')];
+      expect(headers[headers.length - 1].textContent).toBe('Sync');
+      expect(box('friends').type).toBe('checkbox');
+      expect(box('friends').checked).toBe(false);
+      expect(box('email').checked).toBe(true);
+      expect(box('friends').disabled).toBe(false);
+    });
+
+    it.each(['uid', 'name', 'photo'])('shows %s ticked and disabled', async (property) => {
+      await render(DEFAULT_MAPPING);
+      expect(box(property).checked).toBe(true);
+      expect(box(property).disabled).toBe(true);
+    });
+
+    it('unticking saves sync: false at once, without a confirmation, and nothing else changes', async () => {
+      await render(DEFAULT_MAPPING);
+      await click(box('friends'));
+      expect(saves).toHaveLength(1);
+      expect(stored('friends')).toMatchObject({ sync: false });
+      expect(getSettings().friendly.mapping.filter((r) => r.property !== 'friends')).toEqual(
+        DEFAULT_MAPPING.filter((r) => r.property !== 'friends'),
+      );
+      expect(getSettings().friendly.mapping.some((r) => r.skip)).toBe(false);
+      expect(box('friends').checked).toBe(false);
+    });
+
+    it('ticking again saves syncSince with the time and removes sync', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(7777);
+      await render(DEFAULT_MAPPING);
+      await click(box('friends'));
+      await click(box('friends'));
+      expect(saves).toHaveLength(2);
+      expect(stored('friends')).toMatchObject({ syncSince: 7777 });
+      expect('sync' in stored('friends')!).toBe(false);
+      expect(box('friends').checked).toBe(true);
+    });
+
+    it('stored rows never carry skip, also after a later edit', async () => {
+      await render(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
+      await act(async () => commitText(input('department', 'Part for department'), '3'));
+      expect(getSettings().friendly.mapping.some((r) => r.skip)).toBe(false);
+      expect(stored('friends')).toMatchObject({ sync: false });
+    });
+
+    it('describes what Sync off does under the table', async () => {
+      await render(DEFAULT_MAPPING);
+      expect(container.textContent).toContain(
+        'Sync off: the property stays in your notes, but Sync and Import no longer read it from cards or write it to them. Lines already on a card stay there; remove them yourself if you want them gone.',
+      );
+    });
+
+    it('a labelled date row has no checkbox in this table', async () => {
+      await render(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 1000)));
+      expect(propertyTable().querySelector('input[aria-label="Sync dating"]')).toBeNull();
+    });
   });
 
   it('shows the part of a component row as a number from 1', async () => {
