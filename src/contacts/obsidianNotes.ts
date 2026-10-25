@@ -472,11 +472,14 @@ export async function friendlyNoteCard(
  * Creates a friendly contact note from one card in the contacts folder.
  * Returns the card's UID ('' when it has none) and whether the note now holds this card, or undefined
  * when the card has no name. An existing file is only replaced when the user says so, maybe later.
- * `extra` (e.g. `{ source }`) is written into the frontmatter after the mapped properties.
+ * `rows`: the rows the card is read with. Import from an address book passes `syncRows` (a property with Sync off is
+ * not imported); a .vcf file import passes the stored rows (every property). The note is rendered with the stored
+ * rows either way. `extra` (e.g. `{ source }`) is written into the frontmatter after the mapped properties.
  */
 export async function importCard(
   app: App,
   card: string,
+  rows: MappingRow[],
   extra: Record<string, FriendlyValue> = {},
 ): Promise<{ uid: string; written: boolean; path?: string } | undefined> {
   const { contactsFolder, defaultHashtag, friendly } = getSettings();
@@ -485,8 +488,7 @@ export async function importCard(
   const fileName = contactFileName(value("N"), value("FN"));
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(newContactLocation(app, fileName, contactsFolder).note));
-  // A property with Sync off is not imported; the note is still rendered with the stored rows.
-  const props = { ...toFriendly(lines, syncRows(friendly.mapping), ctx, { ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults }).props, ...extra };
+  const props = { ...toFriendly(lines, rows, ctx, { ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults }).props, ...extra };
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;
@@ -512,7 +514,8 @@ export async function importRemoteCard(
   const sent = parseCard(pulled.raw);
   const { lines, repaired } = repairDamagedPhotos(sent, []);
   const raw = repaired ? serializeCard(lines) : pulled.raw;
-  const imported = await importCard(app, raw, { source: source.name });
+  // A property with Sync off is not imported (see syncRows).
+  const imported = await importCard(app, raw, syncRows(getSettings().friendly.mapping), { source: source.name });
   if (!imported) return "unnamed";
   // Only a note that holds this card may get its base; an existing (skipped) note keeps syncing without one.
   if (imported.uid !== "" && imported.written) {

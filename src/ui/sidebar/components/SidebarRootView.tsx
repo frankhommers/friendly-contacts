@@ -39,7 +39,8 @@ const importVCFContacts = async (fileContent: string, app: App) => {
   let skipped = 0;
 
   for (const card of splitCards(fileContent)) {
-    if (await importCard(app, card)) {
+    // A file is no sync: every property is imported, also one with Sync off (the stored rows).
+    if (await importCard(app, card, getSettings().friendly.mapping)) {
       imported++;
     } else {
       // Contact has no valid name/slug

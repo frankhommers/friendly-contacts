@@ -43,7 +43,9 @@ vi.mock("src/context/sharedSettingsContext", async () => {
   return { getSettings, updateSetting: async () => {}, settings: { value: settings } };
 });
 
-import { contactSyncState, importRemoteCard } from "src/contacts/obsidianNotes";
+import { syncRows } from "src/contacts/friendly/mapping";
+import { getSettings } from "src/context/sharedSettingsContext";
+import { contactSyncState, importCard, importRemoteCard } from "src/contacts/obsidianNotes";
 
 const source: Source = { id: "s1", name: "Work", addressBookUrl: "http://x/", authType: "apikey", authKey: "k", enabled: true };
 const card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:abc-1\r\nFN:Anna Jansen\r\nN:Jansen;Anna;;;\r\nEND:VCARD\r\n";
@@ -147,6 +149,28 @@ describe("importRemoteCard with a property with Sync off", () => {
   it("the new note has the other relationship but not the one with Sync off", async () => {
     state.syncOff = ["friends"];
     const note = await importIt();
+    expect(note).toMatch(/^children:/m);
+    expect(note).not.toMatch(/^friends:/m);
+  });
+});
+
+describe("importCard takes the rows to read the card with", () => {
+  const FRIENDS = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:abc-3\r\nFN:Anna Jansen\r\nN:Jansen;Anna;;;\r\nitem1.X-ABRELATEDNAMES:Piet\r\nitem1.X-ABLabel:_$!<Friend>!$_\r\nitem2.X-ABRELATEDNAMES:Sem\r\nitem2.X-ABLabel:_$!<Child>!$_\r\nEND:VCARD\r\n";
+
+  it("a .vcf file import with the stored rows imports a property with Sync off too", async () => {
+    state.syncOff = ["friends"];
+    const imported = await importCard(fakeApp(), FRIENDS, getSettings().friendly.mapping);
+    expect(imported).toMatchObject({ uid: "abc-3", written: true });
+    const note = state.files.get("Contacts/Anna Jansen.md") ?? "";
+    expect(note).toMatch(/^friends:/m);
+    expect(note).toMatch(/^children:/m);
+    expect(note).not.toMatch(/^source:/m);
+  });
+
+  it("with the sync rows a property with Sync off is left out", async () => {
+    state.syncOff = ["friends"];
+    await importCard(fakeApp(), FRIENDS, syncRows(getSettings().friendly.mapping));
+    const note = state.files.get("Contacts/Anna Jansen.md") ?? "";
     expect(note).toMatch(/^children:/m);
     expect(note).not.toMatch(/^friends:/m);
   });
