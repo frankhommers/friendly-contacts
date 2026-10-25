@@ -1,6 +1,6 @@
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
-import { parseCard, serializeCard, serializeLine, VCardLine } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { parseCard, serializeCard, serializeLine, splitParts, VCardLine } from 'src/contacts/friendly/lines';
+import { DEFAULT_MAPPING, syncRows } from 'src/contacts/friendly/mapping';
 import { cardNoteLinks, NoteLink, noteLinkUrl, noteLinksDiffer } from 'src/contacts/friendly/noteLinks';
 import { needsLegacyRewrite } from 'src/contacts/friendly/patch';
 import { RelationContext } from 'src/contacts/friendly/relations';
@@ -1106,5 +1106,82 @@ describe('write key per vCard version', () => {
     const after = patch(lines, toFriendly(lines, DEFAULT_MAPPING, ctx), { name: 'A', mobile: '06 1', gender: 'F', company: 'Co', department: 'Sales' }, DEFAULT_MAPPING, ctx).lines;
     const rest = (ls: VCardLine[]) => ls.filter((l) => l.name !== 'REV' && l.name !== 'GENDER').map((l) => l.raw ?? serializeLine(l));
     expect(rest(after)).toEqual(rest(lines));
+  });
+});
+
+describe('rows with Sync off', () => {
+  const rows = syncRows(DEFAULT_MAPPING.map((row) => (row.property === 'friends' ? { ...row, sync: false as const } : row)));
+  const noDepartment = syncRows(DEFAULT_MAPPING.map((row) => (row.property === 'department' ? { ...row, sync: false as const } : row)));
+  const edit = (lines: VCardLine[], after: Record<string, FriendlyValue>, use = rows, opts = {}) =>
+    patch(lines, toFriendly(lines, use, ctx), after, use, ctx, opts);
+  const v3 = card(
+    'FN:X',
+    'EMAIL:a@x.nl',
+    'item1.X-ABRELATEDNAMES:Piet',
+    'item1.X-ABLabel:_$!<Friend>!$_',
+    'item2.X-ABRELATEDNAMES:Kees',
+    'item2.X-ABLabel:_$!<Child>!$_',
+    'REV:old',
+  );
+  const v4 = card4('FN:X', 'EMAIL:a@x.nl', 'RELATED;TYPE=friend;VALUE=text:Piet', 'REV:old');
+
+  it('keeps every line of the row when something else changes', () => {
+    for (const lines of [v3, v4]) {
+      const result = edit(lines, { ...toFriendly(lines, rows, ctx).props, email: 'b@x.nl' });
+      const kept = (ls: VCardLine[]) => texts(ls).filter((l) => /Piet|Friend/.test(l));
+      expect(kept(result.lines)).toEqual(kept(lines));
+      expect(texts(result.lines)).toContain('EMAIL:b@x.nl');
+      // byte for byte: the very same line objects
+      for (const line of lines.filter((l) => /Piet|Friend/.test(serializeLine(l)))) expect(result.lines).toContain(line);
+    }
+  });
+
+  it('writes no line for friends in the result or on a new card', () => {
+    const fresh = card('FN:X', 'REV:old');
+    expect(texts(edit(fresh, { name: 'X', friends: ['[[Piet]]'] }).lines).join('\n')).not.toMatch(/Piet|friend/i);
+    expect(texts(newCard({ name: 'X', friends: ['[[Piet]]'] }, rows, ctx).lines).join('\n')).not.toMatch(/Piet|friend/i);
+    expect(texts(newCard({ name: 'X', friends: ['[[Piet]]'] }, rows, ctx, '3.0').lines).join('\n')).not.toMatch(/Piet|friend/i);
+  });
+
+  it('keeps the department part of ORG when only the company changes', () => {
+    const lines = card('FN:X', 'ORG:Acme;Sales', 'REV:old');
+    const after = edit(lines, { company: 'Beta' }, noDepartment).lines;
+    expect(texts(after)).toContain('ORG:Beta;Sales');
+  });
+
+  it('a new card writes no department', () => {
+    const lines = newCard({ name: 'X', company: 'Acme', department: 'Sales' }, noDepartment, ctx).lines;
+    const org = lines.find((l) => l.name === 'ORG')!;
+    expect(splitParts('ORG', org.value)[0]).toBe('Acme');
+    expect(splitParts('ORG', org.value)[1] ?? '').toBe('');
+  });
+
+  describe('legacy rewrite', () => {
+    const lines3 = card('FN:X', 'RELATED;TYPE=friend:urn:uuid:sem-uid', 'REV:old');
+    const lines4 = card4('FN:X', 'RELATED;TYPE=friend;VALUE=text:urn:uuid:sem-uid', 'REV:old');
+
+    it('leaves the line of a row with Sync off alone', () => {
+      for (const lines of [lines3, lines4]) {
+        expect(needsLegacyRewrite(lines, rows, ctx)).toBe(false);
+        const result = edit(lines, toFriendly(lines, rows, ctx).props, rows, { rewriteLegacyRelations: true });
+        expect(result.lines).toEqual(lines);
+      }
+    });
+
+    it('still rewrites it with Sync on (guards the test)', () => {
+      for (const lines of [lines3, lines4]) {
+        expect(needsLegacyRewrite(lines, DEFAULT_MAPPING, ctx)).toBe(true);
+        const result = edit(lines, toFriendly(lines, DEFAULT_MAPPING, ctx).props, DEFAULT_MAPPING, { rewriteLegacyRelations: true });
+        expect(texts(result.lines)).not.toEqual(texts(lines));
+      }
+    });
+
+    it('rewrites a line of a row with Sync on next to one with Sync off', () => {
+      const both = card('FN:X', 'RELATED;TYPE=friend:urn:uuid:sem-uid', 'RELATED;TYPE=child:urn:uuid:sem-uid', 'REV:old');
+      expect(needsLegacyRewrite(both, rows, ctx)).toBe(true);
+      const result = edit(both, toFriendly(both, rows, ctx).props, rows, { rewriteLegacyRelations: true });
+      expect(texts(result.lines)).toContain('RELATED;TYPE=friend:urn:uuid:sem-uid');
+      expect(texts(result.lines)).not.toContain('RELATED;TYPE=child:urn:uuid:sem-uid');
+    });
   });
 });

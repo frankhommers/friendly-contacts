@@ -196,3 +196,16 @@ export function splitParts(name: string, v: string): string[] {
 export function joinStructured(parts: string[]): string {
   return parts.join(';');
 }
+
+/** Group (lower-case) -> its raw `X-ABLabel` value; the first label of a group counts. */
+export function groupLabels(lines: VCardLine[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const line of lines) {
+    const group = line.group?.toLowerCase();
+    // Upper-case when parsed; a patched card read before it is serialized spells it `X-ABLabel`.
+    if (line.name.toUpperCase() === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
+      labels.set(group, unescapeText(line.value));
+    }
+  }
+  return labels;
+}

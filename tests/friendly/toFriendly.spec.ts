@@ -1,6 +1,6 @@
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { parseCard, serializeCard } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, syncRows } from 'src/contacts/friendly/mapping';
 import { noteLinkUrl } from 'src/contacts/friendly/noteLinks';
 import { linkTarget, RelationContext, toLink } from 'src/contacts/friendly/relations';
 import { CURRENT_READER, patch, readerOf, toFriendly } from 'src/contacts/friendly/translate';
@@ -453,5 +453,27 @@ describe('readerOf', () => {
     expect(readerOf(2)).toBe(2);
     expect(readerOf(1)).toBe(1);
     expect(readerOf(undefined)).toBe(1);
+  });
+
+  it('reads nothing for a row with Sync off, and the other rows as before', () => {
+    const rows = syncRows(DEFAULT_MAPPING.map((row) => (row.property === 'friends' ? { ...row, sync: false as const } : row)));
+    const v3 = parseCard(
+      card(
+        'FN:X',
+        'item1.X-ABRELATEDNAMES:Piet',
+        'item1.X-ABLabel:_$!<Friend>!$_',
+        'item2.X-ABRELATEDNAMES:Kees',
+        'item2.X-ABLabel:_$!<Child>!$_',
+      ),
+    );
+    const props = toFriendly(v3, rows, ctx).props;
+    expect(props.children).toEqual(['[[Kees]]']);
+    expect(props).not.toHaveProperty('friends');
+    expect(toFriendly(v3, DEFAULT_MAPPING, ctx).props.friends).toEqual(['[[Piet]]']);
+
+    const v4 = parseCard(['BEGIN:VCARD', 'VERSION:4.0', 'FN:X', 'RELATED;TYPE=friend,colleague;VALUE=text:Piet', 'END:VCARD'].join('\r\n'));
+    const both = toFriendly(v4, syncRows(rows.map((row) => (row.property === 'colleagues' ? { ...row, sync: false as const } : row))), ctx).props;
+    expect(both).not.toHaveProperty('friends');
+    expect(both).not.toHaveProperty('colleagues');
   });
 });

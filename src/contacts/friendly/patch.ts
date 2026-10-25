@@ -6,9 +6,9 @@
 
 import { cleanUid, generateUUID } from '../../util/vcard';
 import { normalizeNoteDate, noteDateFor, writeDate } from './dates';
-import { COMPONENT_COUNT, escapeText, getParam, joinStructured, serializeLine, splitParts, typesOf, VCardLine } from './lines';
+import { COMPONENT_COUNT, escapeText, getParam, groupLabels, joinStructured, serializeLine, splitParts, typesOf, VCardLine } from './lines';
 import { photoKey, photoLine } from './photo';
-import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine, rowForProperty, writeKeyFor, writeLabel } from './mapping';
+import { ComponentRow, FieldRow, MappingRow, RelationRow, lineIsSkipped, rowForLine, rowForProperty, writeKeyFor, writeLabel } from './mapping';
 import { cardNoteLinks, NoteLink } from './noteLinks';
 import { HINT_PARAM, linkTarget, RelationContext, relationValue, uuidTarget } from './relations';
 import type { Friendly, FriendlyValue, Provenance } from './translate';
@@ -402,12 +402,22 @@ type LegacyFix = { person: Person; row?: RelationRow };
  *   longer has (renamed), get the contact's display name and the hint in place, whatever the version;
  * - on a 4.0 card a `urn:uuid:` value (a URI the plugin wrote before, or such a name) gets them in place too, as
  *   `RELATED;TYPE=…;VALUE=text;X-FRIENDLY-UID=<uid>:<name>`, also on a line with several types (all its types stay).
- * The hint wins when it names a contact, as in the reader. Lines another app wrote (a name without the hint, a
+ * The hint wins when it names a contact, as in the reader. A line a row with Sync off decides (`lineIsSkipped`) is
+ * left alone. Lines another app wrote (a name without the hint, a
  * `RELATED` line with several types that holds no `urn:uuid:`) are left alone, and so is a `urn:uuid:` nobody has.
  * `edited`: the line was just written by this patch (a name without the hint when the person is ambiguous).
  */
-function legacyFix(line: VCardLine, v4: boolean, rows: MappingRow[], ctx: RelationContext, edited = false): LegacyFix | undefined {
+function legacyFix(
+  line: VCardLine,
+  v4: boolean,
+  rows: MappingRow[],
+  ctx: RelationContext,
+  labels: Map<string, string>,
+  edited = false,
+): LegacyFix | undefined {
   if (line.name !== 'RELATED' && line.name !== 'X-ABRELATEDNAMES') return undefined;
+  // A line of a row with Sync off is the server's; the rewrite leaves it as it is.
+  if (lineIsSkipped(line, rows, line.group === undefined ? undefined : labels.get(line.group.toLowerCase()))) return undefined;
   const value = relationValue(line);
   // A `urn:uuid:` held as a name, or (on 4.0, where only the value changes) as a URI.
   const uuid = 'uid' in value && (value.asName || (v4 && uuidTarget(line.value) !== undefined));
@@ -445,15 +455,17 @@ function legacyFix(line: VCardLine, v4: boolean, rows: MappingRow[], ctx: Relati
  */
 export function needsLegacyRewrite(lines: VCardLine[], rows: MappingRow[], ctx: RelationContext): boolean {
   const v4 = versionOf(lines).trim() === '4.0';
-  return lines.some((line) => legacyFix(line, v4, rows, ctx) !== undefined);
+  const labels = groupLabels(lines);
+  return lines.some((line) => legacyFix(line, v4, rows, ctx, labels) !== undefined);
 }
 
 /** Every relationship line `legacyFix` names (on the card as edited here) is put right, where it was. */
 function rewriteLegacy(s: State, rows: MappingRow[], ctx: RelationContext): void {
   const v4 = isV4(s);
+  const labels = groupLabels(s.lines);
   s.base.forEach((_, i) => {
     if (s.removed.has(i)) return;
-    const fix = legacyFix(s.lines[i], v4, rows, ctx, s.lines[i] !== s.base[i]);
+    const fix = legacyFix(s.lines[i], v4, rows, ctx, labels, s.lines[i] !== s.base[i]);
     if (!fix) return;
     if (fix.row) {
       removeLine(s, i);

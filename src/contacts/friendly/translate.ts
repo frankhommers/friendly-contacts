@@ -4,7 +4,7 @@
  */
 
 import { readDate } from './dates';
-import { getParam, splitParts, unescapeText, VCardLine } from './lines';
+import { getParam, groupLabels, splitParts, unescapeText, VCardLine } from './lines';
 import { ComponentRow, FieldRow, MappingRow, RelationRow, rowForLine } from './mapping';
 import { isOwnNoteLink } from './noteLinks';
 import { HINT_PARAM, RelationContext, relationValue, toLink } from './relations';
@@ -91,19 +91,6 @@ function relationLinkV1(line: VCardLine, ctx: RelationContext): string | undefin
   }
   const name = ctx.uidToName(line.value.replace(UUID_URN, ''));
   return name === undefined || name === '' ? undefined : toLink(name);
-}
-
-/** Group (lower-case) -> its raw `X-ABLabel` value; the first label of a group counts. */
-function groupLabels(lines: VCardLine[]): Map<string, string> {
-  const labels = new Map<string, string>();
-  for (const line of lines) {
-    const group = line.group?.toLowerCase();
-    // Upper-case when parsed; a patched card read before it is serialized spells it `X-ABLabel`.
-    if (line.name.toUpperCase() === 'X-ABLABEL' && group !== undefined && !labels.has(group)) {
-      labels.set(group, unescapeText(line.value));
-    }
-  }
-  return labels;
 }
 
 /**
