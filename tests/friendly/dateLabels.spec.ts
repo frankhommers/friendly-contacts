@@ -1,4 +1,5 @@
 import {
+  baseLeavesOut,
   insertLabelledDateRow,
   isLabelledDateRow,
   labelledDateRow,
@@ -11,10 +12,11 @@ import {
   suggestPropertyName,
   unmappedDateLabels,
   withLabelledDateRows,
+  withFilledLeftOut,
   withUnfilledDates,
 } from 'src/contacts/friendly/dateLabels';
 import { parseCard } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING, MappingRow, renameRow, validateMapping } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, MappingRow, renameRow, syncRows, validateMapping } from 'src/contacts/friendly/mapping';
 import { patch, toFriendly } from 'src/contacts/friendly/translate';
 import { describe, expect, it } from 'vitest';
 
@@ -184,6 +186,75 @@ describe('withUnfilledDates', () => {
     const note = { uid: 'u1', name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', company: 'Acme' };
     const out = patch(baseLines, before, withUnfilledDates(note, before.props, DEFAULT_MAPPING, 1000, 2), DEFAULT_MAPPING, NO_LOOKUPS);
     expect(out.lines.map((l) => `${l.name}:${l.value}`)).toEqual(expect.arrayContaining(['ORG:Acme;Sales', 'N:Jansen;Jan;;Dr;']));
+  });
+});
+
+describe('a row with Sync turned back on (syncSince)', () => {
+  const friendsRow = DEFAULT_MAPPING.find((r) => r.property === 'friends')!;
+  const since = (syncSince?: number): MappingRow[] => [syncSince === undefined ? friendsRow : { ...friendsRow, syncSince }];
+  const withSince = (syncSince: number) =>
+    DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, syncSince } : r));
+  const FRIENDS = ['[[Anna]]', '[[Bram]]', '[[Cor]]'];
+
+  it('rowsForBase marks it skip for a base stored before then, in place', () => {
+    expect(rowsForBase(since(2000), 1000)).toEqual([{ ...friendsRow, syncSince: 2000, skip: true }]);
+    expect(rowsForBase(since(2000), undefined)).toEqual([{ ...friendsRow, syncSince: 2000, skip: true }]);
+    expect(rowsForBase(withSince(2000), 1000)).toHaveLength(DEFAULT_MAPPING.length);
+  });
+
+  it('rowsForBase leaves it unmarked for a later base, and a row without syncSince', () => {
+    expect(rowsForBase(since(2000), 3000)).toEqual(since(2000));
+    expect(rowsForBase(since(2000), 2000)).toEqual(since(2000));
+    expect(rowsForBase(since(), 1000)).toEqual(since());
+  });
+
+  it('baseLeavesOut', () => {
+    expect(baseLeavesOut(since(2000), 1000)).toBe(true);
+    expect(baseLeavesOut(since(2000), 3000)).toBe(false);
+    expect(baseLeavesOut(since(), 1000)).toBe(false);
+    expect(baseLeavesOut(DEFAULT_MAPPING, 1000)).toBe(false);
+  });
+
+  it('baseLeavesOut is true for the existing reasons too', () => {
+    expect(baseLeavesOut(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 2000)), 1000)).toBe(true);
+    expect(baseLeavesOut(DEFAULT_MAPPING, undefined, 2)).toBe(true);
+  });
+
+  it('a row with Sync off is not left out by the base: it is skipped everywhere', () => {
+    const off = syncRows([{ ...friendsRow, sync: false, syncSince: 2000 }]);
+    expect(rowsForBase(off, 1000)).toEqual(off);
+    expect(baseLeavesOut(off, 1000)).toBe(false);
+  });
+
+  it('withFilledLeftOut never puts it back, even when the note holds the same value', () => {
+    const full = { name: 'Dora', friends: FRIENDS };
+    const result = withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, withSince(2000), 1000);
+    expect(result).toEqual({ name: 'Dora' });
+    expect(result).not.toHaveProperty('friends');
+  });
+
+  it('withUnfilledDates never patches it in', () => {
+    const full = { name: 'Dora', friends: FRIENDS };
+    expect(withUnfilledDates({ name: 'Dora' }, full, withSince(2000), 1000)).toEqual({ name: 'Dora' });
+  });
+
+  it('neither function patches a row with Sync off', () => {
+    const off = syncRows(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
+    const full = { name: 'Dora', friends: FRIENDS };
+    expect(withUnfilledDates({ name: 'Dora' }, full, off, 1000)).toEqual({ name: 'Dora' });
+    expect(withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, off, 1000)).toEqual({ name: 'Dora' });
+    // Also when a labelled date leaves rows out of the same base.
+    const dated = insertLabelledDateRow(off, labelledDateRow('Verkering', 'dating', 2000));
+    expect(withUnfilledDates({ name: 'Dora' }, { ...full, dating: '2012-05-01' }, dated, 1000)).toEqual({ name: 'Dora', dating: '2012-05-01' });
+  });
+
+  it('a labelled date added later is still patched next to a row turned back on', () => {
+    const rows = insertLabelledDateRow(withSince(2000), labelledDateRow('Verkering', 'dating', 2000));
+    const full = { name: 'Dora', friends: FRIENDS, dating: '2012-05-01' };
+    expect(withUnfilledDates({ name: 'Dora' }, full, rows, 1000)).toEqual({ name: 'Dora', dating: '2012-05-01' });
+    expect(
+      withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS, dating: '2012-05-01' }, rows, 1000),
+    ).toEqual({ name: 'Dora', dating: '2012-05-01' });
   });
 });
 

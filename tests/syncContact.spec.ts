@@ -2016,3 +2016,72 @@ describe('a property with Sync off', () => {
     expect(t.note.frontmatter).toMatchObject({ title: 'Chef', friends: ['[[Piet]]'] });
   });
 });
+
+describe('turning Sync back on for a property', () => {
+  const friendLines = (...names: string[]) =>
+    'TITLE:Baker\r\n' +
+    names.map((n, i) => `item${7 + i}.X-ABRELATEDNAMES:${n}\r\nitem${7 + i}.X-ABLabel:_$!<Friend>!$_\r\n`).join('');
+  const withFriends = (...names: string[]) => edit(V1, 'TITLE:Baker\r\n', friendLines(...names));
+  // The base still holds the friends from before Sync was turned off; it was stored at 1000, Sync was turned on at 2000.
+  const BASE = withFriends('Anna', 'Bram', 'Cor');
+  const rowsOn = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, syncSince: 2000 } : r));
+  const note = () => toFriendly(parseCard(BASE), DEFAULT_MAPPING, ctx).props;
+
+  it('the note holds the friends', () => {
+    expect(note().friends).toEqual(['[[Anna]]', '[[Bram]]', '[[Cor]]']);
+  });
+
+  it('a card cleaned while Sync was off: Obsidian is preselected, never a removal from the note', async () => {
+    const t = setup({ server: V1, base: BASE, reader: 3, storedAt: 1000, rows: rowsOn, local: note() });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['friends', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(t.note.frontmatter.friends).toEqual(['[[Anna]]', '[[Bram]]', '[[Cor]]']);
+    const related = parseCard(t.cards.get(HREF)!.raw).filter((l) => l.name === 'X-ABRELATEDNAMES').map((l) => l.value);
+    expect(related).toEqual(['Anna', 'Bram', 'Cor']);
+  });
+
+  it('the same base without syncSince would preselect the removal (what this guards against)', async () => {
+    const t = setup({ server: V1, base: BASE, reader: 3, storedAt: 1000, local: note() });
+    expect(changedRows(await reviewOf(t))).toEqual([['friends', 'server']]);
+  });
+
+  it('other friends on the card: one conflict on friends', async () => {
+    const t = setup({ server: withFriends('Anna', 'Bram', 'Dirk'), base: BASE, reader: 3, storedAt: 1000, rows: rowsOn, local: note() });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['friends', undefined]]);
+  });
+
+  it('friends only on the card: the server is preselected', async () => {
+    const t = setup({ server: BASE, base: BASE, reader: 3, storedAt: 1000, rows: rowsOn, local: { ...note(), friends: undefined } });
+    expect(changedRows(await reviewOf(t))).toEqual([['friends', 'server']]);
+  });
+
+  it('everything equal: up to date, and the card is stored as the base again', async () => {
+    const t = setup({ server: BASE, base: BASE, reader: 3, storedAt: 1000, rows: rowsOn, local: note() });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+    expect(t.sets).toEqual([UID]);
+    // No storedAt given: the store records the time it is stored, later than syncSince.
+    expect(t.entries.get(UID)).toEqual({ raw: BASE, etag: t.serverEtag, href: HREF, reader: 3 });
+  });
+
+  it('a base stored after Sync was turned on is read with the row and not stored again', async () => {
+    const t = setup({ server: BASE, base: BASE, reader: 3, storedAt: 3000, rows: rowsOn, local: note() });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.sets).toEqual([]);
+    const cleaned = setup({ server: V1, base: BASE, reader: 3, storedAt: 3000, rows: rowsOn, local: note() });
+    expect(changedRows(await reviewOf(cleaned))).toEqual([['friends', 'server']]);
+  });
+
+  it('the friends lines of the base are not read by another row', async () => {
+    // A row after friends that matches the same lines would read them if the friends row were dropped.
+    const catchAll = { ...DEFAULT_MAPPING.find((r) => r.property === 'friends')!, property: 'pals' } as MappingRow;
+    const rows = [...rowsOn, catchAll];
+    const t = setup({ server: V1, base: BASE, reader: 3, storedAt: 1000, rows, local: note() });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['friends', 'local']]);
+    expect(prepared.base).not.toHaveProperty('pals');
+  });
+});

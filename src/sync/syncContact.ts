@@ -3,15 +3,15 @@
  *
  * `prepareSync` reads the note (L), the base (B) and the server card (S) and returns either "up to date" or the
  * review rows; it writes nothing, except storing S as the base when everything is equal and no base exists (or the
- * base was read without some of the rows: a date with a label added after it was stored, or a part an older reader
- * did not read, see `rowsForBase`).
+ * base was read without some of the rows: a date with a label added after it was stored, a part an older reader
+ * did not read, or a row Sync was turned back on for after it was stored, see `rowsForBase`).
  * `applySync` takes the result R built from the user's choices, checks nothing moved underneath, patches the card
  * line by line and writes it with If-Match, then renames the note (when asked), writes it and stores the base.
  * Nothing from obsidian or src/context: the note, the server and the base store all come in through `deps`.
  */
 
 import { parseCard, serializeCard, VCardLine } from 'src/contacts/friendly/lines';
-import { rowsForBase, withFilledLeftOut, withUnfilledDates } from 'src/contacts/friendly/dateLabels';
+import { baseLeavesOut, rowsForBase, withFilledLeftOut, withUnfilledDates } from 'src/contacts/friendly/dateLabels';
 import { isMappedProperty, MappingRow, RESERVED_PROPERTY, rowForProperty } from 'src/contacts/friendly/mapping';
 import { alignNoteDates, coerceNoteProps, sameValue } from 'src/contacts/friendly/merge';
 import { NoteLink, NoteLinkOptions, noteLinksDiffer, noteLinkUrl, wantedNoteLinks } from 'src/contacts/friendly/noteLinks';
@@ -213,9 +213,11 @@ export async function prepareSync(
 
     // Read the way it was stored: lines and parts an older reader ignored then are the server's additions now. So are
     // the dates with a label added after the base was stored (the note may never have been filled from it, see
-    // rowsForBase).
+    // rowsForBase). A row Sync was turned back on for after the base was stored is skipped in it: the base may hold
+    // its values from before, which are never read as the server removing them from the note.
     const baseReader = readerOf(baseEntry?.reader);
     const baseRows = rowsForBase(deps.rows, baseEntry?.storedAt, baseReader);
+    const leavesOut = baseLeavesOut(deps.rows, baseEntry?.storedAt, baseReader);
     const baseCard = baseLines && {
       lines: baseLines,
       friendly: canonicalFriendly(readCard(baseLines, baseRows, deps.readOnlyCtx, deps, baseReader), deps),
@@ -223,7 +225,7 @@ export async function prepareSync(
     const readBase = baseCard?.friendly.props;
     // The base read with every row, when it was read without some.
     const fullBase =
-      baseLines && readBase && baseRows.length < deps.rows.length
+      baseLines && readBase && leavesOut
         ? canonicalFriendly(readCard(baseLines, deps.rows, deps.readOnlyCtx, deps, baseReader), deps).props
         : undefined;
     // A prefix that only became visible is no rename: the rename check sees the base's values for the rows left out.
@@ -254,9 +256,10 @@ export async function prepareSync(
     if (server && !where.move && isUpToDate(rows, rewriteRelations || rewriteLinks || notePhotos.repaired)) {
       // The only writes before Apply (spec): when both sides agree, the card is stored as the base on a first Sync,
       // and over a base read without some of the rows (a date with a label added after it was stored, a part of an
-      // older reader), so those rows count for this contact from now on.
+      // older reader, a row Sync was turned back on for after it was stored), so those rows count for this contact
+      // from now on.
       // And when what the base remembers about the server's photo changed (`photoDamaged`).
-      if (!baseEntry || baseRows.length < deps.rows.length || wasDamaged !== server.photoDamaged) {
+      if (!baseEntry || leavesOut || wasDamaged !== server.photoDamaged) {
         await deps.state.set(uid, withPhotoDamaged({ raw: server.baseRaw, etag: server.etag, href: server.href, reader: CURRENT_READER }, server.photoDamaged));
       }
       return { kind: 'upToDate' };

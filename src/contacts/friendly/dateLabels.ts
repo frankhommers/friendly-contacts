@@ -49,30 +49,65 @@ export function labelledDateRow(label: string, property: string, since?: number)
 }
 
 /**
- * The rows a sync base stored at `storedAt` by `reader` is read with: `rows` without the dates with a label added
- * after it, and without the rows of a later reader (`sinceReader` above `reader`). The base of the device that added
- * the row holds the date, but the note it belongs to may not have been filled (the sync bases are per device, the
- * settings travel): read with the row, the date would look removed in the note. Without it the date is the card's
- * own, so Sync brings it into the note. A base without `storedAt` is older than every row with a `since`; a row
- * without `since` is always there. Likewise a part a later reader made visible (a department, a prefix) was never in
- * the note: read without its row it is the card's own, not a removal. Relation rows carry no reader mark.
+ * Whether a base stored at `storedAt` by `reader` predates `row` as a labelled date added after it, or a row of a
+ * later reader (`sinceReader` above `reader`). The base of the device that added the row holds the date, but the note
+ * it belongs to may not have been filled (the sync bases are per device, the settings travel): read with the row, the
+ * date would look removed in the note. Without it the date is the card's own, so Sync brings it into the note. A base
+ * without `storedAt` is older than every row with a `since`; a row without `since` is always there. Likewise a part a
+ * later reader made visible (a department, a prefix) was never in the note: read without its row it is the card's
+ * own, not a removal. Relation rows carry no reader mark. Such rows may be patched back (`withUnfilledDates`,
+ * `withFilledLeftOut`).
+ */
+function addedAfter(row: MappingRow, storedAt: number | undefined, reader: Reader): boolean {
+  return (
+    (isLabelledDateRow(row) && (row.since ?? 0) > (storedAt ?? 0)) ||
+    (row.kind !== 'relation' && row.sinceReader !== undefined && row.sinceReader > reader)
+  );
+}
+
+/**
+ * Whether a base stored at `storedAt` predates Sync being turned back on for `row` (`syncSince`). The base may still
+ * hold the row's lines from before Sync was turned off, and the owner may have cleaned the card since: read with the
+ * row, a cleaned card would look like a removal on the server. A row with Sync off is skipped anyway.
+ */
+function syncedAfter(row: MappingRow, storedAt: number | undefined): boolean {
+  return !row.skip && row.syncSince !== undefined && row.syncSince > (storedAt ?? 0);
+}
+
+/**
+ * The rows a sync base stored at `storedAt` by `reader` is read with: `rows` without the rows added after it (see
+ * `addedAfter`), and with `skip` on each row Sync was turned back on for after it (see `syncedAfter`). Such a row is
+ * marked, not dropped, so its lines in the base are not read by another row whose pattern also matches.
  */
 export function rowsForBase(
   rows: MappingRow[],
   storedAt: number | undefined,
   reader: Reader = CURRENT_READER,
 ): MappingRow[] {
-  return rows.filter(
-    (row) =>
-      (!isLabelledDateRow(row) || (row.since ?? 0) <= (storedAt ?? 0)) &&
-      (row.kind === 'relation' || row.sinceReader === undefined || row.sinceReader <= reader),
-  );
+  return rows
+    .filter((row) => !addedAfter(row, storedAt, reader))
+    .map((row) => (syncedAfter(row, storedAt) ? { ...row, skip: true as const } : row));
+}
+
+/** Whether `rowsForBase` reads a base stored at `storedAt` by `reader` without some of `rows`. */
+export function baseLeavesOut(rows: MappingRow[], storedAt: number | undefined, reader: Reader = CURRENT_READER): boolean {
+  return rows.some((row) => addedAfter(row, storedAt, reader) || syncedAfter(row, storedAt));
 }
 
 /**
- * The note's properties to patch the base with (an export): `note` plus the base's values for the rows `rowsForBase`
- * leaves out (for `storedAt` and `reader`) that the note leaves empty. Such a date or part was not filled into the
- * note, so it is no removal. `base`: the base read with all `rows`.
+ * Whether `key` of a base belongs to a row read without because it was added after the base (`addedAfter`). Never a
+ * row with Sync off, and never one Sync was turned back on for after the base (`syncedAfter`): its values in the base
+ * are from before, so patching them back would read the stale base with the row again.
+ */
+function patchable(key: string, rows: MappingRow[], storedAt: number | undefined, reader: Reader): boolean {
+  const row = rowForProperty(key, rows)?.row;
+  return row !== undefined && addedAfter(row, storedAt, reader) && !syncedAfter(row, storedAt);
+}
+
+/**
+ * The note's properties to patch the base with (an export): `note` plus the base's values for the rows added after
+ * the base (see `addedAfter`, for `storedAt` and `reader`) that the note leaves empty. Such a date or part was not
+ * filled into the note, so it is no removal. `base`: the base read with all `rows`.
  */
 export function withUnfilledDates(
   note: Record<string, FriendlyValue>,
@@ -81,19 +116,19 @@ export function withUnfilledDates(
   storedAt: number | undefined,
   reader: Reader = CURRENT_READER,
 ): Record<string, FriendlyValue> {
-  const kept = rowsForBase(rows, storedAt, reader);
   const result = { ...note };
   for (const [key, value] of Object.entries(base)) {
-    if (rowForProperty(key, kept) === undefined && isEmptyValue(note[key])) result[key] = value;
+    if (patchable(key, rows, storedAt, reader) && isEmptyValue(note[key])) result[key] = value;
   }
   return result;
 }
 
 /**
- * `base` plus the full base's value for each row `rowsForBase` leaves out that the note already holds with that same
- * value: another device filled it into the note, so this base knew it, and a removal on the card is a removal.
- * A row the note leaves empty or holds with another value stays out (a server addition, or a conflict).
- * `full`: the base read with all `rows`.
+ * `base` plus the full base's value for each row added after the base (see `addedAfter`) that the note already holds
+ * with that same value: another device filled it into the note, so this base knew it, and a removal on the card is a
+ * removal. A row the note leaves empty or holds with another value stays out (a server addition, or a conflict).
+ * A row Sync was turned back on for after the base stays out too (see `patchable`). `full`: the base read with all
+ * `rows`.
  */
 export function withFilledLeftOut(
   base: Record<string, FriendlyValue>,
@@ -103,10 +138,9 @@ export function withFilledLeftOut(
   storedAt: number | undefined,
   reader: Reader = CURRENT_READER,
 ): Record<string, FriendlyValue> {
-  const kept = rowsForBase(rows, storedAt, reader);
   const result = { ...base };
   for (const [key, value] of Object.entries(full)) {
-    if (rowForProperty(key, kept) === undefined && !isEmptyValue(value) && sameValue(note[key], value, key)) {
+    if (patchable(key, rows, storedAt, reader) && !isEmptyValue(value) && sameValue(note[key], value, key)) {
       result[key] = value;
     }
   }
