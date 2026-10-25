@@ -1176,6 +1176,22 @@ describe('rows with Sync off', () => {
       }
     });
 
+    it('leaves the DAVx5 grouped 3.0 form of a row with Sync off alone, byte for byte', () => {
+      const grouped = card('FN:X', 'item1.X-ABRELATEDNAMES:urn:uuid:sem-uid', 'item1.X-ABLabel:_$!<Friend>!$_', 'REV:old');
+      expect(needsLegacyRewrite(grouped, rows, ctx)).toBe(false);
+      const result = edit(grouped, toFriendly(grouped, rows, ctx).props, rows, { rewriteLegacyRelations: true });
+      expect(result.lines).toEqual(grouped);
+      for (const line of grouped.filter((l) => l.group === 'item1')) expect(result.lines).toContain(line);
+      expect(serializeCard(result.lines)).toBe(serializeCard(grouped));
+    });
+
+    it('still rewrites the DAVx5 grouped 3.0 form with Sync on (guards the test)', () => {
+      const grouped = card('FN:X', 'item1.X-ABRELATEDNAMES:urn:uuid:sem-uid', 'item1.X-ABLabel:_$!<Friend>!$_', 'REV:old');
+      expect(needsLegacyRewrite(grouped, DEFAULT_MAPPING, ctx)).toBe(true);
+      const result = edit(grouped, toFriendly(grouped, DEFAULT_MAPPING, ctx).props, DEFAULT_MAPPING, { rewriteLegacyRelations: true });
+      expect(texts(result.lines)).not.toContain('item1.X-ABRELATEDNAMES:urn:uuid:sem-uid');
+    });
+
     it('rewrites a line of a row with Sync on next to one with Sync off', () => {
       const both = card('FN:X', 'RELATED;TYPE=friend:urn:uuid:sem-uid', 'RELATED;TYPE=child:urn:uuid:sem-uid', 'REV:old');
       expect(needsLegacyRewrite(both, rows, ctx)).toBe(true);
