@@ -1,11 +1,11 @@
-## Friendly Contacts 3.0.0-alpha.14
+## Friendly Contacts 3.0.0-alpha.15
 
-**Sync all contacts: one list of everything that differs.** Run the command **Sync all contacts**, or click the new sync button in the contacts sidebar. A tab opens that checks every contact note against its card.
+**Sync per property: keep a property such as `friends` off your cards.** The property table (Settings → Property names) has a new column **Sync**, ticked for every row.
 
-- Left: each contact that differs, with what is going on: **From <address book>**, **From Obsidian**, **Conflict**, **New card** or **Check warning**. Above it: how many are up to date.
-- Right: the same review as **Sync this contact**, for the selected contact. Pick per difference, then **Apply**, or go on with **Previous** and **Next**.
-- **Apply all that are ready** applies every contact with the choices shown for it. It skips open conflicts, new cards (send those one by one) and contacts whose review carries a warning.
-- Before anything is written, the contact is checked again. If the note or the card changed since the scan, nothing is written and the contact shows again with "Changed since the scan; check it again."
-- Contacts that cannot be synced are listed at the bottom with the reason. **Scan again** checks everything anew.
+- Untick a row and Sync and Import from the address book no longer read that property from cards or write it to them. It stays in your notes, and the sidebar, mirroring and the people graph keep using it.
+- Unticking removes nothing. Lines already on a card stay there, also ones added on a phone; remove them yourself if you want them gone. A line of an unticked row is never read as another property (a `RELATED;TYPE=friend,colleague` line does not become a colleague).
+- With **Links to Obsidian notes on cards** on, a person you only reach through an unticked relationship gets no link; Sync lists those contacts and Apply removes those links.
+- Tick it again and the review shows the differences: values only in the note go to the card, values only on the card come into the note, and different values on both sides are a conflict. Nothing is ever preselected that removes a value from a note, also not after **Reset to defaults** or after adding a date with a label.
+- `uid`, `name` and `photo` are always synced. Exporting a note to a `.vcf` file and importing a `.vcf` file are not affected.
 
-**Turn Sync off for a note:** put `sync: false` in its properties. Sync all leaves it out, and **Sync this contact** says why it does nothing.
+Update the plugin on every desktop that shares the vault: an older version ignores the Sync column.
