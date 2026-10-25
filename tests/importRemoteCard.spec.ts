@@ -4,6 +4,8 @@ import type { Source } from "src/settings/settings";
 const state = vi.hoisted(() => ({
   files: new Map<string, string>(),
   choice: "replace" as "replace" | "skip",
+  /** Property names whose row has Sync off. */
+  syncOff: [] as string[],
 }));
 
 vi.mock("obsidian", async (importOriginal) => {
@@ -31,7 +33,14 @@ vi.mock("src/context/sharedAppContext", () => ({ getApp: () => ({}), getPluginDi
 vi.mock("src/context/sharedSettingsContext", async () => {
   const { DEFAULT_SETTINGS } = await import("src/settings/setting");
   const settings = { ...DEFAULT_SETTINGS, contactsFolder: "Contacts", sources: [], defaultSource: "", noteLinks: { enabled: true, vaultName: "Notes", formerVaultNames: [] } };
-  return { getSettings: () => settings, updateSetting: async () => {}, settings: { value: settings } };
+  const getSettings = () => ({
+    ...settings,
+    friendly: {
+      ...settings.friendly,
+      mapping: settings.friendly.mapping.map((row) => (state.syncOff.includes(row.property) ? { ...row, sync: false as const } : row)),
+    },
+  });
+  return { getSettings, updateSetting: async () => {}, settings: { value: settings } };
 });
 
 import { contactSyncState, importRemoteCard } from "src/contacts/obsidianNotes";
@@ -61,6 +70,7 @@ function fakeApp() {
 beforeEach(() => {
   state.files.clear();
   state.choice = "replace";
+  state.syncOff = [];
 });
 
 describe("importRemoteCard", () => {
@@ -117,5 +127,27 @@ describe("importRemoteCard", () => {
     const nameless = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:zzz\r\nEND:VCARD\r\n";
     expect(await importRemoteCard(fakeApp(), { uid: "zzz", raw: nameless }, { href: "/z.vcf" }, source)).toBe("unnamed");
     expect(state.files.size).toBe(0);
+  });
+});
+
+describe("importRemoteCard with a property with Sync off", () => {
+  const FRIENDS = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:abc-2\r\nFN:Anna Jansen\r\nN:Jansen;Anna;;;\r\nitem1.X-ABRELATEDNAMES:Piet\r\nitem1.X-ABLabel:_$!<Friend>!$_\r\nitem2.X-ABRELATEDNAMES:Sem\r\nitem2.X-ABLabel:_$!<Child>!$_\r\nEND:VCARD\r\n";
+  const importIt = async () => {
+    const app = fakeApp();
+    await importRemoteCard(app, { uid: "abc-2", raw: FRIENDS, etag: "e1", href: "/abc-2.vcf" }, { href: "/abc-2.vcf" }, source);
+    return state.files.get("Contacts/Anna Jansen.md") ?? "";
+  };
+
+  it("imports every property while all sync", async () => {
+    const note = await importIt();
+    expect(note).toMatch(/^friends:/m);
+    expect(note).toMatch(/^children:/m);
+  });
+
+  it("the new note has the other relationship but not the one with Sync off", async () => {
+    state.syncOff = ["friends"];
+    const note = await importIt();
+    expect(note).toMatch(/^children:/m);
+    expect(note).not.toMatch(/^friends:/m);
   });
 });

@@ -1,7 +1,7 @@
 import { parseCard, serializeCard, serializeLine } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
-import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, isMappedProperty, MappingRow, syncRows } from 'src/contacts/friendly/mapping';
 import { cardNoteLinks, NoteLinkOptions } from 'src/contacts/friendly/noteLinks';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue, toFriendly } from 'src/contacts/friendly/translate';
@@ -1976,5 +1976,43 @@ describe('links to Obsidian notes on cards', () => {
     expect(prepared.rewriteLinks).toBe(false);
     expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
     expect(links(t.cards.get(HREF)!.raw)).toEqual([[SEM_URL, 'Sem de Vries']]);
+  });
+});
+
+describe('a property with Sync off', () => {
+  const FRIEND = (name: string) => `TITLE:Baker\r\nitem7.X-ABRELATEDNAMES:${name}\r\nitem7.X-ABLabel:_$!<Friend>!$_\r\n`;
+  const SERVER = edit(V1, 'TITLE:Baker\r\n', FRIEND('Kees'));
+  const BASE = edit(V1, 'TITLE:Baker\r\n', FRIEND('Kees'));
+  const rowsOff = syncRows(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
+  // The note is what the stored rows read from the base, with another friend in it.
+  const local = () => ({ ...toFriendly(parseCard(BASE), DEFAULT_MAPPING, ctx).props, friends: ['[[Piet]]'] });
+
+  it('with Sync on the difference in friends is a review', async () => {
+    const t = setup({ server: SERVER, base: BASE, reader: 3, local: local() });
+    expect(changedRows(await reviewOf(t))).toEqual([['friends', 'local']]);
+  });
+
+  it('a difference only in that property is up to date', async () => {
+    const t = setup({ server: SERVER, base: BASE, reader: 3, local: local(), rows: rowsOff });
+    expect(await t.prepare()).toEqual({ kind: 'upToDate' });
+    expect(t.pushes).toEqual([]);
+    expect(t.note.writes).toEqual([]);
+  });
+
+  it('Apply of another change keeps the card line and the note property', async () => {
+    const t = setup({ server: SERVER, base: BASE, reader: 3, local: { ...local(), email: 'jan@new.nl' }, rows: rowsOff });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pushed' });
+    const texts = lineTexts(t.cards.get(HREF)!.raw);
+    expect(texts).toEqual(expect.arrayContaining(['item7.X-ABRELATEDNAMES:Kees', 'item7.X-ABLabel:_$!<Friend>!$_']));
+    expect(texts).not.toContain('item7.X-ABRELATEDNAMES:Piet');
+    expect(t.note.frontmatter.friends).toEqual(['[[Piet]]']);
+    for (const write of t.note.writes) expect(write.remove).not.toContain('friends');
+  });
+
+  it('a pull of another change leaves the note property alone too', async () => {
+    const changed = edit(SERVER, 'TITLE:Baker', 'TITLE:Chef');
+    const t = setup({ server: changed, base: BASE, reader: 3, local: local(), rows: rowsOff });
+    expect(await t.sync()).toEqual({ kind: 'done', outcome: 'pulled' });
+    expect(t.note.frontmatter).toMatchObject({ title: 'Chef', friends: ['[[Piet]]'] });
   });
 });

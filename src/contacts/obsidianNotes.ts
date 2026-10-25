@@ -9,7 +9,7 @@ import { blockedNotes, convertFrontmatter, Rename, renameAllInFrontmatter, techn
 import { withUnfilledDates } from "src/contacts/friendly/dateLabels";
 import { parseCard, serializeCard } from "src/contacts/friendly/lines";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
-import { MappingRow } from "src/contacts/friendly/mapping";
+import { MappingRow, syncRows } from "src/contacts/friendly/mapping";
 import { photoDamagedOn, repairDamagedPhotos, repairNotePhotos } from "src/contacts/friendly/photo";
 import type { MirrorEnv } from "src/contacts/relationMirror";
 import { linkTarget, RelationContext, resolveRemoteName } from "src/contacts/friendly/relations";
@@ -485,7 +485,8 @@ export async function importCard(
   const fileName = contactFileName(value("N"), value("FN"));
   if (!fileName) return undefined;
   const ctx = await relationContextFor(app, normalizePath(newContactLocation(app, fileName, contactsFolder).note));
-  const props = { ...toFriendly(lines, friendly.mapping, ctx, { ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults }).props, ...extra };
+  // A property with Sync off is not imported; the note is still rendered with the stored rows.
+  const props = { ...toFriendly(lines, syncRows(friendly.mapping), ctx, { ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults }).props, ...extra };
   const content = renderFriendlyNote(props, defaultHashtag, friendly.mapping);
   const path = await createContactFile(app, contactsFolder, content, `${fileName}.md`);
   const written = path !== undefined && (await app.vault.adapter.exists(path)) && (await app.vault.adapter.read(path)) === content;

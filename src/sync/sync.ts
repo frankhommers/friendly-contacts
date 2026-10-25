@@ -16,7 +16,7 @@ import {
   syncRelationContexts,
 } from "src/contacts/obsidianNotes";
 import {contactNameFor, renameBlocked, renamesFolder} from "src/contacts/layoutNotes";
-import {syncTurnedOff} from "src/contacts/friendly/mapping";
+import {syncRows, syncTurnedOff} from "src/contacts/friendly/mapping";
 import {getApp} from "src/context/sharedAppContext";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { mirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
@@ -203,11 +203,13 @@ export async function flowDepsFor(
   over: Partial<Pick<SyncFlowDeps, 'notify' | 'review'>> = {},
 ): Promise<SyncFlowDeps | { refused: string }> {
   const settings = getSettings();
-  const rows = settings.friendly.mapping;
+  // The vCard-key check reads the note as stored; Sync itself works on the rows with Sync off skipped (never saved).
+  const storedRows = settings.friendly.mapping;
+  const rows = syncRows(storedRows);
   const note = noteIO(app, file);
   // The contact's name: with a fixed note name (`index`, also in a folder made with other settings) its folder's name.
   const name = contactNameFor(app, file);
-  if (hasVCardValues(await note.readFrontmatter(), rows)) {
+  if (hasVCardValues(await note.readFrontmatter(), storedRows)) {
     // Sync reads only friendly properties: a UID kept in `UID` is not seen, and syncing would create a second card.
     return { refused: `${name} still has vCard properties (FN, UID, TEL[CELL], ...). Run "Convert contacts to friendly properties" first, then sync.` };
   }

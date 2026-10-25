@@ -1,5 +1,5 @@
 import { parseCard } from 'src/contacts/friendly/lines';
-import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, syncRows } from 'src/contacts/friendly/mapping';
 import {
   cardNoteLinks,
   DEFAULT_NOTE_LINKS,
@@ -126,6 +126,14 @@ describe('wantedNoteLinks', () => {
     expect(wantedNoteLinks(props, DEFAULT_MAPPING, ctx, 'Notes').map((l) => l.label)).toEqual([
       'Ger Verhallen',
       'Sem de Vries',
+    ]);
+  });
+
+  it('leaves out a relationship with Sync off, unless another relationship holds the same note', () => {
+    const rows = syncRows(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
+    expect(wantedNoteLinks({ friends: ['[[Ger Verhallen]]'] }, rows, ctx, 'Notes')).toEqual([]);
+    expect(wantedNoteLinks({ friends: ['[[Ger Verhallen]]'], colleagues: ['[[Ger Verhallen]]'] }, rows, ctx, 'Notes')).toEqual([
+      { url, label: 'Ger Verhallen' },
     ]);
   });
 

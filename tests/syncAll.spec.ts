@@ -1,4 +1,4 @@
-import { DEFAULT_MAPPING } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, MappingRow, syncRows } from 'src/contacts/friendly/mapping';
 import { RelationContext } from 'src/contacts/friendly/relations';
 import { FriendlyValue } from 'src/contacts/friendly/translate';
 import { ReviewRow } from 'src/sync/review';
@@ -121,7 +121,7 @@ const noRelations: RelationContext = {
 const CONVERT = 'Kees Bakker still has vCard properties; run Convert first';
 
 /** Four notes over one book: Jan changed on the server, Piet up to date, Nieuw without card, Kees needing Convert. */
-function setup(opts: { books?: Book[] } = {}) {
+function setup(opts: { books?: Book[]; rows?: MappingRow[] } = {}) {
   const radicale = fakeBook('radicale', 'Radicale');
   const books = opts.books ?? [radicale];
   const notes: Record<string, { name: string; frontmatter: Record<string, unknown> }> = {
@@ -153,7 +153,7 @@ function setup(opts: { books?: Book[] } = {}) {
         },
         path,
         name,
-        rows: DEFAULT_MAPPING,
+        rows: opts.rows ?? DEFAULT_MAPPING,
         sources: books.map((b) => b.source),
         active: books.map((b) => b.source),
         defaultSource: books[0].id,
@@ -187,6 +187,19 @@ function setup(opts: { books?: Book[] } = {}) {
 const kinds = (all: SyncAll) => all.state.items.map((i) => [i.name, i.kind]);
 
 describe('SyncAll.scan', () => {
+  it('a contact whose only difference is a property with Sync off is up to date', async () => {
+    const friendsOff = syncRows(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
+    const kindOfPiet = async (rows?: MappingRow[]) => {
+      const t = setup({ rows });
+      t.notes['People/Piet Jansen.md'].frontmatter.friends = ['[[Kees]]'];
+      const all = new SyncAll(t.deps);
+      await all.scan();
+      return all.state.items.find((i) => i.name === 'Piet Jansen')?.kind;
+    };
+    expect(await kindOfPiet()).toBe('review');
+    expect(await kindOfPiet(friendsOff)).toBe('upToDate');
+  });
+
   it('lists every note by name with what a Sync would do, and writes nothing', async () => {
     const t = setup();
     const all = new SyncAll(t.deps);
