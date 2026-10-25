@@ -125,9 +125,9 @@ function memoryState(initial: Record<string, SyncStateEntry> = {}) {
       sets.push(uid);
       entries.set(cleanUid(uid), entry);
     },
-    touch: async (uid, storedAt) => {
+    touch: async (uid, datesAt) => {
       const entry = entries.get(cleanUid(uid));
-      if (entry) entries.set(cleanUid(uid), { ...entry, storedAt: Math.max(entry.storedAt ?? 0, storedAt) });
+      if (entry) entries.set(cleanUid(uid), { ...entry, datesAt: Math.max(entry.datesAt ?? 0, datesAt) });
     },
     remove: async (uid) => {
       entries.delete(cleanUid(uid));
@@ -344,7 +344,7 @@ describe('prepareSync', () => {
       it('a touched base keeps the phone\'s deletion: the server is preselected', async () => {
         const t = setup({ server: SERVER_WITHOUT, base: DATED, reader: 2, storedAt: 1000, rows: rowsSince(2000), local: filled() });
         await t.deps.state.touch(UID, 2000);
-        expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: 'old', href: HREF, reader: 2, storedAt: 2000 });
+        expect(t.entries.get(UID)).toEqual({ raw: DATED, etag: 'old', href: HREF, reader: 2, storedAt: 1000, datesAt: 2000 });
         expect(changedRows(await reviewOf(t))).toEqual([['dating', 'server']]);
       });
     });
@@ -2073,6 +2073,16 @@ describe('turning Sync back on for a property', () => {
     expect(t.sets).toEqual([]);
     const cleaned = setup({ server: V1, base: BASE, reader: 3, storedAt: 3000, rows: rowsOn, local: note() });
     expect(changedRows(await reviewOf(cleaned))).toEqual([['friends', 'server']]);
+  });
+
+  it('a base touched after Sync was turned on (a date with a label added) is still stale: Obsidian is preselected', async () => {
+    const t = setup({ server: V1, base: BASE, reader: 3, storedAt: 1000, rows: rowsOn, local: note() });
+    await t.deps.state.touch(UID, 3000);
+    expect(t.entries.get(UID)).toMatchObject({ storedAt: 1000, datesAt: 3000 });
+    const prepared = await reviewOf(t);
+    expect(changedRows(prepared)).toEqual([['friends', 'local']]);
+    expect(await t.apply(prepared)).toEqual({ kind: 'done', outcome: 'pushed' });
+    expect(t.note.frontmatter.friends).toEqual(['[[Anna]]', '[[Bram]]', '[[Cor]]']);
   });
 
   it('the friends lines of the base are not read by another row', async () => {

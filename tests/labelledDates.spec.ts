@@ -161,15 +161,15 @@ describe("dates with a label in the notes", () => {
       baseOf: { source, uid },
     });
 
-    it("moves the storedAt of the bases of the notes it is given, in the source they were read from", async () => {
+    it("moves the datesAt of the bases of the notes it is given, in the source they were read from; storedAt stays", async () => {
       disk.set("plugin/sync-state/other/index.json", JSON.stringify({ anna: { etag: "9", href: "/o.vcf", storedAt: 10 }, bob: { etag: "8", href: "/b.vcf" } }));
       disk.set("plugin/sync-state/other/anna.vcf", ANNA_CARD);
       disk.set("plugin/sync-state/other/bob.vcf", ANNA_CARD);
       const notes = await notesWithBases(vault.app);
       expect(await touchBases(vault.app, [...notes, noteOf("bob", "other")], 5000)).toEqual({ touched: 2, failed: [] });
-      expect(indexOf("radicale").anna).toEqual({ etag: "1", href: "/anna.vcf", reader: 2, storedAt: 5000 });
-      expect(indexOf("other").anna.storedAt).toBe(10);
-      expect(indexOf("other").bob).toEqual({ etag: "8", href: "/b.vcf", storedAt: 5000 });
+      expect(indexOf("radicale").anna).toEqual({ etag: "1", href: "/anna.vcf", reader: 2, datesAt: 5000 });
+      expect(indexOf("other").anna).toEqual({ etag: "9", href: "/o.vcf", storedAt: 10 });
+      expect(indexOf("other").bob).toEqual({ etag: "8", href: "/b.vcf", datesAt: 5000 });
       expect(disk.get("plugin/sync-state/radicale/anna.vcf")).toBe(ANNA_CARD);
     });
 

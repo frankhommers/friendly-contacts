@@ -97,17 +97,17 @@ describe('rowsForBase', () => {
   const rows = (since?: number) => insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', since));
 
   it('keeps a row without since', () => {
-    expect(rowsForBase(rows(), 1000)).toEqual(rows());
+    expect(rowsForBase(rows(), { storedAt: 1000 })).toEqual(rows());
     expect(rowsForBase(rows(), undefined)).toEqual(rows());
   });
 
   it('keeps a row added before or when the base was stored', () => {
-    expect(rowsForBase(rows(500), 1000)).toEqual(rows(500));
-    expect(rowsForBase(rows(1000), 1000)).toEqual(rows(1000));
+    expect(rowsForBase(rows(500), { storedAt: 1000 })).toEqual(rows(500));
+    expect(rowsForBase(rows(1000), { storedAt: 1000 })).toEqual(rows(1000));
   });
 
   it('drops a row added after the base was stored', () => {
-    expect(rowsForBase(rows(2000), 1000)).toEqual(DEFAULT_MAPPING);
+    expect(rowsForBase(rows(2000), { storedAt: 1000 })).toEqual(DEFAULT_MAPPING);
   });
 
   it('a base without storedAt is older than every row with since', () => {
@@ -129,8 +129,8 @@ describe('rowsForBase', () => {
 
   it('filters dates with a label by since whatever the reader', () => {
     const withoutMarked = rowsForBase(DEFAULT_MAPPING, undefined, 2);
-    expect(rowsForBase(rows(2000), 1000, 2)).toEqual(withoutMarked);
-    expect(names(rowsForBase(rows(500), 1000, 2))).toContain('dating');
+    expect(rowsForBase(rows(2000), { storedAt: 1000 }, 2)).toEqual(withoutMarked);
+    expect(names(rowsForBase(rows(500), { storedAt: 1000 }, 2))).toContain('dating');
   });
 
   it('keeps a relation row whatever its mark (only fields and components carry one)', () => {
@@ -141,7 +141,7 @@ describe('rowsForBase', () => {
   it('never drops other rows', () => {
     // Only a labelled row has a since; one on another row (a hand-edited data.json) is ignored.
     const anniversary = DEFAULT_MAPPING.find((r) => r.property === 'anniversary')!;
-    expect(rowsForBase([{ ...anniversary, since: 5000 } as unknown as MappingRow], 1000)).toHaveLength(1);
+    expect(rowsForBase([{ ...anniversary, since: 5000 } as unknown as MappingRow], { storedAt: 1000 })).toHaveLength(1);
   });
 });
 
@@ -150,7 +150,7 @@ describe('withUnfilledDates', () => {
   const base = { name: 'Dora', dating: '2012-05-01', 'dating-2': '2014-06-02', birthday: '1990-01-01' };
 
   it('takes the dates of a row added after the base was stored that the note does not hold', () => {
-    expect(withUnfilledDates({ name: 'Dora' }, base, rows, 1000)).toEqual({
+    expect(withUnfilledDates({ name: 'Dora' }, base, rows, { storedAt: 1000 })).toEqual({
       name: 'Dora',
       dating: '2012-05-01',
       'dating-2': '2014-06-02',
@@ -158,7 +158,7 @@ describe('withUnfilledDates', () => {
   });
 
   it('keeps what the note holds', () => {
-    expect(withUnfilledDates({ name: 'Dora', dating: '2013-01-01', 'dating-2': '' }, base, rows, 1000)).toEqual({
+    expect(withUnfilledDates({ name: 'Dora', dating: '2013-01-01', 'dating-2': '' }, base, rows, { storedAt: 1000 })).toEqual({
       name: 'Dora',
       dating: '2013-01-01',
       'dating-2': '2014-06-02',
@@ -166,17 +166,17 @@ describe('withUnfilledDates', () => {
   });
 
   it('changes nothing for a base stored after the row was added', () => {
-    expect(withUnfilledDates({ name: 'Dora' }, base, rows, 3000)).toEqual({ name: 'Dora' });
+    expect(withUnfilledDates({ name: 'Dora' }, base, rows, { storedAt: 3000 })).toEqual({ name: 'Dora' });
   });
 
   it('takes the parts a reader-2 base was read without that the note leaves empty', () => {
     const parts = { name: 'Jan', company: 'Acme', department: 'Sales', 'name-prefix': 'Dr' };
-    expect(withUnfilledDates({ name: 'Jan', company: 'Acme' }, parts, DEFAULT_MAPPING, 1000, 2)).toEqual(parts);
-    expect(withUnfilledDates({ name: 'Jan', company: 'Acme', department: 'HR' }, parts, DEFAULT_MAPPING, 1000, 2)).toEqual({
+    expect(withUnfilledDates({ name: 'Jan', company: 'Acme' }, parts, DEFAULT_MAPPING, { storedAt: 1000 }, 2)).toEqual(parts);
+    expect(withUnfilledDates({ name: 'Jan', company: 'Acme', department: 'HR' }, parts, DEFAULT_MAPPING, { storedAt: 1000 }, 2)).toEqual({
       ...parts,
       department: 'HR',
     });
-    expect(withUnfilledDates({ name: 'Jan', company: 'Acme' }, parts, DEFAULT_MAPPING, 1000, 3)).toEqual({ name: 'Jan', company: 'Acme' });
+    expect(withUnfilledDates({ name: 'Jan', company: 'Acme' }, parts, DEFAULT_MAPPING, { storedAt: 1000 }, 3)).toEqual({ name: 'Jan', company: 'Acme' });
   });
 
   it('an export over a reader-2 base keeps the parts the note does not have yet', () => {
@@ -184,7 +184,7 @@ describe('withUnfilledDates', () => {
     const baseLines = parseCard(raw);
     const before = toFriendly(baseLines, DEFAULT_MAPPING, NO_LOOKUPS, { reader: 2 });
     const note = { uid: 'u1', name: 'Jan Jansen', firstname: 'Jan', lastname: 'Jansen', company: 'Acme' };
-    const out = patch(baseLines, before, withUnfilledDates(note, before.props, DEFAULT_MAPPING, 1000, 2), DEFAULT_MAPPING, NO_LOOKUPS);
+    const out = patch(baseLines, before, withUnfilledDates(note, before.props, DEFAULT_MAPPING, { storedAt: 1000 }, 2), DEFAULT_MAPPING, NO_LOOKUPS);
     expect(out.lines.map((l) => `${l.name}:${l.value}`)).toEqual(expect.arrayContaining(['ORG:Acme;Sales', 'N:Jansen;Jan;;Dr;']));
   });
 });
@@ -197,64 +197,101 @@ describe('a row with Sync turned back on (syncSince)', () => {
   const FRIENDS = ['[[Anna]]', '[[Bram]]', '[[Cor]]'];
 
   it('rowsForBase marks it skip for a base stored before then, in place', () => {
-    expect(rowsForBase(since(2000), 1000)).toEqual([{ ...friendsRow, syncSince: 2000, skip: true }]);
+    expect(rowsForBase(since(2000), { storedAt: 1000 })).toEqual([{ ...friendsRow, syncSince: 2000, skip: true }]);
     expect(rowsForBase(since(2000), undefined)).toEqual([{ ...friendsRow, syncSince: 2000, skip: true }]);
-    expect(rowsForBase(withSince(2000), 1000)).toHaveLength(DEFAULT_MAPPING.length);
+    expect(rowsForBase(withSince(2000), { storedAt: 1000 })).toHaveLength(DEFAULT_MAPPING.length);
   });
 
   it('rowsForBase leaves it unmarked for a later base, and a row without syncSince', () => {
-    expect(rowsForBase(since(2000), 3000)).toEqual(since(2000));
-    expect(rowsForBase(since(2000), 2000)).toEqual(since(2000));
-    expect(rowsForBase(since(), 1000)).toEqual(since());
+    expect(rowsForBase(since(2000), { storedAt: 3000 })).toEqual(since(2000));
+    expect(rowsForBase(since(2000), { storedAt: 2000 })).toEqual(since(2000));
+    expect(rowsForBase(since(), { storedAt: 1000 })).toEqual(since());
   });
 
   it('baseLeavesOut', () => {
-    expect(baseLeavesOut(since(2000), 1000)).toBe(true);
-    expect(baseLeavesOut(since(2000), 3000)).toBe(false);
-    expect(baseLeavesOut(since(), 1000)).toBe(false);
-    expect(baseLeavesOut(DEFAULT_MAPPING, 1000)).toBe(false);
+    expect(baseLeavesOut(since(2000), { storedAt: 1000 })).toBe(true);
+    expect(baseLeavesOut(since(2000), { storedAt: 3000 })).toBe(false);
+    expect(baseLeavesOut(since(), { storedAt: 1000 })).toBe(false);
+    expect(baseLeavesOut(DEFAULT_MAPPING, { storedAt: 1000 })).toBe(false);
   });
 
   it('baseLeavesOut is true for the existing reasons too', () => {
-    expect(baseLeavesOut(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 2000)), 1000)).toBe(true);
+    expect(baseLeavesOut(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 2000)), { storedAt: 1000 })).toBe(true);
     expect(baseLeavesOut(DEFAULT_MAPPING, undefined, 2)).toBe(true);
   });
 
   it('a row with Sync off is not left out by the base: it is skipped everywhere', () => {
     const off = syncRows([{ ...friendsRow, sync: false, syncSince: 2000 }]);
-    expect(rowsForBase(off, 1000)).toEqual(off);
-    expect(baseLeavesOut(off, 1000)).toBe(false);
+    expect(rowsForBase(off, { storedAt: 1000 })).toEqual(off);
+    expect(baseLeavesOut(off, { storedAt: 1000 })).toBe(false);
   });
 
   it('withFilledLeftOut never puts it back, even when the note holds the same value', () => {
     const full = { name: 'Dora', friends: FRIENDS };
-    const result = withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, withSince(2000), 1000);
+    const result = withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, withSince(2000), { storedAt: 1000 });
     expect(result).toEqual({ name: 'Dora' });
     expect(result).not.toHaveProperty('friends');
   });
 
   it('withUnfilledDates never patches it in', () => {
     const full = { name: 'Dora', friends: FRIENDS };
-    expect(withUnfilledDates({ name: 'Dora' }, full, withSince(2000), 1000)).toEqual({ name: 'Dora' });
+    expect(withUnfilledDates({ name: 'Dora' }, full, withSince(2000), { storedAt: 1000 })).toEqual({ name: 'Dora' });
   });
 
   it('neither function patches a row with Sync off', () => {
     const off = syncRows(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
     const full = { name: 'Dora', friends: FRIENDS };
-    expect(withUnfilledDates({ name: 'Dora' }, full, off, 1000)).toEqual({ name: 'Dora' });
-    expect(withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, off, 1000)).toEqual({ name: 'Dora' });
+    expect(withUnfilledDates({ name: 'Dora' }, full, off, { storedAt: 1000 })).toEqual({ name: 'Dora' });
+    expect(withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, off, { storedAt: 1000 })).toEqual({ name: 'Dora' });
     // Also when a labelled date leaves rows out of the same base.
     const dated = insertLabelledDateRow(off, labelledDateRow('Verkering', 'dating', 2000));
-    expect(withUnfilledDates({ name: 'Dora' }, { ...full, dating: '2012-05-01' }, dated, 1000)).toEqual({ name: 'Dora', dating: '2012-05-01' });
+    expect(withUnfilledDates({ name: 'Dora' }, { ...full, dating: '2012-05-01' }, dated, { storedAt: 1000 })).toEqual({ name: 'Dora', dating: '2012-05-01' });
   });
 
   it('a labelled date added later is still patched next to a row turned back on', () => {
     const rows = insertLabelledDateRow(withSince(2000), labelledDateRow('Verkering', 'dating', 2000));
     const full = { name: 'Dora', friends: FRIENDS, dating: '2012-05-01' };
-    expect(withUnfilledDates({ name: 'Dora' }, full, rows, 1000)).toEqual({ name: 'Dora', dating: '2012-05-01' });
+    expect(withUnfilledDates({ name: 'Dora' }, full, rows, { storedAt: 1000 })).toEqual({ name: 'Dora', dating: '2012-05-01' });
     expect(
-      withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS, dating: '2012-05-01' }, rows, 1000),
+      withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS, dating: '2012-05-01' }, rows, { storedAt: 1000 }),
     ).toEqual({ name: 'Dora', dating: '2012-05-01' });
+  });
+});
+
+describe('a base whose dates were brought up to date (datesAt, set by touch)', () => {
+  const friendsRow = DEFAULT_MAPPING.find((r) => r.property === 'friends')!;
+  const rows = insertLabelledDateRow(
+    DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, syncSince: 2000 } : r)),
+    labelledDateRow('Verkering', 'dating', 2500),
+  );
+  const touched = { storedAt: 1000, datesAt: 3000 };
+  const FRIENDS = ['[[Anna]]', '[[Bram]]', '[[Cor]]'];
+
+  it('reads a date with a label added before datesAt', () => {
+    expect(names(rowsForBase(rows, touched))).toContain('dating');
+    expect(names(rowsForBase(rows, { storedAt: 1000 }))).not.toContain('dating');
+  });
+
+  it('still skips a row Sync was turned back on for after storedAt: touching changes no card', () => {
+    expect(rowsForBase(rows, touched).find((r) => r.property === 'friends')).toEqual({ ...friendsRow, syncSince: 2000, skip: true });
+    expect(baseLeavesOut(rows, touched)).toBe(true);
+    expect(baseLeavesOut(rows, { storedAt: 3000 })).toBe(false);
+  });
+
+  it('a base without storedAt that was touched: dates by datesAt, Sync since still stale', () => {
+    const read = rowsForBase(rows, { datesAt: 3000 });
+    expect(names(read)).toContain('dating');
+    expect(read.find((r) => r.property === 'friends')).toMatchObject({ skip: true });
+  });
+
+  it('a datesAt older than storedAt changes nothing', () => {
+    expect(rowsForBase(rows, { storedAt: 3000, datesAt: 1000 })).toEqual(rowsForBase(rows, { storedAt: 3000 }));
+  });
+
+  it('neither patch function puts the friends back, nor the date it now reads', () => {
+    const full = { name: 'Dora', friends: FRIENDS, dating: '2012-05-01' };
+    expect(withUnfilledDates({ name: 'Dora' }, full, rows, touched)).toEqual({ name: 'Dora' });
+    expect(withFilledLeftOut({ name: 'Dora' }, full, { name: 'Dora', friends: FRIENDS }, rows, touched)).toEqual({ name: 'Dora' });
   });
 });
 

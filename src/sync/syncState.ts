@@ -19,6 +19,12 @@ export interface SyncStateEntry {
   /** When the base was stored (ms since epoch); `set` records the time when absent. Absent: stored before it was recorded. */
   storedAt?: number;
   /**
+   * When the dates with a label were last brought up to date for this base without storing it (`touch`, after a date
+   * row is added): a date row added up to then is read with the base (see `rowsForBase`). It says nothing about the
+   * card, so it never stands in for `storedAt`. Absent: never touched since it was stored.
+   */
+  datesAt?: number;
+  /**
    * The server's copy of the photo was damaged when the base was stored (`isDamagedPhoto`), or the server has had no
    * photo since: a phone could not read it, so a card without any PHOTO line is no removal. Absent: not damaged.
    */
@@ -29,14 +35,17 @@ export interface SyncState {
   get(uid: string): Promise<SyncStateEntry | undefined>;
   set(uid: string, entry: SyncStateEntry): Promise<void>;
   /**
-   * Moves `storedAt` of the base up to `storedAt` (never back), leaving the card, etag, href and reader as they are.
-   * Does nothing when there is no base for `uid`.
+   * Moves `datesAt` of the base up to `datesAt` (never back), leaving the card, etag, href, reader and `storedAt` as
+   * they are. Does nothing when there is no base for `uid`.
    */
-  touch(uid: string, storedAt: number): Promise<void>;
+  touch(uid: string, datesAt: number): Promise<void>;
   remove(uid: string): Promise<void>;
 }
 
-type SyncIndex = Record<string, { etag: string; href: string; reader?: number; storedAt?: number; photoDamaged?: boolean }>;
+type SyncIndex = Record<
+  string,
+  { etag: string; href: string; reader?: number; storedAt?: number; datesAt?: number; photoDamaged?: boolean }
+>;
 
 /** A safe file name per UID, one-to-one: other characters (and `_` itself) become `_<hex>_`. */
 const fileNameOf = (uid: string) =>
@@ -44,7 +53,7 @@ const fileNameOf = (uid: string) =>
 
 /**
  * Stores the card as it was at the last successful sync ("base"), per UID:
- * `<dir>/<name>.vcf` holds the raw vCard, `<dir>/index.json` holds etag, href, reader and when it was stored.
+ * `<dir>/<name>.vcf` holds the raw vCard, `<dir>/index.json` holds etag, href, reader, when it was stored and when its dates were brought up to date.
  */
 export function createSyncState(store: FileStore, dir: string): SyncState {
   const indexPath = `${dir}/index.json`;
@@ -82,6 +91,7 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
       const entry: SyncStateEntry = { raw, etag: meta.etag, href: meta.href };
       if (typeof meta.reader === 'number') entry.reader = meta.reader;
       if (typeof meta.storedAt === 'number') entry.storedAt = meta.storedAt;
+      if (typeof meta.datesAt === 'number') entry.datesAt = meta.datesAt;
       if (meta.photoDamaged === true) entry.photoDamaged = true;
       return entry;
     },
@@ -94,17 +104,19 @@ export function createSyncState(store: FileStore, dir: string): SyncState {
           href: entry.href,
           ...(entry.reader === undefined ? {} : { reader: entry.reader }),
           storedAt: entry.storedAt ?? Date.now(),
+          // A base stored anew has no datesAt unless the entry brings one (a base moved to another book keeps it).
+          ...(entry.datesAt === undefined ? {} : { datesAt: entry.datesAt }),
           ...(entry.photoDamaged ? { photoDamaged: true } : {}),
         };
         await writeIndex(index);
       });
     },
-    touch(uid, storedAt) {
+    touch(uid, datesAt) {
       return serialized(async () => {
         const index = await readIndex();
         const meta = index[cleanUid(uid)];
         if (!meta) return;
-        index[cleanUid(uid)] = { ...meta, storedAt: Math.max(meta.storedAt ?? 0, storedAt) };
+        index[cleanUid(uid)] = { ...meta, datesAt: Math.max(meta.datesAt ?? 0, datesAt) };
         await writeIndex(index);
       });
     },

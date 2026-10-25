@@ -160,8 +160,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
    * were read or the confirmation was open is kept, not undone. The row is saved with the time it is added
    * (`since`): a sync base stored before then, on any device, is read without it (see `rowsForBase`).
    * A failure (reading the notes, filling, saving) is a notice, never an unhandled rejection.
-   * Once the row is saved, every base this add considered (filled or not) is marked as stored at `since` or later: on
-   * this device they agree with the row, so a note filled from a base is not read against the base without the row.
+   * Once the row is saved, the dates of every base this add considered (filled or not) are marked as up to date at
+   * `since` or later (`datesAt`, see `touchBases`): on this device they agree with the row, so a note filled from a base is not read against the base without the row.
    * That is best effort: a failure is logged and a notice, and the add stays.
    */
   const addLabelledDate = async (label: string, property: string) => {

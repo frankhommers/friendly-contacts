@@ -44,22 +44,24 @@ export async function notesWithBases(app: App): Promise<NoteWithBase[]> {
 }
 
 /**
- * Marks the bases of `notes` as stored at `storedAt` or later (card, etag, href and reader stay), in the address book
- * each was read from. Used after a date row with `since` = `storedAt` is added: from then on those bases agree with
- * the row (see `rowsForBase`), whether the note was filled from them or not. One base failing does not stop the rest.
+ * Marks the dates with a label of the bases of `notes` as up to date at `datesAt` or later (`SyncState.touch`: card,
+ * etag, href, reader and `storedAt` stay), in the address book each was read from. Used after a date row with
+ * `since` = `datesAt` is added: from then on those bases are read with the row (see `rowsForBase`), whether the note
+ * was filled from them or not. `storedAt` stays, so a row Sync was turned back on for after it still reads the base
+ * as stale. One base failing does not stop the rest.
  * `touched`: bases handled; `failed`: paths of the notes whose base could not be updated.
  */
 export async function touchBases(
   app: App,
   notes: NoteWithBase[],
-  storedAt: number,
+  datesAt: number,
 ): Promise<{ touched: number; failed: string[] }> {
   let touched = 0;
   const failed: string[] = [];
   for (const { path, baseOf } of notes) {
     if (!baseOf) continue;
     try {
-      await contactSyncState(baseOf.source, app).touch(baseOf.uid, storedAt);
+      await contactSyncState(baseOf.source, app).touch(baseOf.uid, datesAt);
       touched++;
     } catch (error) {
       failed.push(path);

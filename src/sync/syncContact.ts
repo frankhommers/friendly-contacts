@@ -216,8 +216,8 @@ export async function prepareSync(
     // rowsForBase). A row Sync was turned back on for after the base was stored is skipped in it: the base may hold
     // its values from before, which are never read as the server removing them from the note.
     const baseReader = readerOf(baseEntry?.reader);
-    const baseRows = rowsForBase(deps.rows, baseEntry?.storedAt, baseReader);
-    const leavesOut = baseLeavesOut(deps.rows, baseEntry?.storedAt, baseReader);
+    const baseRows = rowsForBase(deps.rows, baseEntry, baseReader);
+    const leavesOut = baseLeavesOut(deps.rows, baseEntry, baseReader);
     const baseCard = baseLines && {
       lines: baseLines,
       friendly: canonicalFriendly(readCard(baseLines, baseRows, deps.readOnlyCtx, deps, baseReader), deps),
@@ -230,7 +230,7 @@ export async function prepareSync(
         : undefined;
     // A prefix that only became visible is no rename: the rename check sees the base's values for the rows left out.
     const nameBase =
-      readBase && fullBase ? withUnfilledDates(readBase, fullBase, deps.rows, baseEntry?.storedAt, baseReader) : undefined;
+      readBase && fullBase ? withUnfilledDates(readBase, fullBase, deps.rows, baseEntry, baseReader) : undefined;
 
     // `urn:uuid:X` in the note and `X` on the server are the same UID (checked by pullCard); keep the server's spelling.
     const mine: Props = { ...local };
@@ -241,7 +241,7 @@ export async function prepareSync(
     const L = canonicalRelations(aligned, deps.readOnlyCtx, deps.rows);
     // A left-out row the note already holds with the base's value was filled on another device: the base knew it.
     const base =
-      readBase && fullBase ? withFilledLeftOut(readBase, fullBase, L, deps.rows, baseEntry?.storedAt, baseReader) : readBase;
+      readBase && fullBase ? withFilledLeftOut(readBase, fullBase, L, deps.rows, baseEntry, baseReader) : readBase;
 
     let rows = reviewRows(base, server?.friendly.props ?? {}, L, deps.rows, { newCard: server === undefined });
     // A new card's UID is no choice: Apply always writes the prepared one.

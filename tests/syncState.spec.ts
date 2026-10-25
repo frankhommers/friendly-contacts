@@ -147,33 +147,44 @@ describe('SyncState', () => {
   });
 
   describe('touch', () => {
-    it('updates storedAt only', async () => {
+    it('records datesAt only: storedAt, card, etag, href and reader stay', async () => {
       const { files, store } = memoryStore();
       const state = createSyncState(store, 'sync');
       await state.set('abc', { ...entry, reader: 2, storedAt: 1000 });
       await state.touch('abc', 2000);
-      expect(await state.get('abc')).toEqual({ ...entry, reader: 2, storedAt: 2000 });
+      expect(await state.get('abc')).toEqual({ ...entry, reader: 2, storedAt: 1000, datesAt: 2000 });
       expect(files.get('sync/abc.vcf')).toBe(entry.raw);
-      expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, reader: 2, storedAt: 2000 });
+      expect(JSON.parse(files.get('sync/index.json')!).abc).toEqual({ etag: 'e1', href: entry.href, reader: 2, storedAt: 1000, datesAt: 2000 });
     });
 
-    it('gives an entry that has no storedAt one, and keeps it having no reader', async () => {
+    it('leaves an entry that has no storedAt without one, and without a reader', async () => {
       const { files, store } = memoryStore();
       files.set('sync/old.vcf', entry.raw);
       files.set('sync/index.json', JSON.stringify({ old: { etag: 'e1', href: entry.href } }));
       const state = createSyncState(store, 'sync');
       await state.touch('old', 2000);
       const touched = await state.get('old');
-      expect(touched).toEqual({ ...entry, storedAt: 2000 });
+      expect(touched).toEqual({ ...entry, datesAt: 2000 });
       expect(touched).not.toHaveProperty('reader');
+      expect(touched).not.toHaveProperty('storedAt');
     });
 
-    it('never makes a base older', async () => {
+    it('never moves datesAt back', async () => {
       const { store } = memoryStore();
       const state = createSyncState(store, 'sync');
-      await state.set('abc', { ...entry, storedAt: 3000 });
+      await state.set('abc', { ...entry, storedAt: 1000 });
+      await state.touch('abc', 3000);
       await state.touch('abc', 2000);
-      expect((await state.get('abc'))?.storedAt).toBe(3000);
+      expect(await state.get('abc')).toEqual({ ...entry, storedAt: 1000, datesAt: 3000 });
+    });
+
+    it('a base stored anew drops datesAt (its storedAt is now)', async () => {
+      const { store } = memoryStore();
+      const state = createSyncState(store, 'sync');
+      await state.set('abc', { ...entry, storedAt: 1000 });
+      await state.touch('abc', 2000);
+      await state.set('abc', entry);
+      expect(await state.get('abc')).toEqual(kept);
     });
 
     it('does nothing for a uid without a base', async () => {
@@ -195,7 +206,7 @@ describe('SyncState', () => {
       await Promise.all([state.touch('a', 2000), state.set('b', entry), state.touch('a', 2500), state.set('c', entry)]);
       const index = JSON.parse(files.get('sync/index.json')!);
       expect(Object.keys(index).sort()).toEqual(['a', 'b', 'c']);
-      expect(index.a.storedAt).toBe(2500);
+      expect(index.a).toMatchObject({ storedAt: 1000, datesAt: 2500 });
     });
   });
 

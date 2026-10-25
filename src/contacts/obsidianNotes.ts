@@ -461,7 +461,7 @@ export async function friendlyNoteCard(
     const before = toFriendly(baseLines, rows, ctx, { reader, ownVaults: noteLinkOptions(getSettings().noteLinks).ownVaults });
     // A date with a label added after the base was stored, or a part an older reader did not read, may never have
     // been filled into the note: not a removal.
-    lines = patch(baseLines, before, withUnfilledDates(noteProps, before.props, rows, base.storedAt, reader), rows, ctx).lines;
+    lines = patch(baseLines, before, withUnfilledDates(noteProps, before.props, rows, base, reader), rows, ctx).lines;
   } else {
     lines = newCard(noteProps, rows, ctx).lines;
   }

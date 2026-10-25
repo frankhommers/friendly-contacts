@@ -27,6 +27,12 @@ export type FillNote = {
   base?: { raw: string; reader: Reader };
 };
 
+/**
+ * When a sync base was stored (`storedAt`) and when its dates with a label were last brought up to date without
+ * storing it (`datesAt`, see `SyncState.touch`). Absent: before it was recorded, or never.
+ */
+export type BaseTimes = { storedAt?: number; datesAt?: number };
+
 /** Lookups that find nothing: relations are read but their values are discarded. */
 export const NO_LOOKUPS: RelationContext = {
   uidToName: () => undefined,
@@ -49,7 +55,8 @@ export function labelledDateRow(label: string, property: string, since?: number)
 }
 
 /**
- * Whether a base stored at `storedAt` by `reader` predates `row` as a labelled date added after it, or a row of a
+ * Whether a base (`times`, see `BaseTimes`) stored by `reader` predates `row` as a labelled date added after it (after
+ * both `storedAt` and `datesAt`: a touched base agrees with the date rows added up to then), or a row of a
  * later reader (`sinceReader` above `reader`). The base of the device that added the row holds the date, but the note
  * it belongs to may not have been filled (the sync bases are per device, the settings travel): read with the row, the
  * date would look removed in the note. Without it the date is the card's own, so Sync brings it into the note. A base
@@ -58,40 +65,42 @@ export function labelledDateRow(label: string, property: string, since?: number)
  * own, not a removal. Relation rows carry no reader mark. Such rows may be patched back (`withUnfilledDates`,
  * `withFilledLeftOut`).
  */
-function addedAfter(row: MappingRow, storedAt: number | undefined, reader: Reader): boolean {
+function addedAfter(row: MappingRow, times: BaseTimes | undefined, reader: Reader): boolean {
+  const datesKnown = Math.max(times?.storedAt ?? 0, times?.datesAt ?? 0);
   return (
-    (isLabelledDateRow(row) && (row.since ?? 0) > (storedAt ?? 0)) ||
+    (isLabelledDateRow(row) && (row.since ?? 0) > datesKnown) ||
     (row.kind !== 'relation' && row.sinceReader !== undefined && row.sinceReader > reader)
   );
 }
 
 /**
- * Whether a base stored at `storedAt` predates Sync being turned back on for `row` (`syncSince`). The base may still
- * hold the row's lines from before Sync was turned off, and the owner may have cleaned the card since: read with the
- * row, a cleaned card would look like a removal on the server. A row with Sync off is skipped anyway.
+ * Whether a base stored at `times.storedAt` predates Sync being turned back on for `row` (`syncSince`). The base may
+ * still hold the row's lines from before Sync was turned off, and the owner may have cleaned the card since: read with
+ * the row, a cleaned card would look like a removal on the server. A row with Sync off is skipped anyway. `datesAt`
+ * does not count: touching a base changes no card.
  */
-function syncedAfter(row: MappingRow, storedAt: number | undefined): boolean {
-  return !row.skip && row.syncSince !== undefined && row.syncSince > (storedAt ?? 0);
+function syncedAfter(row: MappingRow, times: BaseTimes | undefined): boolean {
+  return !row.skip && row.syncSince !== undefined && row.syncSince > (times?.storedAt ?? 0);
 }
 
 /**
- * The rows a sync base stored at `storedAt` by `reader` is read with: `rows` without the rows added after it (see
+ * The rows a sync base (`times`) stored by `reader` is read with: `rows` without the rows added after it (see
  * `addedAfter`), and with `skip` on each row Sync was turned back on for after it (see `syncedAfter`). Such a row is
  * marked, not dropped, so its lines in the base are not read by another row whose pattern also matches.
  */
 export function rowsForBase(
   rows: MappingRow[],
-  storedAt: number | undefined,
+  times: BaseTimes | undefined,
   reader: Reader = CURRENT_READER,
 ): MappingRow[] {
   return rows
-    .filter((row) => !addedAfter(row, storedAt, reader))
-    .map((row) => (syncedAfter(row, storedAt) ? { ...row, skip: true as const } : row));
+    .filter((row) => !addedAfter(row, times, reader))
+    .map((row) => (syncedAfter(row, times) ? { ...row, skip: true as const } : row));
 }
 
-/** Whether `rowsForBase` reads a base stored at `storedAt` by `reader` without some of `rows`. */
-export function baseLeavesOut(rows: MappingRow[], storedAt: number | undefined, reader: Reader = CURRENT_READER): boolean {
-  return rows.some((row) => addedAfter(row, storedAt, reader) || syncedAfter(row, storedAt));
+/** Whether `rowsForBase` reads a base (`times`) stored by `reader` without some of `rows`. */
+export function baseLeavesOut(rows: MappingRow[], times: BaseTimes | undefined, reader: Reader = CURRENT_READER): boolean {
+  return rows.some((row) => addedAfter(row, times, reader) || syncedAfter(row, times));
 }
 
 /**
@@ -99,26 +108,26 @@ export function baseLeavesOut(rows: MappingRow[], storedAt: number | undefined, 
  * row with Sync off, and never one Sync was turned back on for after the base (`syncedAfter`): its values in the base
  * are from before, so patching them back would read the stale base with the row again.
  */
-function patchable(key: string, rows: MappingRow[], storedAt: number | undefined, reader: Reader): boolean {
+function patchable(key: string, rows: MappingRow[], times: BaseTimes | undefined, reader: Reader): boolean {
   const row = rowForProperty(key, rows)?.row;
-  return row !== undefined && addedAfter(row, storedAt, reader) && !syncedAfter(row, storedAt);
+  return row !== undefined && addedAfter(row, times, reader) && !syncedAfter(row, times);
 }
 
 /**
  * The note's properties to patch the base with (an export): `note` plus the base's values for the rows added after
- * the base (see `addedAfter`, for `storedAt` and `reader`) that the note leaves empty. Such a date or part was not
+ * the base (see `addedAfter`, for `times` and `reader`) that the note leaves empty. Such a date or part was not
  * filled into the note, so it is no removal. `base`: the base read with all `rows`.
  */
 export function withUnfilledDates(
   note: Record<string, FriendlyValue>,
   base: Record<string, FriendlyValue>,
   rows: MappingRow[],
-  storedAt: number | undefined,
+  times: BaseTimes | undefined,
   reader: Reader = CURRENT_READER,
 ): Record<string, FriendlyValue> {
   const result = { ...note };
   for (const [key, value] of Object.entries(base)) {
-    if (patchable(key, rows, storedAt, reader) && isEmptyValue(note[key])) result[key] = value;
+    if (patchable(key, rows, times, reader) && isEmptyValue(note[key])) result[key] = value;
   }
   return result;
 }
@@ -135,12 +144,12 @@ export function withFilledLeftOut(
   full: Record<string, FriendlyValue>,
   note: Record<string, FriendlyValue>,
   rows: MappingRow[],
-  storedAt: number | undefined,
+  times: BaseTimes | undefined,
   reader: Reader = CURRENT_READER,
 ): Record<string, FriendlyValue> {
   const result = { ...base };
   for (const [key, value] of Object.entries(full)) {
-    if (patchable(key, rows, storedAt, reader) && !isEmptyValue(value) && sameValue(note[key], value, key)) {
+    if (patchable(key, rows, times, reader) && !isEmptyValue(value) && sameValue(note[key], value, key)) {
       result[key] = value;
     }
   }
