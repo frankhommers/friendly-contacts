@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { parseCard } from 'src/contacts/friendly/lines';
 import { convertFrontmatter } from 'src/contacts/convertNotes';
 import { insertLabelledDateRow, labelledDateRow, planDateFill } from 'src/contacts/friendly/dateLabels';
-import { DEFAULT_MAPPING, isMappedProperty, MappingRow } from 'src/contacts/friendly/mapping';
+import { DEFAULT_MAPPING, isMappedProperty, MappingRow, syncRows } from 'src/contacts/friendly/mapping';
 import { NoteLinkOptions, noteLinkUrl } from 'src/contacts/friendly/noteLinks';
 import { RelationContext, resolveRemoteName } from 'src/contacts/friendly/relations';
 import { CURRENT_READER, FriendlyValue, readerOf, toFriendly } from 'src/contacts/friendly/translate';
@@ -368,7 +368,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
       note: note.io,
       path: `Contacts/${String(note.frontmatter.name)}.md`,
       name: String(note.frontmatter.name),
-      rows: mapping,
+      rows: syncRows(mapping), // as src/sync/sync.ts: rows with Sync off are skipped
       sources,
       active: sources,
       defaultSource: 'radicale',
@@ -415,7 +415,7 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
   async function importFrom(book: Book, href: string): Promise<Note> {
     const pulled = await book.adapter.pull(href);
     if (!pulled || !('raw' in pulled)) throw new Error(`pull ${href} failed`);
-    const props = toFriendly(parseCard(pulled.raw), mapping, await relationContext(adapter, notes, paths)).props;
+    const props = toFriendly(parseCard(pulled.raw), syncRows(mapping), await relationContext(adapter, notes, paths)).props;
     const uid = cleanUid(String(props.uid));
     await book.state.set(uid, { raw: pulled.raw, etag: pulled.etag ?? '', href: pulled.href ?? href, reader: CURRENT_READER });
     return memoryNote({ ...props, source: book.source.name });
@@ -1462,5 +1462,78 @@ describe.skipIf(!HAS_PYTHON)('Sync against Radicale 3.8.3', () => {
     // A fresh scan lists nothing but Ans, whose note changed after the scan.
     await syncAll.scan();
     expect(syncAll.state.items.filter((i) => i.kind !== 'upToDate').map((i) => i.path)).toEqual([pathOf(ans)]);
+  });
+
+  it('27. Sync off for friends: cards keep their Friend lines, no friend comes into the note, turning it on offers the note\'s friends', async () => {
+    const uid = 'C0FFEE00-0000-4000-8000-000000000027';
+    const href = `${BOOK}friends-off.vcf`;
+    const upper = (lines: string[]) => lines.map((l) => l.replace(/^[^:;]+/, (name) => name.toUpperCase())).sort();
+    const changed = (lines: string[]) => lines.filter((l) => !isRev(l));
+    const friendLines = async () => unfolded(await serverCard(href)).filter((l) => /^RELATED;TYPE=friend/i.test(l));
+    const friendsOff = (rows: MappingRow[]): MappingRow[] =>
+      rows.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r));
+    const cardOf = (...friends: string[]) =>
+      [
+        'BEGIN:VCARD', 'VERSION:4.0', `UID:${uid}`, 'FN:Fien Vriend', 'N:Vriend;Fien;;;', 'EMAIL:fien@example.com',
+        ...friends.map((name) => `RELATED;TYPE=friend;VALUE=text:${name}`), 'END:VCARD', '',
+      ].join('\r\n');
+    try {
+      mapping = friendsOff(DEFAULT_MAPPING);
+      await putCard(href, cardOf('Pia Jansen'));
+      const fien = await importCard(href);
+      // The card's Friend line is not mapped; the note's own friends are not the card's.
+      expect(fien.frontmatter.friends).toBeUndefined();
+      fien.frontmatter.friends = ['[[Kees Bakker]]', '[[Lies Smit]]'];
+      expect(await sync(fien)).toBe('unchanged');
+      expect(pushes).toEqual([]);
+
+      // An Apply of another property keeps the card's Friend lines, and the note's friends stay off the card.
+      const before = unfolded(await serverCard(href));
+      fien.frontmatter.email = 'fien@example.org';
+      expect(await sync(fien)).toBe('pushed');
+      const after = unfolded(await serverCard(href));
+      expect(upper(changed(minus(after, before)))).toEqual(upper(['EMAIL:fien@example.org']));
+      expect(upper(changed(minus(before, after)))).toEqual(upper(['EMAIL:fien@example.com']));
+      expect(await friendLines()).toEqual(['RELATED;TYPE=friend;VALUE=text:Pia Jansen']);
+      expect(await sync(fien)).toBe('unchanged');
+
+      // A Friend added on the card stays there and does not come into the note.
+      await putCard(href, cardOf('Pia Jansen', 'Joop Meijer').replace('fien@example.com', 'fien@example.org'));
+      await sync(fien);
+      expect(pushes).toEqual([]);
+      expect(fien.frontmatter.friends).toEqual(['[[Kees Bakker]]', '[[Lies Smit]]']);
+      expect(await friendLines()).toHaveLength(2);
+
+      // The owner cleans the card, then turns Sync back on (the time is later than the base's).
+      await putCard(href, cardOf().replace('fien@example.com', 'fien@example.org'));
+      expect(await sync(fien)).toBe('unchanged');
+      const base = await state.get(cleanUid(uid));
+      expect(base?.storedAt).toEqual(expect.any(Number));
+      mapping = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, syncSince: (base?.storedAt ?? 0) + 1 } : r));
+      let shown: { property: string; preselect?: string; server?: unknown; local?: unknown; changed: boolean }[] = [];
+      const result = await syncFlow(
+        await flowDepsFor(fien, {
+          notify: () => {},
+          review: async (request) => {
+            shown = request.prepared.rows;
+            return { kind: 'cancel' };
+          },
+        }),
+      );
+      expect(result.kind).toBe('cancelled');
+      // The stale base is read without the row: the note's friends are an Obsidian change, never a removal.
+      expect(shown.filter((r) => r.changed).map((r) => r.property)).toEqual(['friends']);
+      expect(shown.find((r) => r.property === 'friends')).toMatchObject({ preselect: 'local' });
+      expect(fien.frontmatter.friends).toEqual(['[[Kees Bakker]]', '[[Lies Smit]]']);
+      expect(await friendLines()).toEqual([]);
+
+      // Applied, the note's friends reach the card.
+      expect(await sync(fien)).toBe('pushed');
+      expect(await friendLines()).toHaveLength(2);
+      expect(fien.frontmatter.friends).toEqual(['[[Kees Bakker]]', '[[Lies Smit]]']);
+      expect(await sync(fien)).toBe('unchanged');
+    } finally {
+      mapping = DEFAULT_MAPPING;
+    }
   });
 });
