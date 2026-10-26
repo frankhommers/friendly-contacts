@@ -316,18 +316,18 @@ export function PropertyNamesSettings({ app }: { app: App }) {
       <table className="vcf-mapping-table">
         <thead>
           <tr>
-            <th>Name</th>
+            <th className="vcf-mapping-name">Name</th>
             <th>Read from</th>
             <th>Part</th>
             <th>Write as (vCard 4.0)</th>
             <th>Write as (vCard 3.0)</th>
-            <th>Sync</th>
+            <th className="vcf-mapping-sync">Sync</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => isLabelledDateRow(row) ? null : (
             <tr key={`${revision}-${i}`}>
-              <td>
+              <td className="vcf-mapping-name">
                 {isFixedProperty(row.property) ? (
                   <span className="vcf-mapping-readonly" title="This name cannot be changed">{row.property}</span>
                 ) : (
@@ -391,7 +391,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                   />
                 )}
               </td>
-              <td>
+              <td className="vcf-mapping-sync">
                 <input
                   type="checkbox"
                   aria-label={`Sync ${row.property}`}

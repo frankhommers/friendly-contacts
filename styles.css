@@ -518,12 +518,27 @@
   padding: 2px 4px;
 }
 
-.vcf-mapping-table input {
+.vcf-mapping-table input:not([type="checkbox"]) {
   width: 100%;
 }
 
-.vcf-mapping-table input[type="checkbox"] {
-  width: auto;
+/* Wide enough for the longest default name (gender-identity). */
+.vcf-mapping-table .vcf-mapping-name input {
+  min-width: 16ch;
+}
+
+.vcf-mapping-table .vcf-mapping-sync {
+  width: 1%;
+  text-align: center;
+}
+
+.vcf-mapping-table .vcf-mapping-sync input[type="checkbox"] {
+  margin: 0;
+  vertical-align: middle;
+}
+
+.vcf-mapping-table .vcf-mapping-sync input[type="checkbox"]:disabled {
+  opacity: 0.5;
 }
 
 .vcf-mapping-readonly {

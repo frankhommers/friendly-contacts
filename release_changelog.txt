@@ -1,11 +1,5 @@
-## Friendly Contacts 3.0.0-alpha.15
+## Friendly Contacts 3.0.0-alpha.16
 
-**Sync per property: keep a property such as `friends` off your cards.** The property table (Settings → Property names) has a new column **Sync**, ticked for every row.
+**Fix: the Sync checkboxes in Settings → Property names showed as thin red bars.** They are normal checkboxes again; the boxes of `uid`, `name` and `photo` (always synced) are dimmed.
 
-- Untick a row and Sync and Import from the address book no longer read that property from cards or write it to them. It stays in your notes, and the sidebar, mirroring and the people graph keep using it.
-- Unticking removes nothing. Lines already on a card stay there, also ones added on a phone; remove them yourself if you want them gone. A line of an unticked row is never read as another property (a `RELATED;TYPE=friend,colleague` line does not become a colleague).
-- With **Links to Obsidian notes on cards** on, a person you only reach through an unticked relationship gets no link; Sync lists those contacts and Apply removes those links.
-- Tick it again and the review shows the differences: values only in the note go to the card, values only on the card come into the note, and different values on both sides are a conflict. Nothing is ever preselected that removes a value from a note, also not after **Reset to defaults** or after adding a date with a label.
-- `uid`, `name` and `photo` are always synced. Exporting a note to a `.vcf` file and importing a `.vcf` file are not affected.
-
-Update the plugin on every desktop that shares the vault: an older version ignores the Sync column.
+- The Name column is wide enough for the longest default name (`gender-identity`), so names are no longer cut off.
