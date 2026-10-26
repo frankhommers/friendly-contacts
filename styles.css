@@ -545,6 +545,28 @@
   color: var(--text-muted);
 }
 
+/* Keys such as X-ABRELATEDNAMES stay whole; RELATED;TYPE=… may break after the semicolon. */
+.vcf-mapping-key {
+  white-space: nowrap;
+}
+
+.vcf-mapping-table .vcf-mapping-part {
+  width: 5ch;
+}
+
+/* A narrow settings pane: names may get cut off and fixed texts break anywhere, rather than a scrollbar. */
+@container (max-width: 640px) {
+  .vcf-mapping-table .vcf-mapping-name input {
+    min-width: 8ch;
+  }
+
+  .vcf-mapping-table .vcf-mapping-readonly,
+  .vcf-mapping-table .vcf-mapping-key {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 .vcf-mapping-errors {
   margin: 8px 0;
 }

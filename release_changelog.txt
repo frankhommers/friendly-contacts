@@ -1,5 +1,6 @@
-## Friendly Contacts 3.0.0-alpha.16
+## Friendly Contacts 3.0.0-alpha.17
 
-**Fix: the Sync checkboxes in Settings → Property names showed as thin red bars.** They are normal checkboxes again; the boxes of `uid`, `name` and `photo` (always synced) are dimmed.
+**Fix: the property table (Settings → Property names) no longer makes the settings scroll sideways.**
 
-- The Name column is wide enough for the longest default name (`gender-identity`), so names are no longer cut off.
+- Fixed texts break at sensible places: `RELATED;TYPE=…` after the semicolon, and keys such as `X-ABRELATEDNAMES` stay whole. The Part column is narrow.
+- In a narrow window the Name column gets narrower and long texts may break anywhere, instead of a scrollbar.

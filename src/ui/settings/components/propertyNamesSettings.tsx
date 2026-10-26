@@ -43,9 +43,14 @@ const withWriteV3 = (row: MappingRow, key: string): MappingRow => {
 };
 
 /** What a relation is written as on a vCard 3.0 card: the label on `X-ABRELATEDNAMES`, or the 4.0 form without one. */
-const relationWriteV3 = (row: RelationRow): string => {
+/** A vCard key with a label, e.g. `X-ABRELATEDNAMES · label Friend`; the key never breaks over two lines. */
+const keyWithLabel = (key: string, label: string) => (
+  <><span className="vcf-mapping-key">{key}</span>{` · label ${label}`}</>
+);
+
+const relationWriteV3 = (row: RelationRow): React.ReactNode => {
   const label = (row.labels ?? [])[0]?.trim() ?? "";
-  return label === "" ? SAME_AS_4 : `X-ABRELATEDNAMES · label ${label}`;
+  return label === "" ? SAME_AS_4 : keyWithLabel("X-ABRELATEDNAMES", label);
 };
 
 const BASES_NOT_UPDATED = "Some sync bases could not be updated; see console.";
@@ -318,7 +323,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           <tr>
             <th className="vcf-mapping-name">Name</th>
             <th>Read from</th>
-            <th>Part</th>
+            <th className="vcf-mapping-part">Part</th>
             <th>Write as (vCard 4.0)</th>
             <th>Write as (vCard 3.0)</th>
             <th className="vcf-mapping-sync">Sync</th>
@@ -352,7 +357,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                   />
                 )}
               </td>
-              <td>
+              <td className="vcf-mapping-part">
                 {row.kind === "component" && (
                   <CommitInput
                     label={`Part for ${row.property}`}
@@ -366,7 +371,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
               </td>
               <td>
                 {row.kind === "relation" ? (
-                  <span className="vcf-mapping-readonly">{`RELATED;TYPE=${row.types[0] ?? ""}`}</span>
+                  <span className="vcf-mapping-readonly">RELATED;<wbr />{`TYPE=${row.types[0] ?? ""}`}</span>
                 ) : (
                   <CommitInput
                     label={`Write key for ${row.property}`}
@@ -379,7 +384,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                 {row.kind === "relation" ? (
                   <span className="vcf-mapping-readonly">{relationWriteV3(row)}</span>
                 ) : row.kind === "field" && row.appleDateLabel !== undefined ? (
-                  <span className="vcf-mapping-readonly">{`X-ABDATE · label ${row.appleDateLabel}`}</span>
+                  <span className="vcf-mapping-readonly">{keyWithLabel("X-ABDATE", row.appleDateLabel)}</span>
                 ) : isFixedProperty(row.property) ? (
                   <span className="vcf-mapping-readonly">{row.writeV3?.trim() || SAME_AS_4}</span>
                 ) : (
