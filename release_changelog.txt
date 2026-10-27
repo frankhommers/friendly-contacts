@@ -1,8 +1,7 @@
-## Friendly Contacts 3.0.0-alpha.18
+## Friendly Contacts 3.0.0-alpha.19
 
-**New look for the settings: tabs, and a property list instead of the big table.**
+**Default contact fields moved to the Properties tab.**
 
-- The plugin settings have three tabs: **General**, **Sync** (address books, links to Obsidian notes on cards) and **Properties**. The settings open on the tab you used last.
-- **Properties** lists your property names in groups (Name, Phone, email and web, Work, Address, Dates, Relationships, Other), each with a Sync switch. Click one to see and change its details beside the list: name in the note, Read from, Part, Write as (vCard 4.0 and 3.0) and Sync, each with a short explanation.
-- In a narrow window the details open right under the property you clicked.
-- Nothing changes in what is stored: the same property names, the same Sync setting.
+- Every property has an **In new contacts** switch in its details: on, and a new contact gets the property, empty and ready to fill in.
+- At the bottom of the Properties tab, **New contacts** lists those properties; click one to open its details. Card fields without a property (such as `X-SKYPE`) can still be added and removed there, and **Reset to defaults** brings back the default fields.
+- Renaming a property now carries over to the fields of new contacts, and a new contact gets its first and last name under the names you gave them (it always wrote `firstname` and `lastname`).
