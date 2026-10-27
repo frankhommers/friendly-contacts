@@ -1,7 +1,8 @@
-## Friendly Contacts 3.0.0-alpha.20
+## Friendly Contacts 3.0.0-alpha.21
 
-**Properties of your own, and dates with a label in the property list.**
+**Passwords and API keys are kept in Obsidian's keychain, no longer in data.json.**
 
-- **Add a property** (under the property list) takes any card field no property reads yet, such as `X-BANAAN` or `TEL[FAX]`, and a name for your notes. It shows in the list with all its settings (name, Read from, Write as, In new contacts, Sync) and is synced from then on; values already on the cards come in at the next Sync.
-- Adding a card field under **New contacts** does the same, so it is synced too (in 3.0 such a field stayed in Obsidian only). A field an earlier version stored without a property gets a **Make property** button.
-- **Dates with a label** (such as Verkering → `dating`) are in the list under Dates, with their details. **Remove** for them and for your own properties is in the details. The Dates with a label block keeps adding a label and finding labels on cards.
+- The password or API key of an address book is saved in Obsidian's keychain (**Settings → Keychain**): encrypted by your system, for this vault on this device, outside the vault. File sync, git and backups of the vault no longer carry it.
+- **Type your password again** after updating. A password an earlier version saved in data.json is not used and is taken out of the file.
+- On each device, type the password once: the keychain is not synced.
+- Needs Obsidian 1.11.4 or later.
