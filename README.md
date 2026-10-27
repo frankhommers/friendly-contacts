@@ -17,7 +17,7 @@ A powerful way to manage, link, and export contact data directly within [Obsidia
 
 ## About this fork
 
-Friendly Contacts is a fork of [VCF Contacts](https://github.com/broekema41/obsidian-vcf-contacts) by Roland Broekema. It shows contact properties with readable English names, syncs with CardDAV without losing data, and supports relationships between contacts. Its settings are separate from the original VCF Contacts plugin, so to migrate, copy `data.json` from `.obsidian/plugins/vcf-contacts/` to `.obsidian/plugins/friendly-contacts/`.
+Friendly Contacts is a fork of [VCF Contacts](https://github.com/broekema41/obsidian-vcf-contacts) by Roland Broekema. It shows contact properties with readable English names, syncs with CardDAV without losing data, and supports relationships between contacts. Its settings are separate from the original VCF Contacts plugin, so to migrate, copy `data.json` from `.obsidian/plugins/vcf-contacts/` to `.obsidian/plugins/friendly-contacts/` and type the password of your address book again: it is kept in Obsidian's keychain, not in `data.json`.
 
 ---
 
@@ -659,6 +659,8 @@ In the plugin setting page select "sync method" CardDav. Here you can fill in th
 * API key authentication
 
 OpenID Connect (OAuth2) is not supported at this time.
+
+Passwords and API keys are kept in Obsidian's keychain (**Settings → Keychain**, Obsidian 1.11.4 or later), never in `data.json`. The keychain is encrypted by your system, belongs to this vault on this device and is kept outside the vault, so file sync, git and backups of the vault do not carry it. On each device, type the password once. A password an earlier version saved in `data.json` is not used: it is taken out of the file when the plugin starts, so type it again.
 
 #### Importing contacts from your address books
 

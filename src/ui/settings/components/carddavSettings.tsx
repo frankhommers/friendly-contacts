@@ -17,11 +17,27 @@ interface CarddavSettingsProps {
   locked: boolean;
   /** Forget the saved password or API key. */
   onForgetSaved: () => void;
+  /** True when this Obsidian has a keychain to keep the password or API key in. */
+  keychain: boolean;
 }
 
 // Looks like a filled-in field; the real secret is never put back in the form.
 const SAVED_MASK = '••••••••';
 const SAVED_TITLE = 'Saved. Type to replace it.';
+
+/** Where a password or API key is kept, shown under both fields. */
+function KeptIn({ keychain }: { keychain: boolean }) {
+  return keychain ? (
+    <div className="setting-item-description">
+      Kept in Obsidian's keychain of this vault on this device (Settings → Keychain), never in data.json. On another
+      device, type it there too.
+    </div>
+  ) : (
+    <div className="setting-item-description mod-warning">
+      This Obsidian has no keychain, so it cannot be saved. Update Obsidian to 1.11.4 or later.
+    </div>
+  );
+}
 
 function ForgetButton({ label, onClick }: { label: string; onClick: () => void }) {
   // Lucide "x", the icon Obsidian uses for clearing.
@@ -36,7 +52,7 @@ function ForgetButton({ label, onClick }: { label: string; onClick: () => void }
   );
 }
 
-export default function CarddavSettings({ carddavSettings, setCarddavSettings, savedAuthType, locked, onForgetSaved }: CarddavSettingsProps) {
+export default function CarddavSettings({ carddavSettings, setCarddavSettings, savedAuthType, locked, onForgetSaved, keychain }: CarddavSettingsProps) {
 
    return (
     <>
@@ -83,6 +99,7 @@ export default function CarddavSettings({ carddavSettings, setCarddavSettings, s
           <div className="setting-item-description">
             Password of your CardDAV account.
           </div>
+          <KeptIn keychain={keychain}/>
         </div>
         <div className="setting-item-control">
           <div className="vcf-secret-field">
@@ -106,6 +123,7 @@ export default function CarddavSettings({ carddavSettings, setCarddavSettings, s
           <div className="setting-item-description">
             Used instead of a username and password.
           </div>
+          <KeptIn keychain={keychain}/>
         </div>
         <div className="setting-item-control">
           <div className="vcf-secret-field">

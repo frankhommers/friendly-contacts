@@ -25,6 +25,7 @@ import {
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import CarddavSettings, { CarddavSettingsInterface } from "src/ui/settings/components/carddavSettings";
 import { generateUUID } from "src/util/vcard";
+import { secretStore } from "src/settings/secretStore";
 
 /** Secrets are never shown again; the username is recovered from the saved basic auth key. */
 function formFromSource(source: Source): CarddavSettingsInterface {
@@ -213,6 +214,7 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
         savedAuthType={hasStoredCredentials(saved) ? saved.authType : undefined}
         locked={source.enabled}
         onForgetSaved={() => { void forgetSaved(); }}
+        keychain={secretStore() !== undefined}
       />
 
       <div className="setting-item">

@@ -4,7 +4,8 @@ import {Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
 import { getPluginDir, setPluginDir } from "src/context/sharedAppContext";
 import { defaultSourceOf } from "src/sync/sources";
 import { migrateSyncStateDir, obsidianFileStore } from "src/sync/syncState";
-import { getSettings, initSettings, reloadSettings, settings } from "src/context/sharedSettingsContext";
+import { getSettings, initSettings, reloadSettings, setSettings, settings } from "src/context/sharedSettingsContext";
+import { hasKeysInData, keychainOf, secretStore, setSecretStore, withKeysFromStore, withKeysInStore } from "src/settings/secretStore";
 import { ContactsSettingTab } from 'src/ui/settings/settingsView';
 import { ContactsView } from "src/ui/sidebar/sidebarView";
 import { CONTACTS_VIEW_CONFIG, PEOPLE_GRAPH_VIEW, SYNC_ALL_VIEW } from "src/util/constants";
@@ -36,7 +37,15 @@ export default class ContactsPlugin extends Plugin {
 	async onload() {
 
 		setPluginDir(this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`);
-		const { migratedFrom } = await initSettings(this.loadData.bind(this), this.saveData.bind(this));
+		setSecretStore(keychainOf(this.app));
+		let keysInData = false;
+		const { migratedFrom } = await initSettings(async () => {
+			const loaded = await this.loadData();
+			keysInData = hasKeysInData(loaded);
+			return withKeysFromStore(loaded, secretStore());
+		}, this.saveSettingsData.bind(this));
+		// A password written to data.json by an earlier version is not used; saving now takes it out of the file.
+		if (keysInData) await setSettings(getSettings());
 		// Every load: sync bases of the single-server days (and those of an interrupted move) go to the default source.
 		const legacyTarget = migratedFrom ?? defaultSourceOf(getSettings())?.id;
 		if (legacyTarget) {
@@ -306,7 +315,19 @@ export default class ContactsPlugin extends Plugin {
 
 	/** data.json changed on disk (Obsidian Sync or another file sync): use the settings of the other device. */
 	async onExternalSettingsChange() {
-		await reloadSettings(this.loadData.bind(this));
+		await reloadSettings(async () => withKeysFromStore(await this.loadData(), secretStore()));
+	}
+
+	/** Writes the settings to data.json; passwords and API keys go to Obsidian's keychain instead. */
+	private async saveSettingsData(data: ContactsPluginSettings): Promise<void> {
+		const { data: withoutKeys, failed } = withKeysInStore(data, secretStore());
+		if (failed.length > 0) {
+			new Notice(
+				`Friendly Contacts could not keep the password of ${failed.join(", ")} in Obsidian's keychain, so it is not saved. ` +
+				"Obsidian 1.11.4 or later has a keychain."
+			);
+		}
+		await this.saveData(withoutKeys);
 	}
 
 
