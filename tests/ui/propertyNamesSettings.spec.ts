@@ -27,6 +27,12 @@ vi.mock('obsidian', async (importOriginal) => ({
   },
 }));
 vi.mock('src/contacts/labelledDates', () => labelled);
+// No notes hold a property, so a rename only saves the property names.
+vi.mock('src/contacts/obsidianNotes', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  renameBlockers: () => [],
+  notesToRename: () => [],
+}));
 vi.mock('src/settings/deviceSettings', () => ({ mirrorRelationsOnThisDevice: () => false, setMirrorRelationsOnThisDevice: () => {} }));
 // The confirmation is answered with its confirm button right away.
 vi.mock('src/ui/modals/confirmModal', () => ({
@@ -218,6 +224,17 @@ describe('adding a date with a label', () => {
   });
 });
 
+it('the property shown stays shown when a date with a label is added before it', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(4242);
+  await render(DEFAULT_MAPPING);
+  act(() => {
+    [...container.querySelectorAll<HTMLElement>('.vcf-props-item')].find((el) => el.textContent === 'friends')!.click();
+  });
+  labelled.notesWithBases.mockResolvedValue([]);
+  await addDate('Verkering', 'dating');
+  expect(container.querySelector('.vcf-props-detail-title')?.textContent).toBe('friends');
+});
+
 describe('removing a date with a label', () => {
   const mapping = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating'));
 
@@ -244,58 +261,99 @@ describe('removing a date with a label', () => {
   });
 });
 
-describe('the table', () => {
-  // The first table is the property names table; the date labels table follows it.
-  const propertyTable = () => container.querySelector('.vcf-mapping-table')!;
-  const rowOf = (property: string) =>
-    [...propertyTable().querySelectorAll('tbody tr')].find((tr) => {
-      const name = tr.querySelector('td');
-      return name?.textContent === property || name?.querySelector<HTMLInputElement>('input')?.value === property;
-    }) as HTMLTableRowElement;
-  const cell = (property: string, column: number) => rowOf(property).querySelectorAll('td')[column];
-  const input = (property: string, label: string) =>
-    rowOf(property).querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
-  const commitText = (element: HTMLInputElement, text: string) => {
-    type(element, text);
+describe('the property list', () => {
+  const item = (property: string) =>
+    [...container.querySelectorAll<HTMLElement>('.vcf-props-item')].find(
+      (el) => el.querySelector('.vcf-props-item-name')?.textContent === property,
+    );
+  const select = (property: string) => {
     act(() => {
+      item(property)!.click();
+    });
+  };
+  const detail = () => container.querySelector<HTMLElement>('.vcf-props-detail')!;
+  /** The control of the detail field called `name`, for the property shown. */
+  const control = (property: string, name: string) => {
+    select(property);
+    const field = [...detail().querySelectorAll('.setting-item')].find((el) => el.querySelector('.setting-item-name')?.textContent === name);
+    return field?.querySelector<HTMLElement>('.setting-item-control');
+  };
+  const input = (property: string, label: string) => {
+    select(property);
+    return detail().querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  };
+  const fieldNames = (property: string) => {
+    select(property);
+    return [...detail().querySelectorAll('.setting-item-name')].map((el) => el.textContent);
+  };
+  const commitText = async (element: HTMLInputElement, text: string) => {
+    type(element, text);
+    await act(async () => {
       element.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     });
   };
   const stored = (property: string) => getSettings().friendly.mapping.find((r) => r.property === property);
 
-  it('has exactly these headers', async () => {
+  it('lists the properties in groups, in the order of the groups', async () => {
     await render(DEFAULT_MAPPING);
-    expect([...propertyTable().querySelectorAll('th')].map((th) => th.textContent)).toEqual([
-      'Name', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'Sync',
+    expect([...container.querySelectorAll('.vcf-props-group')].map((el) => el.textContent)).toEqual([
+      'Name', 'Phone, email and web', 'Work', 'Address', 'Dates', 'Relationships', 'Other',
     ]);
+    const names = [...container.querySelectorAll('.vcf-props-item-name')].map((el) => el.textContent);
+    expect(names.slice(0, 3)).toEqual(['name', 'name-prefix', 'firstname']);
+    expect(names).toHaveLength(DEFAULT_MAPPING.length);
   });
 
-  describe('the Sync column', () => {
-    const box = (property: string) => input(property, `Sync ${property}`);
-    const click = async (element: HTMLInputElement) => {
+  it('shows the first property until another is picked', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('name');
+    select('email');
+    expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('email');
+    expect(item('email')!.classList.contains('is-selected')).toBe(true);
+    expect(item('name')!.classList.contains('is-selected')).toBe(false);
+  });
+
+  it('a part shows exactly these fields', async () => {
+    await render(DEFAULT_MAPPING);
+    expect(fieldNames('department')).toEqual(['Name in note', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'Sync']);
+  });
+
+  it('renaming in the details renames the property', async () => {
+    await render(DEFAULT_MAPPING);
+    await commitText(input('nickname', 'Property name'), 'alias');
+    expect(stored('alias')).toMatchObject({ write: 'NICKNAME' });
+    expect(item('alias')).toBeDefined();
+    expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('alias');
+  });
+
+  describe('Sync', () => {
+    const box = (property: string) => container.querySelector<HTMLElement>(`[aria-label="Sync ${property}"]`)!;
+    const on = (element: HTMLElement) => element.getAttribute('aria-checked') === 'true';
+    const disabled = (element: HTMLElement) => element.getAttribute('aria-disabled') === 'true';
+    const click = async (element: HTMLElement) => {
       await act(async () => {
         element.click();
       });
     };
 
-    it('is the last column, with a checkbox per row ticked unless Sync is off', async () => {
-      const mapping = DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r));
-      await render(mapping);
-      const headers = [...propertyTable().querySelectorAll('th')];
-      expect(headers[headers.length - 1].textContent).toBe('Sync');
-      expect(box('friends').type).toBe('checkbox');
-      expect(box('friends').checked).toBe(false);
-      expect(box('email').checked).toBe(true);
-      expect(box('friends').disabled).toBe(false);
+    it('has a switch per property in the list, on unless Sync is off', async () => {
+      await render(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
+      expect(box('friends').getAttribute('role')).toBe('switch');
+      expect(on(box('friends'))).toBe(false);
+      expect(on(box('email'))).toBe(true);
+      expect(disabled(box('friends'))).toBe(false);
+      expect(item('friends')!.classList.contains('is-off')).toBe(true);
     });
 
-    it.each(['uid', 'name', 'photo'])('shows %s ticked and disabled', async (property) => {
+    it.each(['uid', 'name', 'photo'])('shows %s on and disabled', async (property) => {
       await render(DEFAULT_MAPPING);
-      expect(box(property).checked).toBe(true);
-      expect(box(property).disabled).toBe(true);
+      expect(on(box(property))).toBe(true);
+      expect(disabled(box(property))).toBe(true);
+      await click(box(property));
+      expect(saves).toEqual([]);
     });
 
-    it('unticking saves sync: false at once, without a confirmation, and nothing else changes', async () => {
+    it('switching off saves sync: false at once, without a confirmation, and nothing else changes', async () => {
       await render(DEFAULT_MAPPING);
       await click(box('friends'));
       expect(saves).toHaveLength(1);
@@ -304,10 +362,17 @@ describe('the table', () => {
         DEFAULT_MAPPING.filter((r) => r.property !== 'friends'),
       );
       expect(getSettings().friendly.mapping.some((r) => r.skip)).toBe(false);
-      expect(box('friends').checked).toBe(false);
+      expect(on(box('friends'))).toBe(false);
     });
 
-    it('ticking again saves syncSince with the time and removes sync', async () => {
+    it('the switch in the list does not change which property is shown', async () => {
+      await render(DEFAULT_MAPPING);
+      select('email');
+      await click(box('friends'));
+      expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('email');
+    });
+
+    it('switching on again saves syncSince with the time and removes sync', async () => {
       vi.spyOn(Date, 'now').mockReturnValue(7777);
       await render(DEFAULT_MAPPING);
       await click(box('friends'));
@@ -315,26 +380,36 @@ describe('the table', () => {
       expect(saves).toHaveLength(2);
       expect(stored('friends')).toMatchObject({ syncSince: 7777 });
       expect('sync' in stored('friends')!).toBe(false);
-      expect(box('friends').checked).toBe(true);
+      expect(on(box('friends'))).toBe(true);
+    });
+
+    it('the switch in the details does the same', async () => {
+      await render(DEFAULT_MAPPING);
+      select('friends');
+      await click(detail().querySelector<HTMLElement>('[aria-label="Sync"]')!);
+      expect(stored('friends')).toMatchObject({ sync: false });
+      expect(on(box('friends'))).toBe(false);
     });
 
     it('stored rows never carry skip, also after a later edit', async () => {
       await render(DEFAULT_MAPPING.map((r) => (r.property === 'friends' ? { ...r, sync: false as const } : r)));
-      await act(async () => commitText(input('department', 'Part for department'), '3'));
+      await commitText(input('department', 'Part for department'), '3');
       expect(getSettings().friendly.mapping.some((r) => r.skip)).toBe(false);
       expect(stored('friends')).toMatchObject({ sync: false });
     });
 
-    it('describes what Sync off does under the table', async () => {
+    it('the details say what Sync off does', async () => {
       await render(DEFAULT_MAPPING);
-      expect(container.textContent).toContain(
+      select('friends');
+      expect(detail().textContent).toContain(
         'Sync off: the property stays in your notes, but Sync and Import no longer read it from cards or write it to them. Lines already on a card stay there; remove them yourself if you want them gone.',
       );
     });
 
-    it('a labelled date row has no checkbox in this table', async () => {
+    it('a labelled date is not in the list', async () => {
       await render(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 1000)));
-      expect(propertyTable().querySelector('input[aria-label="Sync dating"]')).toBeNull();
+      expect(item('dating')).toBeUndefined();
+      expect(container.querySelector('[aria-label="Sync dating"]')).toBeNull();
     });
   });
 
@@ -344,22 +419,21 @@ describe('the table', () => {
     expect(input('company', 'Part for company').value).toBe('1');
   });
 
-  it('a field row has no Part input', async () => {
+  it('a field row has no Part', async () => {
     await render(DEFAULT_MAPPING);
-    expect(cell('nickname', 2).querySelector('input')).toBeNull();
-    expect(cell('nickname', 2).textContent).toBe('');
+    expect(fieldNames('nickname')).not.toContain('Part');
   });
 
   it('committing a part saves the 0-based index', async () => {
     await render(DEFAULT_MAPPING);
-    await act(async () => commitText(input('department', 'Part for department'), ' 3 '));
+    await commitText(input('department', 'Part for department'), ' 3 ');
     expect(container.querySelector('.vcf-mapping-errors')).toBeNull();
     expect(stored('department')).toMatchObject({ index: 2 });
   });
 
   it.each(['0', 'abc', '1.5', ''])('committing part %j shows the invalid part error and saves nothing', async (text) => {
     await render(DEFAULT_MAPPING);
-    await act(async () => commitText(input('department', 'Part for department'), text));
+    await commitText(input('department', 'Part for department'), text);
     expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain('Property "department" has an invalid part.');
     expect(saves).toEqual([]);
     expect(stored('department')).toMatchObject({ index: 1 });
@@ -367,14 +441,14 @@ describe('the table', () => {
 
   it('after an invalid part the input shows what was typed', async () => {
     await render(DEFAULT_MAPPING);
-    await act(async () => commitText(input('department', 'Part for department'), 'abc'));
+    await commitText(input('department', 'Part for department'), 'abc');
     expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain('Property "department" has an invalid part.');
     expect(input('department', 'Part for department').value).toBe('abc');
   });
 
-  it('a table save keeps the record of the default rows added', async () => {
+  it('a save keeps the record of the default rows added', async () => {
     await render(DEFAULT_MAPPING, { defaultRowsSeen: 1 });
-    await act(async () => commitText(input('department', 'Part for department'), '3'));
+    await commitText(input('department', 'Part for department'), '3');
     expect(saves).toHaveLength(1);
     expect(getSettings().friendly).toMatchObject({ defaultRowsSeen: 1 });
   });
@@ -384,40 +458,41 @@ describe('the table', () => {
     const key = () => input('title', 'vCard 3.0 write key for title');
     expect(key().placeholder).toBe('same as 4.0');
     expect(key().value).toBe('');
-    await act(async () => commitText(key(), ' X-TITLE '));
+    await commitText(key(), ' X-TITLE ');
     expect(stored('title')).toMatchObject({ writeV3: 'X-TITLE' });
-    await act(async () => commitText(key(), ''));
+    await commitText(key(), '');
     expect(stored('title')).not.toHaveProperty('writeV3');
   });
 
   it('the parts of one field share their vCard 3.0 write key', async () => {
     await render(DEFAULT_MAPPING);
-    await act(async () => commitText(input('department', 'vCard 3.0 write key for department'), 'X-ORG'));
+    await commitText(input('department', 'vCard 3.0 write key for department'), 'X-ORG');
     expect(container.querySelector('.vcf-mapping-errors')?.textContent).toContain(
       'Properties "company" and "department" both write ORG; give them the same vCard 3.0 write key.',
     );
     expect(saves).toEqual([]);
-    await act(async () => commitText(input('company', 'vCard 3.0 write key for company'), 'X-ORG'));
+    await commitText(input('company', 'vCard 3.0 write key for company'), 'X-ORG');
     expect(container.querySelector('.vcf-mapping-errors')).toBeNull();
     expect(stored('company')).toMatchObject({ writeV3: 'X-ORG' });
     expect(stored('department')).toMatchObject({ writeV3: 'X-ORG' });
   });
 
-  it('a fixed row has no vCard 3.0 input', async () => {
+  it('a fixed row shows its name and vCard 3.0 key as text', async () => {
     await render(DEFAULT_MAPPING);
-    expect(cell('uid', 4).querySelector('input')).toBeNull();
-    expect(cell('uid', 4).textContent).toBe('same as 4.0');
+    expect(control('uid', 'Name in note')!.querySelector('input')).toBeNull();
+    expect(control('uid', 'Write as (vCard 3.0)')!.querySelector('input')).toBeNull();
+    expect(control('uid', 'Write as (vCard 3.0)')!.textContent).toBe('same as 4.0');
   });
 
   it('a fixed row with a vCard 3.0 write key shows it as text', async () => {
     await render(DEFAULT_MAPPING.map((r) => (r.property === 'name' ? { ...r, writeV3: 'X-FN' } : r)) as MappingRow[]);
-    expect(cell('name', 4).querySelector('input')).toBeNull();
-    expect(cell('name', 4).textContent).toBe('X-FN');
+    expect(control('name', 'Write as (vCard 3.0)')!.querySelector('input')).toBeNull();
+    expect(control('name', 'Write as (vCard 3.0)')!.textContent).toBe('X-FN');
   });
 
   it('a field row has a vCard 3.0 input too', async () => {
     await render(DEFAULT_MAPPING);
-    await act(async () => commitText(input('nickname', 'vCard 3.0 write key for nickname'), 'X-NICK'));
+    await commitText(input('nickname', 'vCard 3.0 write key for nickname'), 'X-NICK');
     expect(stored('nickname')).toMatchObject({ writeV3: 'X-NICK' });
   });
 
@@ -426,25 +501,57 @@ describe('the table', () => {
     expect(input('gender', 'vCard 3.0 write key for gender').value).toBe('X-GENDER');
   });
 
-  it('shows what a relation row writes, as text', async () => {
+  it('shows what a relation row reads and writes, as text', async () => {
     await render(DEFAULT_MAPPING);
-    expect(cell('spouse', 2).textContent).toBe('');
-    expect(cell('spouse', 3).textContent).toBe('RELATED;TYPE=spouse');
-    expect(cell('spouse', 3).querySelector('input')).toBeNull();
-    expect(cell('spouse', 4).textContent).toBe('X-ABRELATEDNAMES · label Spouse');
-    expect(cell('spouse', 4).querySelector('input')).toBeNull();
+    expect(fieldNames('spouse')).toEqual(['Name in note', 'Read from', 'Mirrored by', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'Sync']);
+    expect(control('spouse', 'Read from')!.textContent).toBe('spouse');
+    expect(control('spouse', 'Mirrored by')!.textContent).toBe('spouse');
+    expect(control('spouse', 'Write as (vCard 4.0)')!.textContent).toBe('RELATED;TYPE=spouse');
+    expect(control('spouse', 'Write as (vCard 4.0)')!.querySelector('input')).toBeNull();
+    expect(control('spouse', 'Write as (vCard 3.0)')!.textContent).toBe('X-ABRELATEDNAMES · label Spouse');
+    expect(control('emergency', 'Mirrored by')!.textContent).toBe('none');
   });
 
   it('a relation row without a label writes the same as 4.0', async () => {
     const mapping = DEFAULT_MAPPING.map((r) => (r.kind === 'relation' && r.property === 'spouse' ? { ...r, labels: [' '] } : r));
     await render(mapping);
-    expect(cell('spouse', 4).textContent).toBe('same as 4.0');
+    expect(control('spouse', 'Write as (vCard 3.0)')!.textContent).toBe('same as 4.0');
   });
 
   it('the anniversary row shows its vCard 3.0 date as text', async () => {
     await render(DEFAULT_MAPPING);
-    expect(cell('anniversary', 3).querySelector('input')?.value).toBe('ANNIVERSARY');
-    expect(cell('anniversary', 4).textContent).toBe('X-ABDATE · label Anniversary');
-    expect(cell('anniversary', 4).querySelector('input')).toBeNull();
+    expect(input('anniversary', 'Write key for anniversary').value).toBe('ANNIVERSARY');
+    expect(control('anniversary', 'Write as (vCard 3.0)')!.textContent).toBe('X-ABDATE · label Anniversary');
+    expect(control('anniversary', 'Write as (vCard 3.0)')!.querySelector('input')).toBeNull();
+  });
+
+  describe('in a narrow pane', () => {
+    let width = 400;
+    beforeEach(() => {
+      width = 400;
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+      (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+        observe() {}
+        disconnect() {}
+      };
+    });
+    afterEach(() => {
+      delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    });
+
+    it('shows the details right under the chosen property', async () => {
+      await render(DEFAULT_MAPPING);
+      select('email');
+      const shown = detail();
+      expect(container.querySelectorAll('.vcf-props-detail')).toHaveLength(1);
+      expect(shown.previousElementSibling).toBe(item('email'));
+      expect(container.querySelector('.vcf-props-layout')!.classList.contains('is-narrow')).toBe(true);
+    });
+
+    it('beside the list when there is room', async () => {
+      width = 700;
+      await render(DEFAULT_MAPPING);
+      expect(detail().parentElement).toBe(container.querySelector('.vcf-props-layout'));
+    });
   });
 });

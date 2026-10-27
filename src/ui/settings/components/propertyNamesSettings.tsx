@@ -17,6 +17,8 @@ import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import { CommitInput } from "src/ui/settings/components/commitInput";
 import { DateLabelsSettings } from "src/ui/settings/components/dateLabelsSettings";
+import { Toggle } from "src/ui/settings/components/toggle";
+import { groupRows } from "src/ui/settings/propertyGroups";
 
 const splitPatterns = (text: string): string[] =>
   text.split(",").map((p) => p.trim()).filter((p) => p !== "");
@@ -42,18 +44,53 @@ const withWriteV3 = (row: MappingRow, key: string): MappingRow => {
   return (key === "" ? rest : { ...rest, writeV3: key }) as MappingRow;
 };
 
-/** What a relation is written as on a vCard 3.0 card: the label on `X-ABRELATEDNAMES`, or the 4.0 form without one. */
 /** A vCard key with a label, e.g. `X-ABRELATEDNAMES · label Friend`; the key never breaks over two lines. */
 const keyWithLabel = (key: string, label: string) => (
   <><span className="vcf-mapping-key">{key}</span>{` · label ${label}`}</>
 );
 
+/** What a relation is written as on a vCard 3.0 card: the label on `X-ABRELATEDNAMES`, or the 4.0 form without one. */
 const relationWriteV3 = (row: RelationRow): React.ReactNode => {
   const label = (row.labels ?? [])[0]?.trim() ?? "";
   return label === "" ? SAME_AS_4 : keyWithLabel("X-ABRELATEDNAMES", label);
 };
 
 const BASES_NOT_UPDATED = "Some sync bases could not be updated; see console.";
+
+const SYNC_OFF =
+  "Sync off: the property stays in your notes, but Sync and Import no longer read it from cards or write it to them. " +
+  "Lines already on a card stay there; remove them yourself if you want them gone.";
+
+/** Below this width the details of a property open under its line instead of beside the list. */
+const NARROW_WIDTH = 560;
+
+/** True while the element is narrower than `width`; false where the width cannot be measured. */
+function useNarrow(ref: React.RefObject<HTMLElement>, width: number): boolean {
+  const [narrow, setNarrow] = React.useState(false);
+  React.useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const check = () => setNarrow(element.clientWidth > 0 && element.clientWidth < width);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref, width]);
+  return narrow;
+}
+
+/** One setting in the details of a property: its name and description, and the control. */
+function Field({ name, description, children }: { name: string; description: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="setting-item">
+      <div className="setting-item-info">
+        <div className="setting-item-name">{name}</div>
+        <div className="setting-item-description">{description}</div>
+      </div>
+      <div className="setting-item-control">{children}</div>
+    </div>
+  );
+}
 
 export function PropertyNamesSettings({ app }: { app: App }) {
   const [rows, setRows] = React.useState<MappingRow[]>(() => getSettings().friendly.mapping);
@@ -64,6 +101,10 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const [mirror, setMirror] = React.useState(() => mirrorRelationsOnThisDevice(app));
   /** The Part text typed per row; shown while the row's part is invalid (NaN), so the input never reads "NaN". */
   const [partText, setPartText] = React.useState<Record<number, string>>({});
+  /** The property shown beside the list (or under its line in a narrow pane), by name; the first one when absent. */
+  const [selected, setSelected] = React.useState<string | undefined>(undefined);
+  const layoutRef = React.useRef<HTMLDivElement>(null);
+  const narrow = useNarrow(layoutRef, NARROW_WIDTH);
 
   const save = async (mapping: MappingRow[]) => {
     const current = getSettings();
@@ -132,6 +173,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const rename = (index: number, to: string) => {
     const from = rows[index].property;
     if (isFixedProperty(from)) return;
+    if (index === current) setSelected(to);
     if (rows.filter((r) => r.property === from).length > 1) return edit(index, (r) => ({ ...r, property: to }));
     return commit(renameRow(rows, from, to));
   };
@@ -270,17 +312,129 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     }
   };
 
+  const listed = (row: MappingRow) => !isLabelledDateRow(row);
+  const firstListed = rows.findIndex(listed);
+  const named = rows.findIndex((row) => row.property === selected && listed(row));
+  const current = named >= 0 ? named : firstListed;
+  const isOn = (row: MappingRow) => row.sync !== false || isFixedProperty(row.property);
+  const setSync = (index: number, on: boolean) => { void commit(withSync(rows, index, on, Date.now())); };
+
+  const detail = (i: number) => {
+    const row = rows[i];
+    const fixed = isFixedProperty(row.property);
+    return (
+      <div className="vcf-props-detail" key={`${revision}-${i}`}>
+        <div className="vcf-props-detail-title">{row.property}</div>
+        <div className="setting-group">
+          <div className="setting-items">
+            <Field name="Name in note" description={fixed ? "This name cannot be changed." : "The property in your contact notes."}>
+              {fixed ? (
+                <span className="vcf-mapping-readonly">{row.property}</span>
+              ) : (
+                <CommitInput label="Property name" value={row.property} onCommit={(text) => rename(i, text.trim())} />
+              )}
+            </Field>
+            {row.kind === "relation" ? (
+              <>
+                <Field name="Read from" description="The relationship types on cards.">
+                  <span className="vcf-mapping-readonly">{row.types.join(", ")}</span>
+                </Field>
+                <Field name="Mirrored by" description="The property the other contact gets.">
+                  <span className="vcf-mapping-readonly">{row.mirror ?? "none"}</span>
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field name="Read from" description={<>Card fields, comma separated, e.g. <code>TEL[CELL], TEL[IPHONE,CELL]</code>. Changing it does not refill your notes.</>}>
+                  <CommitInput
+                    label={`Read patterns for ${row.property}`}
+                    value={row.read.join(", ")}
+                    onCommit={(text) => edit(i, (r) => ({ ...r, read: splitPatterns(text) }) as MappingRow)}
+                  />
+                </Field>
+                {row.kind === "component" && (
+                  <Field name="Part" description={<>Which part of the field, counting from 1: <code>ORG</code> part 2 is the department.</>}>
+                    <CommitInput
+                      label={`Part for ${row.property}`}
+                      value={Number.isNaN(row.index) ? (partText[i] ?? "") : String(row.index + 1)}
+                      onCommit={(text) => {
+                        setPartText((typed) => ({ ...typed, [i]: text }));
+                        return edit(i, (r) => ({ ...r, index: partIndex(text) }) as MappingRow);
+                      }}
+                    />
+                  </Field>
+                )}
+              </>
+            )}
+            <Field name="Write as (vCard 4.0)" description="The field a new line gets on a vCard 4.0 card.">
+              {row.kind === "relation" ? (
+                <span className="vcf-mapping-readonly">RELATED;<wbr />{`TYPE=${row.types[0] ?? ""}`}</span>
+              ) : (
+                <CommitInput
+                  label={`Write key for ${row.property}`}
+                  value={row.write}
+                  onCommit={(text) => edit(i, (r) => ({ ...r, write: text.trim() }))}
+                />
+              )}
+            </Field>
+            <Field name="Write as (vCard 3.0)" description="The field a new line gets on a vCard 3.0 card; empty is the same as 4.0.">
+              {row.kind === "relation" ? (
+                <span className="vcf-mapping-readonly">{relationWriteV3(row)}</span>
+              ) : row.kind === "field" && row.appleDateLabel !== undefined ? (
+                <span className="vcf-mapping-readonly">{keyWithLabel("X-ABDATE", row.appleDateLabel)}</span>
+              ) : fixed ? (
+                <span className="vcf-mapping-readonly">{row.writeV3?.trim() || SAME_AS_4}</span>
+              ) : (
+                <CommitInput
+                  label={`vCard 3.0 write key for ${row.property}`}
+                  placeholder={SAME_AS_4}
+                  value={row.writeV3 ?? ""}
+                  onCommit={(text) => edit(i, (r) => withWriteV3(r, text.trim()))}
+                />
+              )}
+            </Field>
+            <Field name="Sync" description={fixed ? "uid, name and photo are always synced." : SYNC_OFF}>
+              <Toggle on={isOn(row)} label="Sync" disabled={fixed} onChange={(on) => setSync(i, on)} />
+            </Field>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const item = (i: number) => {
+    const row = rows[i];
+    return (
+      <React.Fragment key={`${revision}-${i}`}>
+        <div
+          className={`vcf-props-item${i === current ? " is-selected" : ""}${isOn(row) ? "" : " is-off"}`}
+          role="listitem"
+          aria-current={i === current}
+          tabIndex={0}
+          onClick={() => setSelected(row.property)}
+          onKeyDown={(event) => {
+            if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              setSelected(row.property);
+            }
+          }}
+        >
+          <span className="vcf-props-item-name">{row.property}</span>
+          <Toggle on={isOn(row)} label={`Sync ${row.property}`} disabled={isFixedProperty(row.property)} onChange={(on) => setSync(i, on)} />
+        </div>
+        {narrow && i === current && detail(i)}
+      </React.Fragment>
+    );
+  };
+
   return (
     <>
       <div className="setting-item setting-item-heading">
         <div className="setting-item-info">
           <div className="setting-item-name">Property names</div>
           <div className="setting-item-description">
-            The names of the properties in your contact notes, and the vCard fields they are read from and written to.
-            Read patterns are comma separated, e.g. <code>TEL[CELL], TEL[IPHONE,CELL]</code>.
-            Part picks one part of a field made of parts (<code>ORG</code> part 2 is the department).
-            The vCard 3.0 column is used for new fields on vCard 3.0 cards; empty means the same as 4.0.
-            Changing Read from or Part does not refill your notes.
+            The properties in your contact notes, and the card fields they are read from and written to. Pick one to
+            see and change it; the switch turns Sync on or off.
           </div>
         </div>
         <div className="setting-item-control">
@@ -296,18 +450,14 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           </div>
         </div>
         <div className="setting-item-control">
-          <div
-            className={`checkbox-container${mirror ? " is-enabled" : ""}`}
-            role="switch"
-            aria-checked={mirror}
-            tabIndex={0}
-            onClick={() => {
-              setMirrorRelationsOnThisDevice(app, !mirror);
-              setMirror(!mirror);
+          <Toggle
+            on={mirror}
+            label="Mirror relationships on this device"
+            onChange={(on) => {
+              setMirrorRelationsOnThisDevice(app, on);
+              setMirror(on);
             }}
-          >
-            <input type="checkbox" tabIndex={0} checked={mirror} readOnly />
-          </div>
+          />
         </div>
       </div>
 
@@ -318,100 +468,18 @@ export function PropertyNamesSettings({ app }: { app: App }) {
         </div>
       )}
 
-      <table className="vcf-mapping-table">
-        <thead>
-          <tr>
-            <th className="vcf-mapping-name">Name</th>
-            <th>Read from</th>
-            <th className="vcf-mapping-part">Part</th>
-            <th>Write as (vCard 4.0)</th>
-            <th>Write as (vCard 3.0)</th>
-            <th className="vcf-mapping-sync">Sync</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => isLabelledDateRow(row) ? null : (
-            <tr key={`${revision}-${i}`}>
-              <td className="vcf-mapping-name">
-                {isFixedProperty(row.property) ? (
-                  <span className="vcf-mapping-readonly" title="This name cannot be changed">{row.property}</span>
-                ) : (
-                  <CommitInput
-                    label="Property name"
-                    value={row.property}
-                    onCommit={(text) => rename(i, text.trim())}
-                  />
-                )}
-              </td>
-              <td>
-                {row.kind === "relation" ? (
-                  <span className="vcf-mapping-readonly">
-                    {row.types.join(", ")}
-                    {row.mirror !== undefined ? ` (mirrored by ${row.mirror})` : ""}
-                  </span>
-                ) : (
-                  <CommitInput
-                    label={`Read patterns for ${row.property}`}
-                    value={row.read.join(", ")}
-                    onCommit={(text) => edit(i, (r) => ({ ...r, read: splitPatterns(text) }) as MappingRow)}
-                  />
-                )}
-              </td>
-              <td className="vcf-mapping-part">
-                {row.kind === "component" && (
-                  <CommitInput
-                    label={`Part for ${row.property}`}
-                    value={Number.isNaN(row.index) ? (partText[i] ?? "") : String(row.index + 1)}
-                    onCommit={(text) => {
-                      setPartText((typed) => ({ ...typed, [i]: text }));
-                      return edit(i, (r) => ({ ...r, index: partIndex(text) }) as MappingRow);
-                    }}
-                  />
-                )}
-              </td>
-              <td>
-                {row.kind === "relation" ? (
-                  <span className="vcf-mapping-readonly">RELATED;<wbr />{`TYPE=${row.types[0] ?? ""}`}</span>
-                ) : (
-                  <CommitInput
-                    label={`Write key for ${row.property}`}
-                    value={row.write}
-                    onCommit={(text) => edit(i, (r) => ({ ...r, write: text.trim() }))}
-                  />
-                )}
-              </td>
-              <td>
-                {row.kind === "relation" ? (
-                  <span className="vcf-mapping-readonly">{relationWriteV3(row)}</span>
-                ) : row.kind === "field" && row.appleDateLabel !== undefined ? (
-                  <span className="vcf-mapping-readonly">{keyWithLabel("X-ABDATE", row.appleDateLabel)}</span>
-                ) : isFixedProperty(row.property) ? (
-                  <span className="vcf-mapping-readonly">{row.writeV3?.trim() || SAME_AS_4}</span>
-                ) : (
-                  <CommitInput
-                    label={`vCard 3.0 write key for ${row.property}`}
-                    placeholder={SAME_AS_4}
-                    value={row.writeV3 ?? ""}
-                    onCommit={(text) => edit(i, (r) => withWriteV3(r, text.trim()))}
-                  />
-                )}
-              </td>
-              <td className="vcf-mapping-sync">
-                <input
-                  type="checkbox"
-                  aria-label={`Sync ${row.property}`}
-                  checked={row.sync !== false || isFixedProperty(row.property)}
-                  disabled={isFixedProperty(row.property)}
-                  onChange={(e) => { void commit(withSync(rows, i, e.target.checked, Date.now())); }}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="setting-item-description">
-        Sync off: the property stays in your notes, but Sync and Import no longer read it from cards or write it to them.
-        Lines already on a card stay there; remove them yourself if you want them gone.
+      <div className="vcf-props" ref={layoutRef}>
+        <div className={`vcf-props-layout${narrow ? " is-narrow" : ""}`}>
+          <div className="vcf-props-list" role="list" aria-label="Properties">
+            {groupRows(rows, listed).map(({ group, indexes }) => (
+              <React.Fragment key={group}>
+                <div className="vcf-props-group">{group}</div>
+                {indexes.map(item)}
+              </React.Fragment>
+            ))}
+          </div>
+          {!narrow && current >= 0 && detail(current)}
+        </div>
       </div>
 
       <DateLabelsSettings

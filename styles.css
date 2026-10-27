@@ -502,7 +502,7 @@
   opacity: 1;
 }
 
-/* Property names table in the settings. */
+/* Tables in the settings (dates with a label). */
 .vcf-mapping-table {
   width: 100%;
   border-collapse: collapse;
@@ -522,49 +522,150 @@
   width: 100%;
 }
 
-/* Wide enough for the longest default name (gender-identity). */
-.vcf-mapping-table .vcf-mapping-name input {
-  min-width: 16ch;
-}
-
-.vcf-mapping-table .vcf-mapping-sync {
-  width: 1%;
-  text-align: center;
-}
-
-.vcf-mapping-table .vcf-mapping-sync input[type="checkbox"] {
-  margin: 0;
-  vertical-align: middle;
-}
-
-.vcf-mapping-table .vcf-mapping-sync input[type="checkbox"]:disabled {
-  opacity: 0.5;
-}
-
 .vcf-mapping-readonly {
   color: var(--text-muted);
 }
 
-/* Keys such as X-ABRELATEDNAMES stay whole; RELATED;TYPE=… may break after the semicolon. */
+/* Keys such as X-ABRELATEDNAMES stay whole. */
 .vcf-mapping-key {
   white-space: nowrap;
 }
 
-.vcf-mapping-table .vcf-mapping-part {
-  width: 5ch;
+.checkbox-container.is-disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-/* A narrow settings pane: names may get cut off and fixed texts break anywhere, rather than a scrollbar. */
-@container (max-width: 640px) {
-  .vcf-mapping-table .vcf-mapping-name input {
-    min-width: 8ch;
-  }
+/* Tabs of the plugin settings. */
+.vcf-settings-tabs {
+  display: flex;
+  gap: var(--size-4-1);
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-4);
+}
 
-  .vcf-mapping-table .vcf-mapping-readonly,
-  .vcf-mapping-table .vcf-mapping-key {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
+.vcf-settings-tabs .vcf-settings-tab {
+  background: none;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: var(--size-4-2) var(--size-4-3);
+  height: auto;
+  color: var(--text-muted);
+  font-size: var(--font-ui-medium);
+  cursor: pointer;
+}
+
+.vcf-settings-tabs .vcf-settings-tab:hover {
+  background: none;
+  color: var(--text-normal);
+}
+
+.vcf-settings-tabs .vcf-settings-tab.is-active {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+}
+
+/* Property names: a list on the left, the details of the chosen property on the right. */
+.vcf-props-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) 3fr;
+  gap: var(--size-4-4);
+  align-items: start;
+  margin: var(--size-4-2) 0 var(--size-4-4);
+}
+
+.vcf-props-layout.is-narrow {
+  grid-template-columns: 1fr;
+}
+
+.vcf-props-list {
+  background-color: var(--setting-items-background, var(--background-secondary));
+  border-radius: var(--setting-items-radius, var(--radius-m));
+  padding: var(--size-4-3) var(--size-4-2);
+}
+
+.vcf-props-group {
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin: var(--size-4-4) 0 var(--size-4-1) var(--size-4-2);
+}
+
+.vcf-props-group:first-child {
+  margin-top: 0;
+}
+
+.vcf-props-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+/* Small switches in the list, as Obsidian's own lists use. */
+.vcf-props-item {
+  --toggle-width: var(--toggle-s-width, 34px);
+  --toggle-thumb-height: var(--toggle-s-thumb-height, 15px);
+  --toggle-thumb-width: var(--toggle-s-thumb-width, 15px);
+  --toggle-border-width: var(--toggle-s-border-width, 2px);
+}
+
+.vcf-props-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.vcf-props-item.is-selected {
+  background: var(--background-modifier-active-hover);
+}
+
+.vcf-props-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcf-props-item.is-off .vcf-props-item-name {
+  color: var(--text-muted);
+}
+
+.vcf-props-detail {
+  position: sticky;
+  top: var(--size-4-2);
+}
+
+.vcf-props-layout.is-narrow .vcf-props-detail {
+  position: static;
+  margin: var(--size-4-1) 0 var(--size-4-3) var(--size-4-2);
+  padding-inline-start: var(--size-4-3);
+  border-inline-start: 2px solid var(--interactive-accent);
+}
+
+.vcf-props-detail-title {
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-semibold);
+  padding-bottom: var(--size-4-2);
+}
+
+.vcf-props-detail-title {
+  padding-inline-start: var(--size-4-1);
+}
+
+/* In a narrow pane the details open right under the property's line, which already names it. */
+.vcf-props-layout.is-narrow .vcf-props-detail-title {
+  display: none;
+}
+
+.vcf-props-detail .setting-item-control input[type="text"] {
+  width: 14em;
+  max-width: 100%;
 }
 
 .vcf-mapping-errors {

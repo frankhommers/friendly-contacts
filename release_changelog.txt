@@ -1,6 +1,8 @@
-## Friendly Contacts 3.0.0-alpha.17
+## Friendly Contacts 3.0.0-alpha.18
 
-**Fix: the property table (Settings → Property names) no longer makes the settings scroll sideways.**
+**New look for the settings: tabs, and a property list instead of the big table.**
 
-- Fixed texts break at sensible places: `RELATED;TYPE=…` after the semicolon, and keys such as `X-ABRELATEDNAMES` stay whole. The Part column is narrow.
-- In a narrow window the Name column gets narrower and long texts may break anywhere, instead of a scrollbar.
+- The plugin settings have three tabs: **General**, **Sync** (address books, links to Obsidian notes on cards) and **Properties**. The settings open on the tab you used last.
+- **Properties** lists your property names in groups (Name, Phone, email and web, Work, Address, Dates, Relationships, Other), each with a Sync switch. Click one to see and change its details beside the list: name in the note, Read from, Part, Write as (vCard 4.0 and 3.0) and Sync, each with a short explanation.
+- In a narrow window the details open right under the property you clicked.
+- Nothing changes in what is stored: the same property names, the same Sync setting.
