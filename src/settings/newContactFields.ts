@@ -42,28 +42,31 @@ export function renameNewContactKeys(keys: string[], renames: { from: string; to
   });
 }
 
-/** The entries not created under one of `listed` (properties shown in the property list), in their order. */
-export function otherNewContactKeys(keys: string[], rows: MappingRow[], listed: (row: MappingRow) => boolean): string[] {
-  const shown = new Set(rows.filter(listed).map((row) => row.property));
+/** The entries not created under a property in the list (a card field no row reads, `mobile-2`), in their order. */
+export function otherNewContactKeys(keys: string[], rows: MappingRow[]): string[] {
+  const shown = new Set(rows.map((row) => row.property));
   return keys.filter((key) => !shown.has(newContactProperty(key, rows)));
 }
 
 /**
- * What a person typed to add, as an entry: a property name as typed, a vCard key in capitals. An error when it is
- * empty, already there, or neither a property nor a supported vCard key (custom keys start with `X-`).
+ * What a person typed to give new contacts: a property (as typed), the property that reads a typed card field, or a
+ * card field (in capitals) no property reads yet, which needs a row of its own. An error when it is empty, already
+ * there, or neither a property nor a supported vCard key (custom keys start with `X-`).
  */
-export function parseNewContactKey(typed: string, keys: string[], rows: MappingRow[]): { key: string } | { error: string } {
+export function newContactAddition(
+  typed: string,
+  keys: string[],
+  rows: MappingRow[],
+): { property: string } | { cardField: string } | { error: string } {
   const text = typed.trim();
   if (text === "") return { error: "Type a property name or a card field." };
-  if (isMappedProperty(text, rows)) {
-    return inNewContacts(newContactProperty(text, rows), keys, rows) ? { error: `New contacts already get ${text}.` } : { key: text };
-  }
-  const key = text.toUpperCase();
-  if (!isVCardKey(key)) {
+  const already = (property: string) => ({ error: `New contacts already get ${property}.` });
+  if (isMappedProperty(text, rows)) return inNewContacts(text, keys, rows) ? already(text) : { property: text };
+  const cardField = text.toUpperCase();
+  if (!isVCardKey(cardField)) {
     return { error: `"${text}" is not a property or a card field. Use a property name such as mobile or city, or prefix custom fields with X-.` };
   }
-  if (keys.includes(key) || inNewContacts(newContactProperty(key, rows), keys, rows)) {
-    return { error: `New contacts already get ${newContactProperty(key, rows)}.` };
-  }
-  return { key };
+  const property = newContactProperty(cardField, rows);
+  if (property === cardField) return { cardField };
+  return inNewContacts(property, keys, rows) ? already(property) : { property };
 }

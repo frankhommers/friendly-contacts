@@ -1185,3 +1185,6 @@ textarea.friendly-review-edit {
   color: var(--text-accent-hover);
   text-decoration: underline;
 }
+.vcf-add-property .setting-item-control input[type="text"] {
+  width: 9em;
+}

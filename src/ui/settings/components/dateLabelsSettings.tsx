@@ -1,30 +1,21 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
 import { isLabelledDateRow, readableLabel, suggestPropertyName } from "src/contacts/friendly/dateLabels";
-import { isFixedProperty, MappingRow } from "src/contacts/friendly/mapping";
+import { MappingRow } from "src/contacts/friendly/mapping";
 import { findDateLabels } from "src/contacts/labelledDates";
-import { CommitInput } from "src/ui/settings/components/commitInput";
 
 export interface DateLabelsSettingsProps {
   app: App;
   rows: MappingRow[];
-  revision: number;
-  onRename(index: number, to: string): void;
   onAdd(label: string, property: string): Promise<void>;
-  onRemove(index: number): void;
 }
-
-/** The anniversary row: a date with Apple's built-in label that writes `ANNIVERSARY` on a 4.0 card. */
-const isAnniversaryRow = (row: MappingRow): boolean =>
-  row.kind === "field" && row.appleDateLabel !== undefined && !isLabelledDateRow(row);
 
 const sameLabel = (a: string, b: string): boolean => readableLabel(a).toLowerCase() === readableLabel(b).toLowerCase();
 
 /**
- * "Dates with a label": the anniversary row and the owner's own labelled dates, an add line and the labels found on
- * the cards. Every change goes through the callbacks, so the mapping is saved in one place (`PropertyNamesSettings`).
+ * "Dates with a label": an add line and the labels found on the cards; the dates themselves are in the property list. Every change goes through the callbacks, so the mapping is saved in one place (`PropertyNamesSettings`).
  */
-export function DateLabelsSettings({ app, rows, revision, onRename, onAdd, onRemove }: DateLabelsSettingsProps) {
+export function DateLabelsSettings({ app, rows, onAdd }: DateLabelsSettingsProps) {
   const [label, setLabel] = React.useState("");
   const [property, setProperty] = React.useState("");
   const propertyInput = React.useRef<HTMLInputElement>(null);
@@ -48,9 +39,6 @@ export function DateLabelsSettings({ app, rows, revision, onRename, onAdd, onRem
     }
   }, [rows]);
 
-  const shown = rows.flatMap((row, index) => (isAnniversaryRow(row) || isLabelledDateRow(row) ? [{ row, index }] : []));
-  // The anniversary row first, then the owner's rows in their order.
-  shown.sort((a, b) => Number(isLabelledDateRow(a.row)) - Number(isLabelledDateRow(b.row)));
 
   const add = async () => {
     if (addingRef.current) return;
@@ -103,65 +91,32 @@ export function DateLabelsSettings({ app, rows, revision, onRename, onAdd, onRem
           <div className="setting-item-name">Dates with a label</div>
           <div className="setting-item-description">
             Dates a phone keeps under a label of its own, such as "Verkering". Give each label a property for your
-            notes, in English, e.g. dating. Dates without a label are not shown.
+            notes, in English, e.g. dating; change or remove it in its details in the list.
           </div>
         </div>
       </div>
 
-      <table className="vcf-mapping-table">
-        <thead>
-          <tr>
-            <th>Label on the card</th>
-            <th>Property in the note</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map(({ row, index }) => {
-            const dateLabel = row.kind === "field" ? readableLabel(row.appleDateLabel ?? "") : "";
-            return (
-              <tr key={`${revision}-${index}`}>
-                <td>
-                  <span className="vcf-mapping-readonly">{dateLabel}</span>
-                </td>
-                <td>
-                  {isFixedProperty(row.property) ? (
-                    <span className="vcf-mapping-readonly" title="This name cannot be changed">{row.property}</span>
-                  ) : (
-                    <CommitInput
-                      label={`Property for ${dateLabel}`}
-                      value={row.property}
-                      onCommit={(text) => onRename(index, text.trim())}
-                    />
-                  )}
-                </td>
-                <td>
-                  {isLabelledDateRow(row) ? <button onClick={() => onRemove(index)}>Remove</button> : null}
-                </td>
-              </tr>
-            );
-          })}
-          <tr>
-            <td>
-              <input type="text" aria-label="Label" placeholder="Label" value={label} onChange={(e) => setLabel(e.target.value)} />
-            </td>
-            <td>
-              <input
-                ref={propertyInput}
-                type="text"
-                aria-label="Property"
-                placeholder="Property"
-                value={property}
-                onChange={(e) => setProperty(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
-              />
-            </td>
-            <td>
-              <button disabled={adding} onClick={() => { void add(); }}>Add</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div className="setting-item">
+        <div className="setting-item-info">
+          <div className="setting-item-name">Add a date with a label</div>
+          <div className="setting-item-description">
+            The label as it is on the card, and a property for your notes. It then shows in the list under Dates.
+          </div>
+        </div>
+        <div className="setting-item-control">
+          <input type="text" aria-label="Label" placeholder="Label" value={label} onChange={(e) => setLabel(e.target.value)} />
+          <input
+            ref={propertyInput}
+            type="text"
+            aria-label="Property"
+            placeholder="Property"
+            value={property}
+            onChange={(e) => setProperty(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
+          />
+          <button disabled={adding} onClick={() => { void add(); }}>Add</button>
+        </div>
+      </div>
 
       <div className="setting-item">
         <div className="setting-item-info">

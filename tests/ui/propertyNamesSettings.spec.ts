@@ -238,9 +238,15 @@ it('the property shown stays shown when a date with a label is added before it',
 
 describe('removing a date with a label', () => {
   const mapping = insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating'));
+  /** Picks dating in the list: Remove is in its details. */
+  const pickDating = () =>
+    act(() => {
+      [...container.querySelectorAll<HTMLElement>('.vcf-props-item')].find((el) => el.textContent === 'dating')!.click();
+    });
 
   it('a failure finding the notes is a notice', async () => {
     await render(mapping);
+    pickDating();
     labelled.notesWithRowProperties.mockImplementation(() => {
       throw new Error('cache gone');
     });
@@ -253,6 +259,7 @@ describe('removing a date with a label', () => {
 
   it('a failure removing the properties after the confirmation is a notice', async () => {
     await render(mapping);
+    pickDating();
     labelled.notesWithRowProperties.mockReturnValue([{}]);
     labelled.removeRowProperties.mockRejectedValue(new Error('disk full'));
     await act(async () => {
@@ -407,10 +414,21 @@ describe('the property list', () => {
       );
     });
 
-    it('a labelled date is not in the list', async () => {
+    it('a labelled date is in the list under Dates, with a Sync switch', async () => {
       await render(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 1000)));
-      expect(item('dating')).toBeUndefined();
-      expect(container.querySelector('[aria-label="Sync dating"]')).toBeNull();
+      expect(item('dating')).toBeDefined();
+      const dates = [...container.querySelectorAll('.vcf-props-group')].find((el) => el.textContent === 'Dates')!;
+      let next = dates.nextElementSibling;
+      const inDates: string[] = [];
+      while (next && next.classList.contains('vcf-props-item')) {
+        inDates.push(next.textContent!);
+        next = next.nextElementSibling;
+      }
+      expect(inDates).toEqual(['birthday', 'anniversary', 'dating']);
+      await act(async () => {
+        box('dating').click();
+      });
+      expect(stored('dating')).toMatchObject({ sync: false, appleDateLabel: 'Verkering' });
     });
   });
 
@@ -526,6 +544,61 @@ describe('the property list', () => {
     expect(control('anniversary', 'Write as (vCard 3.0)')!.querySelector('input')).toBeNull();
   });
 
+  describe('a property of your own', () => {
+    const addProperty = async (cardField: string, name = '') => {
+      type(container.querySelector<HTMLInputElement>('input[aria-label="Card field"]')!, cardField);
+      type(container.querySelector<HTMLInputElement>('input[aria-label="Name in note"]')!, name);
+      await act(async () => {
+        button('Add property').click();
+      });
+    };
+
+    it('is added for a card field, synced from now on, and shown with all its settings', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(4242);
+      await render(DEFAULT_MAPPING);
+      await addProperty('x-banaan');
+      expect(stored('banaan')).toEqual({ kind: 'field', property: 'banaan', read: ['X-BANAAN'], write: 'X-BANAAN', syncSince: 4242 });
+      expect(item('banaan')).toBeDefined();
+      expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('banaan');
+      expect(fieldNames('banaan')).toEqual([
+        'Name in note', 'Read from', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'In new contacts', 'Sync', 'Remove',
+      ]);
+    });
+
+    it('takes the name given, and says why it cannot be added', async () => {
+      await render(DEFAULT_MAPPING);
+      await addProperty('TEL[FAX]', 'fax');
+      expect(stored('fax')).toMatchObject({ read: ['TEL[FAX]'], write: 'TEL;TYPE=FAX' });
+      await addProperty('TEL[CELL]');
+      expect(container.querySelector('.vcf-add-property .mod-warning')?.textContent).toBe('TEL[CELL] is already read by mobile.');
+      await addProperty('X-MOBILE', 'mobile');
+      expect(container.querySelector('.vcf-add-property .mod-warning')?.textContent).toContain('Duplicate property name: mobile');
+    });
+
+    it('can be removed, also from new contacts; a default property cannot', async () => {
+      await render(DEFAULT_MAPPING);
+      await addProperty('x-banaan');
+      await act(async () => {
+        await updateSetting('createFieldsKeys', ['email', 'banaan']);
+      });
+      labelled.notesWithRowProperties.mockReturnValue([]);
+      await act(async () => {
+        button('Remove').click();
+      });
+      expect(stored('banaan')).toBeUndefined();
+      expect(item('banaan')).toBeUndefined();
+      expect(getSettings().createFieldsKeys).toEqual(['email']);
+      expect(fieldNames('mobile')).not.toContain('Remove');
+    });
+
+    it('a date with a label shows its label, and can be removed', async () => {
+      await render(insertLabelledDateRow(DEFAULT_MAPPING, labelledDateRow('Verkering', 'dating', 1000)));
+      expect(control('dating', 'Read from')!.textContent).toBe('label Verkering');
+      expect(control('dating', 'Write as (vCard 4.0)')!.textContent).toBe('X-ABDATE · label Verkering');
+      expect(fieldNames('dating')).toContain('Remove');
+    });
+  });
+
   describe('New contacts', () => {
     const keys = () => getSettings().createFieldsKeys;
     const setKeys = async (next: string[]) => {
@@ -596,15 +669,30 @@ describe('the property list', () => {
       await render(DEFAULT_MAPPING);
       await setKeys(['email', 'X-FOO']);
       expect(others()).toEqual(['Properties', 'X-FOO', 'Add a field']);
+      // A card field no property reads gets a property of its own, shown in the list.
       type(block().querySelector<HTMLInputElement>('input[aria-label="Field for new contacts"]')!, 'x-skype');
       await act(async () => {
         button('Add field').click();
       });
-      expect(keys()).toEqual(['email', 'X-FOO', 'X-SKYPE']);
+      expect(keys()).toEqual(['email', 'X-FOO', 'skype']);
+      expect(stored('skype')).toMatchObject({ read: ['X-SKYPE'], write: 'X-SKYPE' });
+      expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('skype');
       await act(async () => {
         block().querySelector<HTMLElement>('[aria-label="Remove X-FOO"]')!.click();
       });
-      expect(keys()).toEqual(['email', 'X-SKYPE']);
+      expect(keys()).toEqual(['email', 'skype']);
+    });
+
+    it('makes a property for a field no property reads', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys(['X-FOO']);
+      await act(async () => {
+        button('Make property').click();
+      });
+      expect(stored('foo')).toMatchObject({ read: ['X-FOO'], write: 'X-FOO' });
+      expect(keys()).toEqual(['X-FOO']);
+      expect(others()).toEqual(['Properties', 'Add a field']);
+      expect(links()).toEqual(['foo']);
     });
 
     it('adds a property typed by name, and refuses what is no field', async () => {

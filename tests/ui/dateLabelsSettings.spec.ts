@@ -41,10 +41,7 @@ function render(onAdd: (label: string, property: string) => Promise<void>) {
       React.createElement(DateLabelsSettings, {
         app: {} as never,
         rows: DEFAULT_MAPPING,
-        revision: 0,
-        onRename: () => {},
         onAdd,
-        onRemove: () => {},
       }),
     );
   });
@@ -99,6 +96,6 @@ describe('DateLabelsSettings add line', () => {
     expect(notices).toEqual(['Could not add dating: disk full']);
     expect(logged).toHaveBeenCalledWith('Friendly Contacts: could not add dating', expect.any(Error));
     // The button is usable again.
-    expect(container.querySelector<HTMLButtonElement>('tbody tr:last-child button')!.disabled).toBe(false);
+    expect([...container.querySelectorAll('button')].find((b) => b.textContent === 'Add')!.disabled).toBe(false);
   });
 });

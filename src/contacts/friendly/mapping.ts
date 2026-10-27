@@ -506,6 +506,11 @@ export function isFixedProperty(property: string): boolean {
   return (FIXED_PROPERTIES as readonly string[]).includes(property);
 }
 
+/** True when `row` is one of the default rows (by its vCard identity, so also when renamed). */
+export function isDefaultRow(row: MappingRow): boolean {
+  return DEFAULT_MAPPING.some((d) => sameIdentity(d, row));
+}
+
 /** What makes a row the same row when its name changes: its vCard identity, not its place in the table. */
 function rowIdentity(row: MappingRow): string {
   if (row.kind === 'relation') return `relation|${row.types.join(',')}`;

@@ -8,12 +8,20 @@ import {
   readableLabel,
   withLabelledDateRows,
 } from "src/contacts/friendly/dateLabels";
+import { isRemovableRow, ownRow, suggestedPropertyName } from "src/contacts/friendly/ownRows";
 import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationRow, renameRow, syncSafeReset, validateMapping, withSync } from "src/contacts/friendly/mapping";
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
 import { getSettings, setSettings, updateSetting } from "src/context/sharedSettingsContext";
-import { inNewContacts, nameProperties, renameNewContactKeys, withNewContactProperty } from "src/settings/newContactFields";
+import {
+  inNewContacts,
+  nameProperties,
+  newContactAddition,
+  newContactProperty,
+  renameNewContactKeys,
+  withNewContactProperty,
+} from "src/settings/newContactFields";
 import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import { CommitInput } from "src/ui/settings/components/commitInput";
@@ -91,6 +99,58 @@ function Field({ name, description, children }: { name: string; description: Rea
         <div className="setting-item-description">{description}</div>
       </div>
       <div className="setting-item-control">{children}</div>
+    </div>
+  );
+}
+
+/** "Add a property": a card field and a name for it; the name is suggested from the field while left empty. */
+function AddPropertyLine({ onAdd }: { onAdd: (cardField: string, property: string) => Promise<string | undefined> }) {
+  const [cardField, setCardField] = React.useState("");
+  const [property, setProperty] = React.useState("");
+  const [error, setError] = React.useState<string | undefined>(undefined);
+  const add = async () => {
+    const problem = await onAdd(cardField, property);
+    setError(problem);
+    if (problem === undefined) {
+      setCardField("");
+      setProperty("");
+    }
+  };
+  const onEnter = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void add();
+    }
+  };
+  return (
+    <div className="setting-item vcf-add-property">
+      <div className="setting-item-info">
+        <div className="setting-item-name">Add a property</div>
+        <div className="setting-item-description">
+          For a card field no property reads yet, such as <code>X-BANAAN</code> or <code>TEL[FAX]</code>. It then shows
+          in the list with all its settings.
+        </div>
+        {error && <div className="setting-item-description mod-warning">{error}</div>}
+      </div>
+      <div className="setting-item-control">
+        <input
+          type="text"
+          aria-label="Card field"
+          placeholder="Card field"
+          value={cardField}
+          onChange={(event) => setCardField(event.target.value)}
+          onKeyDown={onEnter}
+        />
+        <input
+          type="text"
+          aria-label="Name in note"
+          placeholder={suggestedPropertyName(cardField) || "Name in note"}
+          value={property}
+          onChange={(event) => setProperty(event.target.value)}
+          onKeyDown={onEnter}
+        />
+        <button onClick={() => void add()}>Add property</button>
+      </div>
     </div>
   );
 }
@@ -205,6 +265,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     await save(next);
     setRows(next);
     setErrors([]);
+    setPartText({});
     setRevision((r) => r + 1);
   };
 
@@ -281,30 +342,39 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   };
 
   /**
-   * Removes the date with a label at `index` (in `rows`). The dates stay on the cards; the property goes from the
-   * notes (after a confirmation), so a row added again later never pushes leftover values as new dates.
+   * Removes the date with a label or the row of your own at `index` (in `rows`), and takes it out of the fields of
+   * new contacts. Its lines stay on the cards; the property goes from the notes (after a confirmation), so a row added
+   * again later never pushes leftover values as new.
    */
-  const removeLabelledDate = async (index: number) => {
+  const removeRow = async (index: number) => {
     const draft = rows[index];
-    if (!isLabelledDateRow(draft)) return;
-    const label = readableLabel(draft.appleDateLabel).toLowerCase();
-    const row = saved.current.find((r) => isLabelledDateRow(r) && readableLabel(r.appleDateLabel).toLowerCase() === label);
+    if (!draft || !isRemovableRow(draft)) return;
+    const row = isLabelledDateRow(draft)
+      ? saved.current.find((r) => isLabelledDateRow(r) && readableLabel(r.appleDateLabel).toLowerCase() === readableLabel(draft.appleDateLabel).toLowerCase())
+      : saved.current.find((r) => r.property === draft.property && isRemovableRow(r));
     if (!row) return;
     const next = saved.current.filter((r) => r !== row);
+    const saveRemoved = async () => {
+      // Read with the row still saved, so a card field it reads (TEL[FAX]) counts too.
+      const keys = getSettings().createFieldsKeys;
+      const left = keys.filter((key) => newContactProperty(key, saved.current) !== row.property);
+      await saveRows(next);
+      if (left.length !== keys.length) await updateSetting("createFieldsKeys", left);
+    };
     try {
       const n = notesWithRowProperties(app, row).length;
       if (n === 0) {
-        await saveRows(next);
+        await saveRemoved();
         return;
       }
       new ConfirmModal(
         app,
-        `Remove ${row.property} from ${n} contact notes? The dates stay on the cards.`,
+        `Remove ${row.property} from ${n} contact notes? ${isLabelledDateRow(row) ? "The dates stay" : "Its lines stay"} on the cards.`,
         "Remove",
         () => {
           void (async () => {
             try {
-              await saveRows(next);
+              await saveRemoved();
               const { removed, failed } = await removeRowProperties(app, row);
               if (failed.length > 0) console.log(`Friendly Contacts: could not remove ${row.property} from:\n${failed.join("\n")}`);
               new Notice(`Removed ${row.property} from ${removed} contact notes` + (failed.length > 0 ? `; ${failed.length} failed, see console` : ""));
@@ -320,10 +390,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
     }
   };
 
-  const listed = (row: MappingRow) => !isLabelledDateRow(row);
-  const firstListed = rows.findIndex(listed);
-  const named = rows.findIndex((row) => row.property === selected && listed(row));
-  const current = named >= 0 ? named : firstListed;
+  const named = rows.findIndex((row) => row.property === selected);
+  const current = named >= 0 ? named : rows.length > 0 ? 0 : -1;
   const isOn = (row: MappingRow) => row.sync !== false || isFixedProperty(row.property);
   const setSync = (index: number, on: boolean) => { void commit(withSync(rows, index, on, Date.now())); };
 
@@ -339,6 +407,37 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const show = (property: string) => {
     reveal.current = true;
     setSelected(property);
+  };
+
+  /**
+   * Adds a row of your own for a whole card field (see `ownRow`) to the saved property names and shows it; with
+   * `inNew` new contacts get it too. The error text when it cannot be added; nothing is saved then.
+   */
+  const addOwnRow = async (cardField: string, property: string, inNew: boolean): Promise<string | undefined> => {
+    if (errors.length > 0) return "Fix the errors in the property names first.";
+    const made = ownRow(cardField, property, saved.current, Date.now());
+    if ("error" in made) return made.error;
+    const next = [...saved.current, made.row];
+    const problems = validateMapping(next);
+    if (problems.length > 0) return problems.join(" ");
+    const keys = getSettings().createFieldsKeys;
+    await saveRows(next);
+    if (inNew) await updateSetting("createFieldsKeys", withNewContactProperty(keys, made.row.property, true, next));
+    show(made.row.property);
+    return undefined;
+  };
+
+  /**
+   * Gives new contacts what was typed: a property, the property that reads a card field, or (for a card field no row
+   * reads) a new row of your own. The error text when nothing was added.
+   */
+  const addToNewContacts = async (typed: string): Promise<string | undefined> => {
+    const keys = getSettings().createFieldsKeys;
+    const wanted = newContactAddition(typed, keys, saved.current);
+    if ("error" in wanted) return wanted.error;
+    if ("cardField" in wanted) return addOwnRow(wanted.cardField, "", true);
+    await updateSetting("createFieldsKeys", [...keys, wanted.property]);
+    return undefined;
   };
   React.useEffect(() => {
     if (!reveal.current) return;
@@ -370,6 +469,10 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                   <span className="vcf-mapping-readonly">{row.mirror ?? "none"}</span>
                 </Field>
               </>
+            ) : isLabelledDateRow(row) ? (
+              <Field name="Read from" description="Dates with this label on the card.">
+                <span className="vcf-mapping-readonly">{`label ${readableLabel(row.appleDateLabel)}`}</span>
+              </Field>
             ) : (
               <>
                 <Field name="Read from" description={<>Card fields, comma separated, e.g. <code>TEL[CELL], TEL[IPHONE,CELL]</code>. Changing it does not refill your notes.</>}>
@@ -396,6 +499,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
             <Field name="Write as (vCard 4.0)" description="The field a new line gets on a vCard 4.0 card.">
               {row.kind === "relation" ? (
                 <span className="vcf-mapping-readonly">RELATED;<wbr />{`TYPE=${row.types[0] ?? ""}`}</span>
+              ) : isLabelledDateRow(row) ? (
+                <span className="vcf-mapping-readonly">{keyWithLabel("X-ABDATE", row.appleDateLabel)}</span>
               ) : (
                 <CommitInput
                   label={`Write key for ${row.property}`}
@@ -434,6 +539,14 @@ export function PropertyNamesSettings({ app }: { app: App }) {
             <Field name="Sync" description={fixed ? "uid, name and photo are always synced." : SYNC_OFF}>
               <Toggle on={isOn(row)} label="Sync" disabled={fixed} onChange={(on) => setSync(i, on)} />
             </Field>
+            {isRemovableRow(row) && (
+              <Field
+                name="Remove"
+                description={`Takes the property out of the list and out of your contact notes; ${isLabelledDateRow(row) ? "the dates stay" : "its lines stay"} on the cards.`}
+              >
+                <button className="mod-warning" onClick={() => void removeRow(i)}>Remove</button>
+              </Field>
+            )}
           </div>
         </div>
       </div>
@@ -472,7 +585,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
           <div className="setting-item-name">Property names</div>
           <div className="setting-item-description">
             The properties in your contact notes, and the card fields they are read from and written to. Pick one to
-            see and change it; the switch turns Sync on or off.
+            see and change it; the switch turns Sync on or off. Add a property for any other card field below the list.
           </div>
         </div>
         <div className="setting-item-control">
@@ -509,7 +622,7 @@ export function PropertyNamesSettings({ app }: { app: App }) {
       <div className="vcf-props" ref={layoutRef}>
         <div className={`vcf-props-layout${narrow ? " is-narrow" : ""}`}>
           <div className="vcf-props-list" role="list" aria-label="Properties">
-            {groupRows(rows, listed).map(({ group, indexes }) => (
+            {groupRows(rows, () => true).map(({ group, indexes }) => (
               <React.Fragment key={group}>
                 <div className="vcf-props-group">{group}</div>
                 {indexes.map(item)}
@@ -520,16 +633,16 @@ export function PropertyNamesSettings({ app }: { app: App }) {
         </div>
       </div>
 
-      <DateLabelsSettings
-        app={app}
-        rows={rows}
-        revision={revision}
-        onRename={(index, to) => { void rename(index, to); }}
-        onAdd={addLabelledDate}
-        onRemove={(index) => { void removeLabelledDate(index); }}
-      />
+      <AddPropertyLine onAdd={(cardField, property) => addOwnRow(cardField, property, false)} />
 
-      <NewContactsSettings rows={rows} listed={listed} onSelect={show} />
+      <DateLabelsSettings app={app} rows={rows} onAdd={addLabelledDate} />
+
+      <NewContactsSettings
+        rows={rows}
+        onSelect={show}
+        onAdd={addToNewContacts}
+        onMakeProperty={(key) => addOwnRow(key, "", false)}
+      />
     </>
   );
 }

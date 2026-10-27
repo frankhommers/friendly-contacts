@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isLabelledDateRow } from 'src/contacts/friendly/dateLabels';
+import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { DEFAULT_MAPPING, renameRow } from 'src/contacts/friendly/mapping';
 import {
   inNewContacts,
   newContactProperty,
   otherNewContactKeys,
-  parseNewContactKey,
+  newContactAddition,
   renameNewContactKeys,
   withNewContactProperty,
 } from 'src/settings/newContactFields';
@@ -51,30 +51,33 @@ describe('new contact fields', () => {
   });
 
   it('lists the entries that are not a property in the list', () => {
-    const listed = (row: (typeof rows)[number]) => !isLabelledDateRow(row);
-    expect(otherNewContactKeys(['mobile', 'NOTE', 'X-FOO', 'TEL[CELL]', 'mobile-2'], rows, listed)).toEqual(['X-FOO', 'mobile-2']);
+    const dated = insertLabelledDateRow(rows, labelledDateRow('Verkering', 'dating'));
+    expect(otherNewContactKeys(['mobile', 'NOTE', 'X-FOO', 'TEL[CELL]', 'mobile-2', 'dating'], dated)).toEqual(['X-FOO', 'mobile-2']);
   });
 
   describe('what a person types', () => {
     it('takes a property name as typed', () => {
-      expect(parseNewContactKey(' mobile ', [], rows)).toEqual({ key: 'mobile' });
+      expect(newContactAddition(' mobile ', [], rows)).toEqual({ property: 'mobile' });
     });
 
-    it('takes a card field in capitals', () => {
-      expect(parseNewContactKey('x-foo', [], rows)).toEqual({ key: 'X-FOO' });
-      expect(parseNewContactKey('tel[fax]', [], rows)).toEqual({ key: 'TEL[FAX]' });
+    it('takes the property that reads a card field', () => {
+      expect(newContactAddition('tel[cell]', [], rows)).toEqual({ property: 'mobile' });
+    });
+
+    it('a card field no property reads needs a row of its own', () => {
+      expect(newContactAddition('x-banaan', [], rows)).toEqual({ cardField: 'X-BANAAN' });
+      expect(newContactAddition('tel[fax]', [], rows)).toEqual({ cardField: 'TEL[FAX]' });
     });
 
     it('refuses empty, unknown and double entries', () => {
-      expect(parseNewContactKey('  ', [], rows)).toHaveProperty('error');
-      expect(parseNewContactKey('foo', [], rows)).toHaveProperty('error');
-      expect(parseNewContactKey('mobile', ['TEL[CELL]'], rows)).toHaveProperty('error');
-      expect(parseNewContactKey('TEL[CELL]', ['mobile'], rows)).toHaveProperty('error');
-      expect(parseNewContactKey('x-foo', ['X-FOO'], rows)).toHaveProperty('error');
+      expect(newContactAddition('  ', [], rows)).toHaveProperty('error');
+      expect(newContactAddition('foo', [], rows)).toHaveProperty('error');
+      expect(newContactAddition('mobile', ['TEL[CELL]'], rows)).toEqual({ error: 'New contacts already get mobile.' });
+      expect(newContactAddition('TEL[CELL]', ['mobile'], rows)).toEqual({ error: 'New contacts already get mobile.' });
     });
 
     it('takes a property name of a renamed row', () => {
-      expect(parseNewContactKey('gsm', [], renameRow(rows, 'mobile', 'gsm'))).toEqual({ key: 'gsm' });
+      expect(newContactAddition('gsm', [], renameRow(rows, 'mobile', 'gsm'))).toEqual({ property: 'gsm' });
     });
   });
 });
