@@ -1,7 +1,6 @@
 import { App } from "obsidian";
 import * as React from "react";
 import { offerLayoutChange } from "src/ui/modals/layoutChangeModal";
-import { CardFieldSettings } from "src/ui/settings/components/cardFieldSettings";
 import { InsightSettings } from "src/ui/settings/components/insightsSettings";
 import { LayoutSettingsSection } from "src/ui/settings/components/layoutSettings";
 import { MasterSetting } from "src/ui/settings/components/masterSettings";
@@ -41,7 +40,6 @@ export function SettingsTabs({ app }: { app: App }) {
           <>
             <MasterSetting app={app} />
             <LayoutSettingsSection app={app} onLayoutChanged={(_from, to) => offerLayoutChange(app, to)} />
-            <CardFieldSettings />
             <InsightSettings />
           </>
         )}

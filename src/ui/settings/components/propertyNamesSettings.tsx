@@ -12,11 +12,14 @@ import { DEFAULT_MAPPING, isFixedProperty, mappingRenames, MappingRow, RelationR
 import { noteLinkOptions } from "src/contacts/friendly/noteLinks";
 import { fillNotes, NoteWithBase, notesWithBases, notesWithRowProperties, removeRowProperties, touchBases } from "src/contacts/labelledDates";
 import { notesToRename, renameBlockers, renamePropertyInNotes } from "src/contacts/obsidianNotes";
-import { getSettings, setSettings } from "src/context/sharedSettingsContext";
+import { getSettings, setSettings, updateSetting } from "src/context/sharedSettingsContext";
+import { inNewContacts, nameProperties, renameNewContactKeys, withNewContactProperty } from "src/settings/newContactFields";
 import { mirrorRelationsOnThisDevice, setMirrorRelationsOnThisDevice } from "src/settings/deviceSettings";
 import { ConfirmModal } from "src/ui/modals/confirmModal";
 import { CommitInput } from "src/ui/settings/components/commitInput";
 import { DateLabelsSettings } from "src/ui/settings/components/dateLabelsSettings";
+import { NewContactsSettings } from "src/ui/settings/components/newContactsSettings";
+import { useSettings } from "src/ui/hooks/settingsHook";
 import { Toggle } from "src/ui/settings/components/toggle";
 import { groupRows } from "src/ui/settings/propertyGroups";
 
@@ -105,10 +108,15 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const [selected, setSelected] = React.useState<string | undefined>(undefined);
   const layoutRef = React.useRef<HTMLDivElement>(null);
   const narrow = useNarrow(layoutRef, NARROW_WIDTH);
+  const newContactKeys = useSettings()?.createFieldsKeys ?? [];
+  /** Set when a property is picked outside the list: the list scrolls to it once it is shown. */
+  const reveal = React.useRef(false);
 
+  /** Saves the mapping; the fields of new contacts follow renamed properties. */
   const save = async (mapping: MappingRow[]) => {
     const current = getSettings();
-    await setSettings({ ...current, friendly: { ...current.friendly, mapping } });
+    const createFieldsKeys = renameNewContactKeys(current.createFieldsKeys, mappingRenames(saved.current, mapping));
+    await setSettings({ ...current, createFieldsKeys, friendly: { ...current.friendly, mapping } });
     saved.current = mapping;
   };
 
@@ -319,6 +327,25 @@ export function PropertyNamesSettings({ app }: { app: App }) {
   const isOn = (row: MappingRow) => row.sync !== false || isFixedProperty(row.property);
   const setSync = (index: number, on: boolean) => { void commit(withSync(rows, index, on, Date.now())); };
 
+  /** Name, uid and the name parts are always filled in on a new contact; why, for the details. */
+  const names = nameProperties(rows);
+  const alwaysInNew = (row: MappingRow): string | undefined =>
+    row.property === "uid" ? "Always: every contact gets its own uid."
+    : row.property === "name" || row.property === names.firstname || row.property === names.lastname ? "Always: filled in from the name you type."
+    : undefined;
+  const setInNew = (row: MappingRow, on: boolean) =>
+    void updateSetting("createFieldsKeys", withNewContactProperty(getSettings().createFieldsKeys, row.property, on, rows));
+
+  const show = (property: string) => {
+    reveal.current = true;
+    setSelected(property);
+  };
+  React.useEffect(() => {
+    if (!reveal.current) return;
+    reveal.current = false;
+    layoutRef.current?.querySelector(".vcf-props-item.is-selected")?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  });
+
   const detail = (i: number) => {
     const row = rows[i];
     const fixed = isFixedProperty(row.property);
@@ -392,6 +419,17 @@ export function PropertyNamesSettings({ app }: { app: App }) {
                   onCommit={(text) => edit(i, (r) => withWriteV3(r, text.trim()))}
                 />
               )}
+            </Field>
+            <Field
+              name="In new contacts"
+              description={alwaysInNew(row) ?? "A new contact gets this property, empty and ready to fill in."}
+            >
+              <Toggle
+                on={alwaysInNew(row) !== undefined || inNewContacts(row.property, newContactKeys, rows)}
+                label="In new contacts"
+                disabled={alwaysInNew(row) !== undefined}
+                onChange={(on) => setInNew(row, on)}
+              />
             </Field>
             <Field name="Sync" description={fixed ? "uid, name and photo are always synced." : SYNC_OFF}>
               <Toggle on={isOn(row)} label="Sync" disabled={fixed} onChange={(on) => setSync(i, on)} />
@@ -490,6 +528,8 @@ export function PropertyNamesSettings({ app }: { app: App }) {
         onAdd={addLabelledDate}
         onRemove={(index) => { void removeLabelledDate(index); }}
       />
+
+      <NewContactsSettings rows={rows} listed={listed} onSelect={show} />
     </>
   );
 }

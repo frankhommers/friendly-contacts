@@ -5,7 +5,8 @@ import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { insertLabelledDateRow, labelledDateRow } from 'src/contacts/friendly/dateLabels';
 import { DEFAULT_MAPPING, MappingRow, renameRow } from 'src/contacts/friendly/mapping';
-import { getSettings, initSettings } from 'src/context/sharedSettingsContext';
+import { getSettings, initSettings, updateSetting } from 'src/context/sharedSettingsContext';
+import { DEFAULT_SETTINGS } from 'src/settings/setting';
 import { PropertyNamesSettings } from 'src/ui/settings/components/propertyNamesSettings';
 
 const notices: string[] = [];
@@ -315,7 +316,7 @@ describe('the property list', () => {
 
   it('a part shows exactly these fields', async () => {
     await render(DEFAULT_MAPPING);
-    expect(fieldNames('department')).toEqual(['Name in note', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'Sync']);
+    expect(fieldNames('department')).toEqual(['Name in note', 'Read from', 'Part', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'In new contacts', 'Sync']);
   });
 
   it('renaming in the details renames the property', async () => {
@@ -503,7 +504,7 @@ describe('the property list', () => {
 
   it('shows what a relation row reads and writes, as text', async () => {
     await render(DEFAULT_MAPPING);
-    expect(fieldNames('spouse')).toEqual(['Name in note', 'Read from', 'Mirrored by', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'Sync']);
+    expect(fieldNames('spouse')).toEqual(['Name in note', 'Read from', 'Mirrored by', 'Write as (vCard 4.0)', 'Write as (vCard 3.0)', 'In new contacts', 'Sync']);
     expect(control('spouse', 'Read from')!.textContent).toBe('spouse');
     expect(control('spouse', 'Mirrored by')!.textContent).toBe('spouse');
     expect(control('spouse', 'Write as (vCard 4.0)')!.textContent).toBe('RELATED;TYPE=spouse');
@@ -523,6 +524,116 @@ describe('the property list', () => {
     expect(input('anniversary', 'Write key for anniversary').value).toBe('ANNIVERSARY');
     expect(control('anniversary', 'Write as (vCard 3.0)')!.textContent).toBe('X-ABDATE · label Anniversary');
     expect(control('anniversary', 'Write as (vCard 3.0)')!.querySelector('input')).toBeNull();
+  });
+
+  describe('New contacts', () => {
+    const keys = () => getSettings().createFieldsKeys;
+    const setKeys = async (next: string[]) => {
+      await act(async () => {
+        await updateSetting('createFieldsKeys', next);
+      });
+    };
+    const switchOf = (property: string) => {
+      select(property);
+      return detail().querySelector<HTMLElement>('[aria-label="In new contacts"]')!;
+    };
+    /** Picks the property first: an act inside an async act would leave the old one shown. */
+    const flip = async (property: string) => {
+      const toggle = switchOf(property);
+      await act(async () => {
+        toggle.click();
+      });
+    };
+    const block = () => container.querySelector<HTMLElement>('.vcf-new-contacts')!;
+    const links = () => [...block().querySelectorAll('.vcf-new-contacts-properties a')].map((a) => a.textContent);
+    const others = () => [...block().querySelectorAll('.setting-items > .setting-item .setting-item-name')].map((el) => el.textContent);
+
+    it('switches a property on and off in its details', async () => {
+      await render(DEFAULT_MAPPING);
+      expect(switchOf('email').getAttribute('aria-checked')).toBe('true');
+      await flip('email');
+      expect(keys()).not.toContain('email');
+      expect(switchOf('email').getAttribute('aria-checked')).toBe('false');
+      await flip('nickname');
+      expect(keys().at(-1)).toBe('nickname');
+    });
+
+    it('a vCard key counts for its property, and switching off removes it', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys(['TEL[CELL]']);
+      expect(switchOf('mobile').getAttribute('aria-checked')).toBe('true');
+      await flip('mobile');
+      expect(keys()).toEqual([]);
+    });
+
+    it('name, uid and the name parts are always there', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys([]);
+      for (const property of ['name', 'uid', 'firstname', 'lastname']) {
+        expect(switchOf(property).getAttribute('aria-checked')).toBe('true');
+        expect(switchOf(property).getAttribute('aria-disabled')).toBe('true');
+      }
+    });
+
+    it('follows a renamed property', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys(['mobile', 'mobile-2', 'email']);
+      await commitText(input('mobile', 'Property name'), 'gsm');
+      expect(keys()).toEqual(['gsm', 'gsm-2', 'email']);
+    });
+
+    it('lists the properties a new contact gets; picking one shows it', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys(['email', 'mobile', 'X-FOO']);
+      expect(links()).toEqual(['mobile', 'email']);
+      act(() => {
+        [...block().querySelectorAll<HTMLElement>('.vcf-new-contacts-properties a')].find((a) => a.textContent === 'email')!.click();
+      });
+      expect(detail().querySelector('.vcf-props-detail-title')?.textContent).toBe('email');
+    });
+
+    it('shows, adds and removes fields that are not in the list', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys(['email', 'X-FOO']);
+      expect(others()).toEqual(['Properties', 'X-FOO', 'Add a field']);
+      type(block().querySelector<HTMLInputElement>('input[aria-label="Field for new contacts"]')!, 'x-skype');
+      await act(async () => {
+        button('Add field').click();
+      });
+      expect(keys()).toEqual(['email', 'X-FOO', 'X-SKYPE']);
+      await act(async () => {
+        block().querySelector<HTMLElement>('[aria-label="Remove X-FOO"]')!.click();
+      });
+      expect(keys()).toEqual(['email', 'X-SKYPE']);
+    });
+
+    it('adds a property typed by name, and refuses what is no field', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys([]);
+      const field = () => block().querySelector<HTMLInputElement>('input[aria-label="Field for new contacts"]')!;
+      type(field(), 'foo');
+      await act(async () => {
+        button('Add field').click();
+      });
+      expect(keys()).toEqual([]);
+      expect(block().querySelector('.mod-warning')?.textContent).toContain('"foo" is not a property or a card field');
+      type(field(), 'nickname');
+      await act(async () => {
+        button('Add field').click();
+      });
+      expect(keys()).toEqual(['nickname']);
+      expect(block().querySelector('.mod-warning')).toBeNull();
+      expect(links()).toEqual(['nickname']);
+    });
+
+    it('resets the fields to the defaults', async () => {
+      await render(DEFAULT_MAPPING);
+      await setKeys(['X-FOO']);
+      await act(async () => {
+        block().querySelector<HTMLButtonElement>('.setting-item-heading button')!.click();
+      });
+      expect(keys()).toEqual(DEFAULT_SETTINGS.createFieldsKeys);
+    });
   });
 
   describe('in a narrow pane', () => {

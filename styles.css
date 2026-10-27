@@ -1166,3 +1166,22 @@ textarea.friendly-review-edit {
     overflow-y: visible;
   }
 }
+
+/* New contacts: the properties a new contact gets, as links to their details. */
+.vcf-new-contacts {
+  margin-top: var(--size-4-6);
+}
+.vcf-new-contacts-properties {
+  margin-top: var(--size-4-2);
+  line-height: var(--line-height-normal);
+}
+.vcf-link {
+  color: var(--text-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+.vcf-link:hover,
+.vcf-link:focus-visible {
+  color: var(--text-accent-hover);
+  text-decoration: underline;
+}

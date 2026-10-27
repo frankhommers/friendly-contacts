@@ -189,7 +189,7 @@ Create a new contact using your configured default fields.
 Open the contacts sidebar view.
 
 3) **Friendly Contacts: Apply Default Fields to Current File**  
-Adds any missing default fields (as defined in **Settings → Default Contact Fields**) to the currently open contact file.  
+Adds any missing default fields (as set under **New contacts** in the Properties tab of the settings) to the currently open contact file.  
 Existing fields are not overwritten.
 
 4) **Friendly Contacts: Add relationship…**  
@@ -550,6 +550,7 @@ The plugin settings have three tabs: **General**, **Sync** (the address books an
 - **Part**: which part of the field the property is, counting from 1. `ORG` has the company as part 1 and the department as part 2; `N` has the prefix as part 4 and the suffix as part 5.
 - **Write as (vCard 4.0)**: the field a new line gets on a vCard 4.0 card.
 - **Write as (vCard 3.0)**: the field a new line gets on a vCard 3.0 card. Leave it empty (`same as 4.0`) to use the 4.0 field. The gender properties use it to write `X-GENDER`, because vCard 3.0 has no `GENDER`. Properties that are parts of the same field (the same Write as (vCard 4.0)) need the same vCard 3.0 field, because they share one line. The relationships and the anniversary, and `uid`, `name` and `photo`, show their 3.0 form as plain text, which you cannot change.
+- **In new contacts**: switch it on to give every new contact this property, empty and ready to fill in (see [New contacts](#new-contacts-fields) below). `name`, `uid`, `firstname` and `lastname` are always there: they come from the name you type.
 - **Sync**: switch it off to keep the property out of Sync and Import. The property stays in your notes, but Sync, Sync all contacts and Import no longer read it from cards or write it to them, and the review never shows it. Switching off itself changes no note and no card, and the property's lines already on a card stay there; remove them yourself if you want them gone. Only when **Links to Obsidian notes on cards** is on (see [Links to Obsidian notes on cards](#-links-to-obsidian-notes-on-cards)) can switching off lead to a card change: a person who is reached only through relationships with Sync off gets no link to their Obsidian note on cards, and a link already there goes at the next Apply. So with that setting on, switching off a relationship makes Sync (and **Sync all contacts**) list the contacts whose only link to someone came through it, and Apply removes those `obsidian://` lines from their cards; they are the plugin's own link lines, not the property's lines. Switching it on again does not take anything out of a note: the differences show up in the review as changes in Obsidian or on the server, or as a conflict, and nothing that removes a value from a note is preselected. `uid`, `name` and `photo` are always synced; their switch is on and cannot be changed. Export to a `.vcf` file is not affected. The setting is stored with the property names, so update the plugin on every desktop: an older version ignores it and syncs the property as before.
 
 A line that is already on a card keeps its own field name when you edit it; the write columns only name new lines. The card's `VERSION` never changes.
@@ -557,6 +558,9 @@ A line that is already on a card keeps its own field name when you edit it; the 
 Changing **Read from** or **Part** only changes how cards are read from now on. It does not fill your notes again by itself.
 
 Update the plugin on every desktop before you sync from it. An older version does not know the new parts, so it would offer to remove them from the card.
+
+<a name="new-contacts-fields"></a>
+**New contacts.** At the bottom of the Properties tab, **New contacts** shows the fields a new contact gets, empty and ready to fill in. The properties are listed as links; click one to open its details, where **In new contacts** switches it on or off. A field without a property in the list, such as `X-SKYPE`, or a date with a label, is listed on its own line with a button to remove it. **Add a field** takes a property name (`nickname`) or a card field (`NOTE`, `TEL[FAX]`, `X-SKYPE`); a card field that has a property is created under that property. **Reset to defaults** there brings back the default fields; it does not touch the property names. When you rename a property, the fields of new contacts follow, and a new contact gets its first and last name under the names you gave them.
 
 ---
 

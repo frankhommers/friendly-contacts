@@ -4,6 +4,7 @@ import { VCardKinds } from "src/contacts/vcard/shared/structuredFields";
 import { getSettings } from "src/context/sharedSettingsContext";
 import { bookChoice, fixedBook } from "src/sync/sources";
 import { generateUUID } from "src/util/vcard";
+import { nameProperties } from "src/settings/newContactFields";
 
 /**
  * Friendly properties of a new contact: its name (asked for), the default fields empty, and a UID. With more than
@@ -19,9 +20,10 @@ export async function createEmpty(): Promise<Record<string, string>> {
   const lastname = named.kind === VCardKinds.Individual ? named.family : "";
   const props: Record<string, string> = {
     name: named.kind === VCardKinds.Individual ? [firstname, lastname].filter((part) => part !== "").join(" ") : named.fn,
-    firstname,
-    lastname,
   };
+  const names = nameProperties(friendly.mapping);
+  props[names.firstname] = firstname;
+  props[names.lastname] = lastname;
   const source = named.source ?? fixedBook(settings);
   if (source !== undefined) props.source = source;
 

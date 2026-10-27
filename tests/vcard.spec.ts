@@ -6,6 +6,7 @@ import { NamingPayload } from "src/ui/modals/contactNameModal";
 import { fixtures } from "tests/fixtures/fixtures";
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {DEFAULT_SETTINGS} from "../src/settings/setting";
+import { renameRow } from "src/contacts/friendly/mapping";
 
 // Helper function to parse vCards and collect only those with valid slugs
 const parseValidVCards = async (vcfData: string) => {``
@@ -32,13 +33,16 @@ const books = vi.hoisted(() => ({
   /** What the modal was offered, and the book the user picks. */
   offered: [] as unknown[],
   pick: undefined as string | undefined,
+  /** The property names; absent: the defaults. */
+  friendly: undefined as unknown,
+  createFieldsKeys: undefined as string[] | undefined,
 }));
 
 vi.mock("src/context/sharedSettingsContext", () => {
   return {
     getSettings: vi.fn(() => ({
-      createFieldsKeys: DEFAULT_SETTINGS.createFieldsKeys,
-      friendly: DEFAULT_SETTINGS.friendly,
+      createFieldsKeys: books.createFieldsKeys ?? DEFAULT_SETTINGS.createFieldsKeys,
+      friendly: books.friendly ?? DEFAULT_SETTINGS.friendly,
       sources: books.sources,
       defaultSource: books.defaultSource,
     })),
@@ -82,6 +86,19 @@ describe('vcard creatEmpty', () => {
     books.defaultSource = '';
     books.offered = [];
     books.pick = undefined;
+    books.friendly = undefined;
+    books.createFieldsKeys = undefined;
+  });
+
+  it('writes the name parts under the property names as renamed', async () => {
+    books.friendly = { mapping: renameRow(renameRow(DEFAULT_SETTINGS.friendly.mapping, 'firstname', 'voornaam'), 'lastname', 'achternaam') };
+    books.createFieldsKeys = ['voornaam', 'achternaam', 'X-FOO'];
+    const empty = await vcard.createEmpty();
+    expect(empty['voornaam']).toBe('Foo');
+    expect(empty['achternaam']).toBe('Bar');
+    expect(empty['X-FOO']).toBe('');
+    expect(empty).not.toHaveProperty('firstname');
+    expect(empty).not.toHaveProperty('lastname');
   });
 
   it('should ask for a firstname and lastname ', async () => {

@@ -8,3 +8,4 @@ export const Vault = { recurseChildren: () => {} };
 export const Workspace = {};
 export const normalizePath = (path: string) => path;
 export const Platform = { isMobileApp: false, isAndroidApp: false };
+export const getIcon = (_name: string): SVGSVGElement | null => null;

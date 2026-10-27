@@ -11,7 +11,6 @@ const section = vi.hoisted(() => async (exportName: string, name: string) => {
 });
 vi.mock('src/ui/settings/components/masterSettings', () => section('MasterSetting', 'Master'));
 vi.mock('src/ui/settings/components/layoutSettings', () => section('LayoutSettingsSection', 'Layout'));
-vi.mock('src/ui/settings/components/cardFieldSettings', () => section('CardFieldSettings', 'Card fields'));
 vi.mock('src/ui/settings/components/insightsSettings', () => section('InsightSettings', 'Background checks'));
 vi.mock('src/ui/settings/components/synchronizationSettings', () => section('SynchronizationSettings', 'Synchronization'));
 vi.mock('src/ui/settings/components/propertyNamesSettings', () => section('PropertyNamesSettings', 'Property names'));
@@ -43,7 +42,7 @@ describe('the settings tabs', () => {
     show();
     expect([...container.querySelectorAll('[role="tab"]')].map((b) => b.textContent)).toEqual(['General', 'Sync', 'Properties']);
     expect(tab('General').getAttribute('aria-selected')).toBe('true');
-    expect(sections()).toEqual(['Master', 'Layout', 'Card fields', 'Background checks']);
+    expect(sections()).toEqual(['Master', 'Layout', 'Background checks']);
   });
 
   it('shows one tab at a time', () => {
