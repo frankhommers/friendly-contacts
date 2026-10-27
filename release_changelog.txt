@@ -1,7 +1,7 @@
-## Friendly Contacts 3.0.0-alpha.19
+## Friendly Contacts 3.0.0-alpha.20
 
-**Default contact fields moved to the Properties tab.**
+**Properties of your own, and dates with a label in the property list.**
 
-- Every property has an **In new contacts** switch in its details: on, and a new contact gets the property, empty and ready to fill in.
-- At the bottom of the Properties tab, **New contacts** lists those properties; click one to open its details. Card fields without a property (such as `X-SKYPE`) can still be added and removed there, and **Reset to defaults** brings back the default fields.
-- Renaming a property now carries over to the fields of new contacts, and a new contact gets its first and last name under the names you gave them (it always wrote `firstname` and `lastname`).
+- **Add a property** (under the property list) takes any card field no property reads yet, such as `X-BANAAN` or `TEL[FAX]`, and a name for your notes. It shows in the list with all its settings (name, Read from, Write as, In new contacts, Sync) and is synced from then on; values already on the cards come in at the next Sync.
+- Adding a card field under **New contacts** does the same, so it is synced too (in 3.0 such a field stayed in Obsidian only). A field an earlier version stored without a property gets a **Make property** button.
+- **Dates with a label** (such as Verkering → `dating`) are in the list under Dates, with their details. **Remove** for them and for your own properties is in the details. The Dates with a label block keeps adding a label and finding labels on cards.
