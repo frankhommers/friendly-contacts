@@ -1,3 +1,4 @@
+import { DEFAULT_GRAVATAR } from "src/ui/avatar/gravatar";
 import { DEFAULT_MAPPING, DEFAULT_ROWS_SET } from "src/contacts/friendly/mapping";
 import { DEFAULT_NOTE_LINKS } from "src/contacts/friendly/noteLinks";
 import { DEFAULT_LAYOUT } from "src/contacts/layout";
@@ -44,5 +45,6 @@ export const DEFAULT_SETTINGS: ContactsPluginSettings = {
   },
   layout: DEFAULT_LAYOUT,
   meUid: '',
-  noteLinks: DEFAULT_NOTE_LINKS
+  noteLinks: DEFAULT_NOTE_LINKS,
+  gravatar: DEFAULT_GRAVATAR
 }

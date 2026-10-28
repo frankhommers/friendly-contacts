@@ -38,6 +38,7 @@ const mockSettings: ContactsPluginSettings = {
   layout: { layout: 'note', noteName: '{{name}}', location: 'inside' },
   meUid: '',
   noteLinks: DEFAULT_NOTE_LINKS,
+  gravatar: { enabled: false, fallback: 'initials' },
 };
 
 const testDefaultSettings = {

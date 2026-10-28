@@ -153,6 +153,8 @@ You can attach profile pictures using:
 
 > The avatar will be scaled and stored inside Obsidian's vault-local storage.
 
+**Gravatar.** Under **Settings → General → Contact cards** you can switch on **Gravatar**. A contact without a photo then shows the Gravatar of its first email address on its card. It is only shown: nothing is saved in the note or on the card, and a photo of the contact's own always wins. **Without a Gravatar** chooses what the card shows when the contact has no Gravatar: its initials (the default), or an image Gravatar makes from the address (silhouette, identicon, monster, wavatar, retro, robot or empty). Gravatar is off by default, because Gravatar receives a SHA-256 hash of the email address of every contact you open, and such a hash can be matched to a known address.
+
 ---
 
 <!-- TOC --><a name="-quick-actions"></a>

@@ -1,6 +1,7 @@
 import type { MappingRow } from "src/contacts/friendly/mapping";
 import type { NoteLinksSettings } from "src/contacts/friendly/noteLinks";
 import type { LayoutSettings } from "src/contacts/layout";
+import type { GravatarSettings } from "src/ui/avatar/gravatar";
 
 export type AuthType = "basic" | "apikey";
 
@@ -21,6 +22,8 @@ export interface ContactsPluginSettings {
   meUid: string;
   /** Links to Obsidian notes on cards (see `noteLinks.ts`). */
   noteLinks: NoteLinksSettings;
+  /** Gravatar on the contact cards (shown only, see `gravatar.ts`). */
+  gravatar: GravatarSettings;
 }
 
 export interface FriendlySettings {

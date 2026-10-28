@@ -1,3 +1,4 @@
+import { firstEmail } from "src/ui/avatar/gravatar";
 import {Menu, MenuItem, setIcon, TFile} from "obsidian";
 import * as React from "react";
 import { Contact, parseKey } from "src/contacts";
@@ -210,7 +211,8 @@ export const ContactView = (props: ContactProps) => {
 						<div className="biz-card-a">
 							<div className="biz-headshot biz-pic-drew">
 								<Avatar photoUrl={contact.data["PHOTO"]} firstName={contact.data["N.GN"]}
-												lastName={contact.data["N.FN"]} functionalName={contact.data["FN"]}/>
+												lastName={contact.data["N.FN"]} functionalName={contact.data["FN"]}
+												email={firstEmail(contact.data)}/>
 								<div className="biz-words-container">
 									<div className="biz-name">
                     {getUiName(contact.data)}

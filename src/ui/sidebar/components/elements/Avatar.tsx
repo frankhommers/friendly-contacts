@@ -1,11 +1,18 @@
 import * as React from "react";
+import { gravatarHash, gravatarUrl } from "src/ui/avatar/gravatar";
+import { useSettings } from "src/ui/hooks/settingsHook";
 import { photoLineToV4 } from "src/util/photoLine";
+
+/** Pixels asked from Gravatar: twice the 100px card avatar, for sharp screens. */
+const GRAVATAR_SIZE = 200;
 
 interface AvatarProps {
 	photoUrl?: string;
 	firstName: string;
 	lastName: string;
   functionalName: string;
+  /** Email address for Gravatar, when it is switched on and there is no photo. */
+  email?: string;
 }
 
 export const Avatar = (props: AvatarProps) => {
@@ -22,12 +29,34 @@ export const Avatar = (props: AvatarProps) => {
     setHasImageError(false);
   }, [props.photoUrl]);
 
+  const photo = props.photoUrl && !hasImageError ? (photoLineToV4(props.photoUrl) || props.photoUrl) : undefined;
+  const gravatar = useSettings()?.gravatar;
+  const gravatarEmail = !photo && gravatar?.enabled ? props.email : undefined;
+  const fallback = gravatar?.fallback ?? "initials";
+  const [gravatarSrc, setGravatarSrc] = React.useState<string | undefined>(undefined);
+  const [gravatarFailed, setGravatarFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setGravatarFailed(false);
+    setGravatarSrc(undefined);
+    if (!gravatarEmail) return;
+    let current = true;
+    gravatarHash(gravatarEmail)
+      .then((hash) => { if (current) setGravatarSrc(gravatarUrl(hash, GRAVATAR_SIZE, fallback)); })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [gravatarEmail, fallback]);
+
+  const src = photo ?? (gravatarFailed ? undefined : gravatarSrc);
+
   return (
 		<div className="avatar-initials">
-			{props.photoUrl && !hasImageError ? (
+			{src ? (
 				<img
-					src={photoLineToV4(props.photoUrl) ? photoLineToV4(props.photoUrl) : props.photoUrl }
-					onError={() => setHasImageError(true)}
+					src={src}
+					alt=""
+					referrerPolicy="no-referrer"
+					onError={() => (photo ? setHasImageError(true) : setGravatarFailed(true))}
 				/>
 			) : (
 				<svg

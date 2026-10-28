@@ -3,6 +3,7 @@ import { addDefaultRows, migrateMapping } from "src/contacts/friendly/mapping";
 import { normalizeNoteLinks } from "src/contacts/friendly/noteLinks";
 import { normalizeLayout } from "src/contacts/layout";
 import { insightService } from "src/insights/insightService";
+import { normalizeGravatar } from "src/ui/avatar/gravatar";
 import { DEFAULT_SETTINGS, LEGACY_CREATE_FIELDS_KEYS } from "src/settings/setting";
 import { ContactsPluginSettings } from "src/settings/settings.d";
 import { migrateSources } from "src/sync/sources";
@@ -49,7 +50,8 @@ function normalizeLoaded(loaded: any): { settings: ContactsPluginSettings; migra
     friendly: { mapping, defaultRowsSeen },
     layout: normalizeLayout(loaded.layout),
     meUid: typeof loaded.meUid === "string" ? cleanUid(loaded.meUid) : DEFAULT_SETTINGS.meUid,
-    noteLinks: normalizeNoteLinks(loaded.noteLinks)
+    noteLinks: normalizeNoteLinks(loaded.noteLinks),
+    gravatar: normalizeGravatar(loaded.gravatar)
   };
   return { settings, migratedFrom };
 }
