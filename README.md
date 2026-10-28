@@ -664,6 +664,8 @@ OpenID Connect (OAuth2) is not supported at this time.
 
 Passwords and API keys are kept in Obsidian's keychain (**Settings → Keychain**, Obsidian 1.11.4 or later), never in `data.json`. The keychain is encrypted by your system, belongs to this vault on this device and is kept outside the vault, so file sync, git and backups of the vault do not carry it. On each device, type the password once. A password an earlier version saved in `data.json` is not used: it is taken out of the file when the plugin starts, so type it again.
 
+A new address book is called "Address book"; type its name in **Name**. Notes refer to an address book by that name (`source:`). When contact notes already use the name you type, because their address book was removed (or set up on another device), you are asked first: with **Use the name** those notes sync with this address book from then on.
+
 #### Importing contacts from your address books
 
 Click the **inbox** button in the sidebar's top bar (**Import contacts from address books**) to open the Import panel. It lists the cards on your address books that have no note yet, grouped per address book: the heading shows the book's name and how many contacts it has, with an **Import all** button for that book. Each row shows the contact's name (and ` · organisation` when the card has one), an **Import** button and a **×** that hides the contact from the list until Obsidian restarts.

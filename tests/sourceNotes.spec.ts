@@ -23,7 +23,7 @@ vi.mock("src/context/sharedSettingsContext", () => ({
 vi.mock("src/sync/adapters", () => ({ forgetAdapter: (id: string) => store.forgotten.push(id) }));
 
 import {
-  notesNamingSource, notesUsingSource, removeSource, removeSourceState, renameSource, renameSourceInNotes, saveSourcePatch,
+  notesNamingSource, notesTakenOver, notesUsingSource, removeSource, removeSourceState, renameSource, renameSourceInNotes, saveSourcePatch,
 } from "src/contacts/sourceNotes";
 
 const source = (id: string, name: string): Source => ({
@@ -159,6 +159,20 @@ describe("renameSource refusal", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("b.md"));
     expect(log).toHaveBeenCalledWith(expect.stringContaining("c.md"));
     log.mockRestore();
+  });
+
+  it("takes over the name of an address book that no longer exists, when asked", async () => {
+    store.settings = { sources: [{ ...work }, { ...home }], defaultSource: "w" };
+    const { app, fms } = vault([
+      { path: "a.md", fm: { source: "Work" } },
+      { path: "b.md", fm: { source: "Office" } },
+    ]);
+    expect(notesTakenOver(app, "Work", "office").map((f) => f.path)).toEqual(["b.md"]);
+    expect(notesTakenOver(app, "Work", "WORK")).toEqual([]);
+    expect(await renameSource(app, "w", "Office", true)).toEqual({ renamed: 1, failed: [] });
+    expect(fms.get("a.md")).toEqual({ source: "Office" });
+    expect(fms.get("b.md")).toEqual({ source: "Office" });
+    expect((store.settings.sources[0] as Source).name).toBe("Office");
   });
 
   it("a change of letter case only is not blocked by the book's own notes", async () => {

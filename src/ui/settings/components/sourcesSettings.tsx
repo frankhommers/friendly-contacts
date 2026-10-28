@@ -1,7 +1,7 @@
 import { App, Notice } from "obsidian";
 import * as React from "react";
 import { cardVersions } from "src/contacts/obsidianNotes";
-import { notesNamingSource, removalRefusal, removeSource, renameRefusal, renameSource, saveSourcePatch } from "src/contacts/sourceNotes";
+import { notesNamingSource, notesTakenOver, removalRefusal, removeSource, renameSource, saveSourcePatch } from "src/contacts/sourceNotes";
 import { getSettings, setSettings } from "src/context/sharedSettingsContext";
 import {
   connectionLabel,
@@ -79,15 +79,11 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
     }
     setNameError('');
     const from = source.name;
-    const refused = renameRefusal(app, from, wanted);
-    if (refused) {
-      new Notice(refused);
-      setName(source.name);
-      return;
-    }
+    // Notes naming an address book that no longer exists get this one, after a question.
+    const taken = notesTakenOver(app, from, wanted).length;
     const count = notesNamingSource(app, from).length;
     const rename = () => attempt(async () => {
-      const result = await renameSource(app, source.id, wanted);
+      const result = await renameSource(app, source.id, wanted, taken > 0);
       if ('refused' in result) {
         new Notice(result.refused);
         setName(source.name);
@@ -100,12 +96,17 @@ function SourceBlock({ app, source, isDefault, onSave, onMakeDefault, onChanged 
         new Notice(`Renamed ${from} to ${wanted} in ${renamed} contact notes`
           + (failed.length > 0 ? `; ${failed.length} failed, see console` : ''));
       }
+      if (taken > 0) new Notice(`${taken} contact notes that use ${wanted} sync with this address book now.`);
     });
-    if (count === 0) {
+    if (count === 0 && taken === 0) {
       await rename();
       return;
     }
-    new ConfirmModal(app, `Rename ${from} to ${wanted} in ${count} contact notes?`, 'Rename', rename, 'Cancel', () => setName(source.name)).open();
+    const question = taken === 0
+      ? `Rename ${from} to ${wanted} in ${count} contact notes?`
+      : `${taken} contact notes already use ${wanted}, an address book that no longer exists. With this name they `
+        + `sync with this address book.` + (count > 0 ? ` The ${count} contact notes of ${from} are renamed to ${wanted}.` : '');
+    new ConfirmModal(app, question, taken === 0 ? 'Rename' : 'Use the name', rename, 'Cancel', () => setName(source.name)).open();
   });
 
   const enable = () => attempt(async () => {

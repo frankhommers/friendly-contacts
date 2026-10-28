@@ -93,21 +93,30 @@ export async function saveSourcePatch(id: string, patch: SourcePatch): Promise<b
  * book. Their paths go to the console. undefined when nothing is in the way (a change of letter case only is fine).
  */
 export function renameRefusal(app: App, from: string, to: string): string | undefined {
-  if (sameName(from, to)) return undefined;
-  const taken = notesNamingSource(app, to);
+  const taken = notesTakenOver(app, from, to);
   if (taken.length === 0) return undefined;
   console.log(`Friendly Contacts: notes that already use the address book name ${to}:\n${taken.map((f) => f.path).join("\n")}`);
   return `Not renamed: ${taken.length} note(s) already use ${to}. See console.`;
 }
 
 /**
- * Renames a source: the notes first, then the setting. Throws when the name is not valid or the source is gone;
- * returns `{ refused }` (nothing touched) when notes already use the new name.
+ * Contact notes that already name `to` while renaming from `from`: notes of an address book that no longer exists
+ * (a name another address book has is refused before). None when only the letter case changes.
+ */
+export function notesTakenOver(app: App, from: string, to: string): TFile[] {
+  return sameName(from, to) ? [] : notesNamingSource(app, to);
+}
+
+/**
+ * Renames a source: the notes first, then the setting. Throws when the name is not valid or the source is gone.
+ * When notes already use the new name, returns `{ refused }` (nothing touched), unless `takeOver`: then those notes
+ * sync with this source from now on.
  */
 export async function renameSource(
   app: App,
   id: string,
   newName: string,
+  takeOver = false,
 ): Promise<{ renamed: number; failed: string[] } | { refused: string }> {
   const { sources } = getSettings();
   const source = sources.find((s) => s.id === id);
@@ -115,7 +124,7 @@ export async function renameSource(
   const name = newName.trim();
   const problem = validateSourceName(name, sources, id);
   if (problem) throw new Error(problem);
-  const refused = renameRefusal(app, source.name, name);
+  const refused = takeOver ? undefined : renameRefusal(app, source.name, name);
   if (refused) return { refused };
   const result = await renameSourceInNotes(app, source.name, name);
   if (!(await saveSourcePatch(id, { name }))) throw new Error("This address book no longer exists.");
