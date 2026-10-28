@@ -726,9 +726,10 @@
   opacity: 0.6;
 }
 
+/* A light tint and a red bar: the values must stay readable in every theme. */
 .friendly-review-row.is-conflict {
   box-shadow: inset 3px 0 0 var(--color-red);
-  background: var(--background-modifier-error-hover, transparent);
+  background: rgba(var(--color-red-rgb), 0.08);
 }
 
 .friendly-review-conflict {
