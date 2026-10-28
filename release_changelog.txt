@@ -1,7 +1,5 @@
-## Friendly Contacts 3.0.0-alpha.22
+## Friendly Contacts 3.0.0-alpha.23
 
-**Gravatar on the contact cards (optional).**
+**A new address book can take the name your notes already use.**
 
-- **Settings → General → Contact cards → Gravatar**: a contact without a photo shows the Gravatar of its first email address on its card. Only shown, never saved in the note or on the card; a contact's own photo always wins.
-- **Without a Gravatar** chooses what the card shows when there is none: the initials (default), or an image Gravatar makes (silhouette, identicon, monster, wavatar, retro, robot, empty).
-- Off by default: Gravatar receives a hash of the email address of every contact you open.
+- Renaming an address book to a name that contact notes already use (their address book was removed) was refused, and the name jumped back to "Address book". Now you are asked first: with **Use the name** the address book gets the name, and those notes sync with it from then on.
