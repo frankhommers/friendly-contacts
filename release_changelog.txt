@@ -1,8 +1,7 @@
-## Friendly Contacts 3.0.0-alpha.21
+## Friendly Contacts 3.0.0-alpha.22
 
-**Passwords and API keys are kept in Obsidian's keychain, no longer in data.json.**
+**Gravatar on the contact cards (optional).**
 
-- The password or API key of an address book is saved in Obsidian's keychain (**Settings → Keychain**): encrypted by your system, for this vault on this device, outside the vault. File sync, git and backups of the vault no longer carry it.
-- **Type your password again** after updating. A password an earlier version saved in data.json is not used and is taken out of the file.
-- On each device, type the password once: the keychain is not synced.
-- Needs Obsidian 1.11.4 or later.
+- **Settings → General → Contact cards → Gravatar**: a contact without a photo shows the Gravatar of its first email address on its card. Only shown, never saved in the note or on the card; a contact's own photo always wins.
+- **Without a Gravatar** chooses what the card shows when there is none: the initials (default), or an image Gravatar makes (silhouette, identicon, monster, wavatar, retro, robot, empty).
+- Off by default: Gravatar receives a hash of the email address of every contact you open.
