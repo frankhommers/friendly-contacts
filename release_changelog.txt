@@ -1,5 +1,5 @@
-## Friendly Contacts 3.0.0-alpha.23
+## Friendly Contacts 3.0.0-alpha.24
 
-**A new address book can take the name your notes already use.**
+**Readable conflicts in the Sync review.**
 
-- Renaming an address book to a name that contact notes already use (their address book was removed) was refused, and the name jumped back to "Address book". Now you are asked first: with **Use the name** the address book gets the name, and those notes sync with it from then on.
+- A conflict row had a solid red background (Obsidian's error colour), so red values and links on it could not be read. It now has a light red tint and a red bar on the left; the values keep their own colours.
